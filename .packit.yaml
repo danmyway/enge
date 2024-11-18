@@ -1,0 +1,46 @@
+# See the documentation for more information:
+# https://packit.dev/docs/configuration/
+
+specfile_path: enge.spec
+
+# add or remove files that should be synced
+files_to_sync:
+    - enge.spec
+    - .packit.yaml
+
+# name in upstream package repository or registry (e.g. in PyPI)
+upstream_package_name: enge
+# downstream (Fedora) RPM package name
+downstream_package_name: enge
+
+jobs:
+  # Build for pull request push
+  - job: copr_build
+    owner: danmyway
+    project: enge-devel
+    trigger: pull_request
+    targets:
+      - fedora-stable
+    actions:
+      # Get the version from the spec file
+      get-current-version:
+      - echo devel
+  # Build for merge to devel
+  - job: copr_build
+    owner: danmyway
+    project: enge-devel
+    trigger: commit
+    branch: devel
+    targets:
+      - fedora-stable
+    actions:
+      # Get the version from the spec file
+      get-current-version:
+      - echo devel
+  # Build for release tagged on main
+  - job: copr_build
+    owner: danmyway
+    project: enge
+    trigger: release
+    targets:
+      - fedora-stable
