@@ -1,47 +1,33 @@
 # Table of contents
-1. [Introduction](#tesar)
+1. [Introduction](#enge)
 2. [Prerequisites](#prerequisites)
    1. [API configuration](#api-configuration)
        1. [Testing farm API key](#testing-farm-api-key)
    2. [Cloud Resources Tag](#cloud-resources-tag)
-   3. [Package dependencies](#package-dependencies)
 3. [Setting up](#setting-up)
    1. [Installation](#installation)
-       1. [Clone](#clone)
-       2. [Install](#install)
-       3. [Set up the configuration file](#set-up-configuration-file)
-       4. [Config file template](#config-file-template)
+       1. [Install](#install)
+      2[Set up the configuration file](#set-up-the-configuration-file)
    2. [Usage](#usage)
-       1. [Commands](#commands)
+       1. [Commands](#sub-commands)
           1. [Test](#test)
           2. [Report](#report)
        2. [Examples](#examples)
 4. [Currently used variables](#currently-used-variables)
     1. [Payload](#payload)
-    2. [Mapped composes](#mapped-composes)
-        1. [List globally available composes](#list-globally-available-composes)
-            1. [Public ranch](#public-ranch)
-            2. [Private ranch](#private-ranch)
+    2. [List globally available composes](#list-globally-available-composes)
+        1. [Public ranch](#public-ranch)
+        2. [Private ranch](#private-ranch)
 
 
 
 ENGE
 =
-### ENGE is a New Generation of the tesar Tool
+### ENGE is a New Generation of the [tesar](https://github.com/danmyway/tesar) Tool
 #### Send requests to the Testing Farm API through the command line interface
-Posting requests to the Testing farm requires some json payload manipulation, which is inconvenient and might be time-consuming.<br><br>
-For example, to be able to send a request to test on three different composes you would need to edit 'compose', 'id' and 'distro' in the example payload below twice!<br>
-To be able to send request for testing just two individual test plans on three composes, you would even need to change the 'name' three times as well.<br><br>
-That is six changes and six `https POST` commands sent to command line.<br>
-That is IMHO **exactly six times more**, than it should be.
-
-> Payload: {"api_key": "foo", "test": {"fmf": {"url": "https://github.com/oamg/convert2rhel", "ref": "main", "path": ".", "name": "/plans/tier0/basic_sanity_checks"}, "script": null, "sti": null}, "state": "new", "environments": [{"arch": "x86_64", "os": {"compose": "CentOS-8.4"}, "pool": null, "variables": null, "secrets": null, "artifacts": [{"id": "4533523:epel-8-x86_64", "type": "fedora-copr-build", "packages": ["convert2rhel"]}], "settings": null, "tmt": {"context": {"distro": "centos-8.4", "arch": "x86_64"}}, "hardware": null}], "notification": null, "settings": null, "created": "None", "updated": "None"}
-
-With this script, you will be able to do all of the above with just one command!
-
-```
-tesar test copr c2r -ref pr123 -g github oamg main -p /plans/tier0/basic_sanity_checks /plans/tier1/rhsm -c cos84 cos7 ol8
-```
+This tool mimics the ability of the Packit project to dispatch a test request to the Testing Farm endpoint.
+The features are custom tailored around for the user's comfort.
+The additional value is not only in the ability to quickly dispatch a test request job without the knowledge of any specific build IDs, but also in the possibility to quickly get and read results from the command line interface.
 
 # Prerequisites
 
@@ -67,72 +53,56 @@ Ask peers in your team for the tag value.
 #### Enable the copr repository
 
 ```
-sudo dnf copr enable danmyway/tesar
+sudo dnf copr enable danmyway/enge
 ```
 
 If you are brave enough, though not advised, you can try out the development repository.
 
 ```
-sudo dnf copr enable danmyway/tesar-devel
+sudo dnf copr enable danmyway/enge-devel
 ```
 
 #### Install
 
 ```
-sudo dnf install tesar
+dnf install enge
 ```
+>__NOTE__:<br>Additionally the tool should be installable from the repository root with `pip install .`
+
 #### Set up the configuration file
-Set up config file with obtained Testing Farm API key and Cloud Resources Tag that helps with tracking cloud spend.
+The template for the config file is available in the root of the repository. The default locations for the config file are `~/.config/enge.ini` or `~/.enge.ini`. A custom path to a config file can be specified through the commandline option -c.<br>
+In case of any question, please reach out to the project maintainer(s).
 
-```
-touch ~/.config/tesar && printf "[testing-farm]\nAPI_KEY={your testing farm api key}\n[cloud-resources-tag]\nCLOUD_RESOURCES_TAG={tag}" > ~/.config/tesar
-```
-or copy provided file and edit with your favourite editor, e.g.
-```
-cp ./tesar.temp ~/.config/tesar
-vim ~/.config/tesar
-```
-
-##### Config file template
-```
-[testing-farm]
-API_KEY=
-[cloud-resources-tag]
-CLOUD_RESOURCES_TAG=
-```
 ### Usage
 
-#### Commands
-As of now tesar is able to perform two tasks.
-`test` feeds the request payload with provided arguments and dispatches a test job to the Testing Farm.
-`report` feeds the test results back to the command line and downloads the log files.
+#### Sub-Commands
+As of now enge is able to perform two tasks.<br>
+`test` feeds the request payload with provided config options or arguments and dispatches a test job to the Testing Farm.<br>
+`report` outputs the test results back to the command line.
 
 ##### Test
-> **_NOTE:_** Even though there are some mentions of leapp and leapp-repository in the code. The Leapp project is not yet fully supported by tesar for test jobs dispatching.
 
-The goal of tesar is to make requesting test jobs as easy as possible.<br>
-Instead of looking for build IDs to pass to the payload, all you need to know is a `--reference` for a pull request number associated with the build you need to test. For brew builds you just need to know the release version.<br>
-In case you have the Build ID handy, you can use that instead of the reference.<br>
-Use `-g/--git` to point from where the test metadata and code should be run. Specify the repository base e.g. github, repository owner and the branch from which the tests should run.<br>
+The goal of enge is to make requesting test jobs as easy as possible.<br>
+The `--brew` and `--copr` mandatory options denote which type of a build artifact is to be requested for testing.<br>
+Instead of looking for build IDs to pass to the payload, all you need to know is a reference for a pull request number (e.g. pr123) which triggered the build you need to test. In case you have the Build ID handy, you can use that instead of the reference.<br> For brew builds you just need to know the release version (e.g. 0.1.2-3). Or pass the TaskID as a value of the respective option.<br>
 Multiple `--plans` can be specified and will be dispatched in separate jobs.
 When using `--planfilter` or `--testfilter` to specify singular test it is disallowed to request multiple `--plans` in one command.<br>
-You can look for possible [targeted OS' below](#mapped-composes), multiple can be requested and will be dispatched in separate jobs.
 Use `-w/--wait` to override the default 20 seconds waiting time for successful response from the endpoint, or `-nw/--no-wait` to skip the wait time.
-If for any reason you would need the raw payload, use `--dry-run` to get it printed to the command line or use `--dry-run-cli` to print out the full usable `http POST` command.
+If for any reason you would need to verify the validity of the raw payload, use `--dryrun` to get it pretty-printed to the command line.
 When no `-t/--target` option is specified, the request is sent for all mapped target composes for their respective tested packages.
-UEFI boot method can be requested by using the `-u/--uefi` option. Please note, that **only Alma and Rocky 8.9+** targets have the boot method available.
-Default limit for plans to be run in parallel is 42, to override the default use the `--parallel-limit` option.
+UEFI boot method can be requested by using the `-u/--uefi` option.
+Default limit for plans to be run in parallel is set to 20, to override the default use the `--parallel-limit` option or change the option in the config file..
 
 ##### Report
 With the report command you are able to get the results of the requested jobs straight to the command line.<br>
 It works by parsing the xunit field in the request response.<br>
-Default invocation `tesar report` parses the `./report_jobs` from the tesar directory.<br>
-Results can be reported back in two levels - `l1` for plan overview and `l2` for tests overview.<br>
-You can chain the report command with test command and use the `-lt/--latest` and `-w/--wait` argument to get the results back whenever the requests state is complete (or error in which case the job results cannot be and won't be reported due to the non-existent xunit field).<br>
-`tesar test` automatically stores the request IDs from the latest dispatched job - the primary location to store and read the data from is `/tmp/latest_tesar_jobs` file. The file is also saved with a timestamp to the working directory just for a good measure.
+Results can be reported back in two levels - the default `l1` for plan overview and `-l2/--level2` for a tests overview.<br>
+You can chain the report command with test command and use the `-w/--wait` argument to get the results back whenever the requests state is complete (or error in which case the job results cannot be and won't be reported due to the non-existent xunit field).<br>
+`enge test` automatically stores the request IDs from the latest dispatched job - the primary location to store and read the data from is `/tmp/latest_enge_jobs` file. The file is also saved with a timestamp to the working directory just for a good measure.
+Default invocation `enge report` parses the tasks stored in the latest file at `/tmp/latest_enge_jobs`.<br>
 You can specify a different path to the file with `-f/--file` or pass the jobs to get report for straight to the commandline with `-c/--cmd`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
 The tool is able to parse and report for multiple variants of values as long as they are separated by a new-line (in the files) or a `-c/--cmd` argument (on the commandline). Raw request_ids, artifact URLs (Testing Farm result page URLs) or request URLs are allowed.
-In case you want to get the log files stored locally, use `-d/--download-logs`. Log files for pytest runs will be stored in `/var/tmp/tesar/logs/{request_id}_log/`. In case there are multiple plans in one pipeline, the logs should get divided in their respective plan directories.
+In case you want to get the log files stored locally, use `-d/--download-logs`. Log files for pytest runs will be stored in `/var/tmp/enge/logs/{request_id}_log/`. In case there are multiple plans in one pipeline, the logs should get divided in their respective plan directories.
 
 Corresponding return code is set based on the results with following logic:
  * 0 - The results are complete for each request and all are pass
@@ -142,44 +112,44 @@ Corresponding return code is set based on the results with following logic:
  * 4 - At least one request didn't have any result
  * everything else - consult with Tesar maintainer(s)
 
-The default way to show results is by showing each run details as a separate table. In order to combine test results of several different tft runs you can use comparison mode which is triggered by the `--compare` flag of `tesar report`.
+The default way to show results is by showing each run details as a separate table. In order to combine test results of several different tft runs you can use comparison mode which is triggered by the `--compare` flag of `enge report`.
 
 ```
-❯ tesar report -c 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b -c c3726a72-8e6b-4c51-88d8-612556df7ac1 --short --unify-results=tier2=tier2_7to8 --compare
+❯ enge report -c 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b -c c3726a72-8e6b-4c51-88d8-612556df7ac1 --short --unify-results=tier2=tier2_7to8 --compare
 ```
 
 #### Examples
 
 ```
-# Test copr build for PR#123 with plan basic_sanity_check on CentOS 8.4
-$ tesar test copr c2r -ref pr123 -g github oamg main -p /plans/tier0/basic_sanity_checks -c cos84
+# Test latest build from main (most of the arguments set through the config file)
+$ enge test --copr
 
-# Specify which composes you want to run test plan (in this case tier0)
-$ tesar test copr c2r -ref pr123 -g gitlab.cee.redhat xyz testing -p /plans/tier0 -c ol7 cos8
+# Test copr build for PR#123 with plan named basic_sanity_check on all targets
+$ enge test --copr pr123 -p /plans/tier0/basic_sanity_checks
+
+# Specify which composes you want to run test plan (in this case tier0 on RHEL9)
+$ enge test --copr pr123 -p /plans/tier0 -7 rhel9
 
 # Run every test plan for brew build 0.12-3 on all composes
-$ tesar test brew c2r -ref 0.12-3 -g github oamg main -p /plans
+$ enge test --brew 0.12-3 -p /plans
 
 # Specify more individual test plans
-$ tesar test brew c2r -ref 0.12-3 -git github oamg main -p /plans/tier0/basic_sanity_checks /plans/tier1/rhsm
+$ enge test --brew 0.12-3 -p /plans/tier0/basic_sanity_checks /plans/tier1/whatever_else
 
 ```
 
 ```
-# Get results for the requests in the default file ./latest_jobs
-$ tesar report
-
-# Report the latest test run on the plan level
-$ tesar report --latest
+# Get results for the requests in the latest file /tmp/enge_latest_jobs
+$ enge report
 
 # Report from custom file on the test level
-$ tesar report --level2 --file /home/username/my_jobs_file
+$ enge report --level2 --file ~/my_jobs_file
 
 # Pass requests' references to the commandline
-$ tesar report --cmd d60ee5ab-194f-442d-9e37-933be1daf2ce https://api.endpoint/requests/9f42645f-bcaa-4c73-87e2-6e1efef16635
+$ enge report --cmd d60ee5ab-194f-442d-9e37-933be1daf2ce --cmd https://api.endpoint/requests/9f42645f-bcaa-4c73-87e2-6e1efef16635
 
 # Shorten the displayed test and plan names
-$ tesar report --level2 --cmd 9f42645f-bcaa-4c73-87e2-6e1efef16635 /home/username/my_jobs_file --short
+$ enge report --level2 --cmd 9f42645f-bcaa-4c73-87e2-6e1efef16635 --short
 
 ```
 
@@ -189,88 +159,59 @@ $ tesar report --level2 --cmd 9f42645f-bcaa-4c73-87e2-6e1efef16635 /home/usernam
 
 Link to the testing farm payload documentation:<br>
 https://testing-farm.gitlab.io/api/ <br>
-For convert2RHEL testing we are currently using this form of payload:
-> **_NOTE:_** <br> Some of the targeted instances disallow to use root login when connecting through the ssh.
-> Hardcoded post_install_script is sent with each request to enable root login on the target.
+As of now, the payload yields the following format.
+
 ```json lines
-    payload_raw = {
-        "api_key": api_key,
-        "test": {
-            "fmf": {
-                "url": git_url,
-                "ref": git_branch,
-                "name": plan,
-                "plan_filter": planfilter,
-                "test_filter": testfilter,
-            }
-        },
-        "environments": [
-            {
-                "arch": architecture,
-                "os": {"compose": compose},
-                "pool": pool,
-                "variables": {
-                    "SOURCE_RELEASE": source_release,
-                    "TARGET_RELEASE": target_release,
-                },
-                "artifacts": [
-                    {
-                        "id": artifact_id,
-                        "type": artifact_type,
-                        "packages": [package],
-                    }
-                ],
-                "settings": {
-                    "provisioning": {
-                        "post_install_script": POST_INSTALL_SCRIPT,
-                        "tags": {"BusinessUnit": CLOUD_RESOURCES_TAG},
-                    }
-                },
-                "tmt": {
-                    "context": {
-                        "distro": tmt_distro,
-                        "arch": tmt_architecture,
-                        "boot_method": boot_method,
-                    }
-                },
-                "hardware": {
-                    "boot": {
-                        "method": boot_method,
-                    }
-                },
-            }
-        ],
-        "settings": {"pipeline": {"parallel-limit": parallel_limit}},
-    }
+        {"Authorization": "Bearer {api_key}"}
+        {
+            "test": {
+                "fmf": {
+                    "url": tests_git_url,
+                    "ref": tests_git_branch,
+                    "name": plan,
+                    "plan_filter": planfilter,
+                    "test_filter": testfilter,
+                }
+            },
+            "environments": [
+                {
+                    "arch": architecture,
+                    "os": {"compose": compose},
+                    "artifacts": [
+                        {
+                            "id": artifact_id,
+                            "type": artifact_type,
+                            "packages": [package],
+                        }
+                    ],
+                    "settings": {
+                        "provisioning": {
+                            "tags": {"BusinessUnit": business_unit_tag},
+                        }
+                    },
+                    "tmt": {
+                        "context": {
+                            "distro": tmt_distro,
+                            "arch": architecture,
+                            "boot_method": boot_method,
+                        }
+                    },
+                    "hardware": {
+                        "boot": {
+                            "method": boot_method,
+                        }
+                    },
+                }
+            ],
+            "settings": {"pipeline": {"parallel-limit": parallel_limit}},
+        }
 ```
 
+### Other
+#### List globally available composes
 
-## Mapped composes
-We are requesting official publicly available free instances from the AWS marketplace, if possible.<br>
-At this moment this applies to the Alma Linux, Oracle Linux and Rocky Linux instances.<br>
-CentOS 7 latest is the last one remaining to be implemented.<br>
-Sadly, there is no instance of any relevance for CentOS 8 latest available.
-```
-# RHEL8 targets
-cos8: CentOS-8-latest
-ol8: OL8.9-x86_64-HVM-2024-02-02
-al88: AlmaLinux OS 8.8.20230524 x86_64
-al8: AlmaLinux OS 8.10.20240530 x86_64
-roc88: Rocky-8-EC2-Base-8.8-20230518.0.x86_64
-roc8: Rocky-8-EC2-Base-8.10-20240528.0.x86_64
-str8: CentOS-Stream-8
-
-# RHEL7 targets
-cos7: CentOS-7-latest
-ol7: OL7.9-x86_64-HVM-2023-01-05
-```
-
-### List globally available composes
->**__INFO:__** Mostly deprecated.<br>
-> As far as convert2rhel is concerned, the majority of those images is custom-built, thus we try to use the publicly available officially maintained instances from the AWS.
-
-Testing farm has many available composes on both public and private ranch.<br>
-To list them use commands bellow.
+The Testing Farm has many available composes on both public and private ranch.<br>
+To list them use commands bellow:
 
 #### Public ranch
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 import json
+import logging
 import os
 import time
 
 import requests
 
-from src.enge.utils.opt_manager import parsed_opts
 from src.enge.utils import FormatText, get_datetime
-import logging
+from src.enge.utils.opt_manager import parsed_opts
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +42,8 @@ class SubmitTest:
         self.request_status = None
         self.log_artifact_url = None
         self.dispatch_summary = None
+        self.print_header = None
+        self.tag = parsed_opts.cli_args.tag
 
     def record_task_ids(self, task_id):
         self.latest_tasks_file = parsed_opts.common.get("archive_tasks_latest")
@@ -50,6 +52,11 @@ class SubmitTest:
         )
         self.archive_tasks_file = os.path.join(
             self.archive_tasks_default_path, self.archive_tasks_filename
+        )
+        self.archive_tasks_file = (
+            ".".join([self.archive_tasks_file] + parsed_opts.cli_args.tag)
+            if self.tag
+            else self.archive_tasks_file
         )
 
         def _handle_archive_files():
@@ -114,7 +121,7 @@ class SubmitTest:
         return self.authorization_header, self.payload_raw
 
     def _response_watcher(self, log_artifact_url):
-        response_timeout = parsed_opts.wait or 20
+        response_timeout = parsed_opts.cli_args.wait
         clear_line = "\x1b[2K"
         while True:
             response = requests.get(log_artifact_url)
@@ -148,13 +155,15 @@ class SubmitTest:
                 break
 
     def assess_summary_message(self):
+        print_header = self.print_header
+        summary_header = "\n~ SUMMARY ~~~~~~~~\n" if print_header else ""
         self.dispatch_summary = (
-            f""
-            f"~ SUMMARY ~~~~~~~~\n"
-            f"   Targeted system:  {self.compose}\n"
+            ""
+            + FormatText.format_text(f"{summary_header}", bold=True)
+            + f"   Targeted system:  {self.compose}\n"
             f"   Plan:             {self.plan}\n"
             f"   Test results:     {self.log_artifact_url}\n"
-            f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
         )
 
         def _handle_dry_run(payload_raw=self.build_payload()):
@@ -168,7 +177,7 @@ class SubmitTest:
             self.dispatch_summary = f"{print_payload_dryrun_msg}\n{colorful_json}"
             return self.dispatch_summary
 
-        if parsed_opts.dryrun:
+        if parsed_opts.cli_args.dryrun:
             self.dispatch_summary = _handle_dry_run()
 
         return self.dispatch_summary
@@ -181,9 +190,11 @@ class SubmitTest:
             task_id = response.json()["id"]
             self.log_artifact_url = f"{self.log_artifact_base_url}/{task_id}"
             self.dispatch_summary = self.assess_summary_message()
-            if parsed_opts.wait:
+            if parsed_opts.cli_args.wait:
                 self._response_watcher(self.log_artifact_url)
             else:
                 print(self.dispatch_summary)
+
+            self.record_task_ids(task_id)
         except KeyError as ke:
             LOGGER.error(json.dumps(response.json(), indent=2, sort_keys=True))

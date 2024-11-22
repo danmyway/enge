@@ -28,7 +28,9 @@ NO_RESULT = 4
 
 LOGGER = logging.getLogger(__name__)
 LATEST_TASKS_FILE = parsed_opts.common.get("archive_tasks_latest")
-DEFAULT_TASKS_FILE = parsed_opts.common.get("archive_tasks_default")
+DEFAULT_TASKS_PATH = parsed_opts.cli_args.default_path or parsed_opts.common.get(
+    "archive_tasks_default"
+)
 TESTING_FARM_ENDPOINT = parsed_opts.testing_farm.get("endpoint_url")
 LOG_ARTIFACT_BASE_URL = parsed_opts.testing_farm.get("log_artifacts_url")
 TESTS_COMPOSE_MAPPING = parsed_opts.tests_compose_mapping
@@ -41,45 +43,58 @@ def update_retval(new_value):
 
 
 def parse_tasks():
+    print(parsed_opts.cli_args)
     request_url_list = []
-    tasks_source = None
-    if parsed_opts.latest:
-        if os.path.exists(LATEST_TASKS_FILE):
-            tasks_source = LATEST_TASKS_FILE
-            tasks_source_data = open(tasks_source).readlines()
-        else:
-            LOGGER.critical(
-                f"The path to the latest jobs file {LATEST_TASKS_FILE} does not exist!"
-            )
-            LOGGER.critical(
-                f"Do not use --latest option if you wish to parse values of the default {DEFAULT_TASKS_FILE} path."
-            )
-            LOGGER.critical(
-                "Or use the --file option with path to a file containing the job IDs."
-            )
-            sys.exit(1)
-    elif parsed_opts.file:
-        tasks_source = parsed_opts.file
-        tasks_source_data = []
-        for file in tasks_source:
-            if os.path.exists(file):
-                task_ids = open(file).readlines()
-                tasks_source_data.extend(task_ids)
-            else:
-                LOGGER.critical(f"Given path {parsed_opts.file} does not exist!")
+
+    def _get_tasks_source_data():
+        source = None
+        source_data = []
+        task_ids = []
+        if parsed_opts.cli_args.cmd:
+            source_data.extend(parsed_opts.cli_args.cmd)
+
+        elif parsed_opts.cli_args.file:
+            source = parsed_opts.cli_args.file
+            for file in source:
+                if os.path.exists(file):
+                    task_ids = open(file).readlines()
+                    source_data.extend(task_ids)
+                else:
+                    LOGGER.critical(
+                        f"Given path {parsed_opts.cli_args.file} does not exist!"
+                    )
+                    sys.exit(1)
+        elif parsed_opts.cli_args.tag:
+            default_path = os.path.expanduser(DEFAULT_TASKS_PATH)
+            if not os.path.exists(default_path):
+                LOGGER.critical(f"The given path {default_path} does not exist!")
                 sys.exit(1)
-    elif parsed_opts.cmd:
-        tasks_source_data = parsed_opts.cmd
-    else:
-        if os.path.exists(DEFAULT_TASKS_FILE):
-            tasks_source = DEFAULT_TASKS_FILE
-            tasks_source_data = open(tasks_source).readlines()
+            source = [
+                file
+                for file in os.listdir(default_path)
+                if parsed_opts.cli_args.tag[0] in file.split(".")[-1]
+            ]
+            for file in source:
+                file = os.path.join(default_path, file)
+                task_ids = open(file).readlines()
+                source_data.extend(task_ids)
+
         else:
-            LOGGER.critical(f"The default file containing tasks doesn't exist.")
-            LOGGER.critical(
-                f"Pass the job IDs with the --cmd option or create and feed the {DEFAULT_TASKS_FILE} with job IDs."
-            )
-            sys.exit(1)
+            if not os.path.exists(LATEST_TASKS_FILE):
+                LOGGER.critical(
+                    f"The latest job file {LATEST_TASKS_FILE} does not exist!"
+                )
+                LOGGER.critical(
+                    "Use the --file option with path to a file containing the job IDs. "
+                    "Or pass the job IDs through the --cmd argument."
+                )
+                sys.exit(1)
+            source = LATEST_TASKS_FILE
+            source_data = open(source).readlines()
+
+        return source, source_data
+
+    tasks_source, tasks_source_data = _get_tasks_source_data()
 
     for task in tasks_source_data:
         task = task.strip().rstrip("/")
@@ -174,7 +189,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             + request_state
         )
 
-        if parsed_opts.wait:
+        if parsed_opts.cli_args.wait:
             while request.json()["state"] not in ("complete", "error", "canceled"):
                 print(end=clear_line)
                 print(
@@ -273,7 +288,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             LOGGER.debug(f"Skipping '{url}' as the overall result is pass")
             continue
 
-        if parsed_opts.download_logs:
+        if parsed_opts.cli_args.download_logs:
             LOGGER.info("  > Downloading the log files.")
             # Create the log directory path for the request
             log_dir_path = os.path.join(logs_base_directory, log_dir)
@@ -315,7 +330,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             }
             parsed_dict[request_uuid]["testsuites"].append(testsuite_data)
 
-            if parsed_opts.download_logs:
+            if parsed_opts.cli_args.download_logs:
                 # Create the log directory path for the testsuite
                 testsuite_log_dir_path = os.path.join(log_dir_path, testsuite_log_dir)
                 os.makedirs(testsuite_log_dir_path, exist_ok=True)
@@ -343,7 +358,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
                 }
                 testsuite_data["testcases"].append(testcase_data)
 
-                if parsed_opts.download_logs:
+                if parsed_opts.cli_args.download_logs:
                     response = urllib.request.urlopen(testcase_log_url)
                     log_data = response.read().decode("utf-8")
                     log_file_path = os.path.join(testsuite_log_dir_path, log_name)
@@ -351,7 +366,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
                     with open(log_file_path, "w") as logfile:
                         logfile.write(log_data)
 
-        if parsed_opts.download_logs:
+        if parsed_opts.cli_args.download_logs:
             LOGGER.info(f"    > Logfiles stored in {log_dir_path}")
 
     return parsed_dict
@@ -381,11 +396,11 @@ def build_table_comparison():
     """
     planname_split_index = 0
     testname_split_index = 0
-    if parsed_opts.short:
+    if parsed_opts.cli_args.short:
         planname_split_index = -1
         testname_split_index = -1
 
-    parsed_dict = parse_request_xunit(skip_pass=parsed_opts.skip_pass)
+    parsed_dict = parse_request_xunit(skip_pass=parsed_opts.cli_args.skip_pass)
     result_table = PrettyTable()
     uuids = list(parsed_dict.keys())
     fields = ["Test Plan"] + uuids
@@ -395,7 +410,7 @@ def build_table_comparison():
     # plan_name -> test_name -> uuid run result for particular test
     regroup_results_tests = {}
     unified_names_map = {}
-    for plan_name in parsed_opts.unify_results or []:
+    for plan_name in parsed_opts.cli_args.unify_results or []:
         name1, name2 = plan_name.split("=", 2)
         unified_names_map[name1] = plan_name
         unified_names_map[name2] = plan_name
@@ -440,7 +455,7 @@ def build_table_comparison():
                     }
 
     for plan_name, plan_data in regroup_results_plans.items():
-        if parsed_opts.level2:
+        if parsed_opts.cli_args.level2:
             # Append first row with plan name only
             result_table.add_row([plan_name] + [""] * len(uuids))
             result_table.add_row(["*"] + [""] * len(uuids))
@@ -465,17 +480,17 @@ def build_table_comparison():
 
 
 def build_table():
-    parsed_dict = parse_request_xunit(skip_pass=parsed_opts.skip_pass)
+    parsed_dict = parse_request_xunit(skip_pass=parsed_opts.cli_args.skip_pass)
 
     result_table = PrettyTable()
     # prepare field names
     fields = []
     fields += ["UUID", "Target"]
-    if parsed_opts.showarch:
+    if parsed_opts.cli_args.showarch:
         fields += ["Arch"]
     fields += ["Test Plan"]
     fields += ["Plan Result"]
-    if parsed_opts.level2:
+    if parsed_opts.cli_args.level2:
         fields += ["Test Case"]
         fields += ["Test Result"]
     result_table.field_names = fields
@@ -485,7 +500,7 @@ def build_table():
     planname_split_index = 0
     testname_split_index = 0
 
-    if parsed_opts.short:
+    if parsed_opts.cli_args.short:
         planname_split_index = -1
         testname_split_index = -1
 
@@ -590,7 +605,7 @@ def _eval_longest_compose():
 def main(result_table=None):
     if result_table is None:
         result_table = (
-            build_table_comparison() if parsed_opts.compare else build_table()
+            build_table_comparison() if parsed_opts.cli_args.compare else build_table()
         )
     if result_table.rowcount > 0:
         print(result_table)

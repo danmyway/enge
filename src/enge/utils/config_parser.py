@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
-import os
-import sys
 import configparser
 import logging
+import os
+import sys
 
 LOGGER = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ def load_config(paths):
     expanded_paths = (os.path.expanduser(path) for path in paths)
     for path in expanded_paths:
         if os.path.exists(path):
-            LOGGER.info(f"Loading the config file from: {path}")
+            LOGGER.debug(f"Loading the configuration file from: {path}")
             config.read(path)
             return config
     else:

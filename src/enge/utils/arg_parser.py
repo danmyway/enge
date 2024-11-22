@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
-from . import FormatText
-
 import argparse
+import pathlib
+
+from .tf_artifact import CoprRef, BrewRef
 
 
 def get_arguments():
@@ -12,7 +13,7 @@ def get_arguments():
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
-    parser.add_argument("--config", "-c", help="Custom path to the config file.")
+    parser.add_argument("-c", "--config", help="Custom path to the config file.")
 
     parser.add_argument(
         "-d",
@@ -29,34 +30,59 @@ def get_arguments():
         description="Send requests to the Testing Farm conveniently.",
     )
 
+    artifact_type = test.add_mutually_exclusive_group(required=True)
+
+    artifact_type.add_argument(
+        "--copr",
+        type=CoprRef,
+        nargs="?",
+        default=None,
+        const=CoprRef(None),
+        help="Test a fedora-copr-build. "
+        "The pull request reference (pr123) or the BuildID needs to be provided either in the config file or as an argument.",
+    )
+
+    artifact_type.add_argument(
+        "--brew",
+        type=BrewRef,
+        nargs="?",
+        default=None,
+        const=BrewRef(None),
+        help="Test a brew build RC. "
+        "The verison reference (0.1.2-3) or TaskID needs to be provided either in the config file or as an argument.",
+    )
+
     test.add_argument(
-        "artifact_type",
-        metavar="artifact_type",
-        help="Choose which type of artifact to test. Choices: %(choices)s",
+        "-p",
+        "--plans",
+        nargs="+",
+        help="Specify a test plan or multiple plans to request at testing farm."
+        " Accepts multiple space separated values, sends as a separate request."
+        " To run whole set of tiers use /plans/",
     )
 
-    reference = test.add_mutually_exclusive_group(required=True)
-
-    reference.add_argument(
-        "-r",
-        "--reference",
-        nargs=1,
-        help=f"""
-        For brew: Specify the reference version to find the correct artifact (e.g. 0.1-2, 0.1.2).
-        For copr: Specify the pull request reference to find the correct artifact (e.g. pr123, main, master, ...).
-        {FormatText.format_text('Mutually exclusive with respect to --task-id.', bold=True)}""",
+    test.add_argument(
+        "--planfilter",
+        "--pf",
+        nargs="?",
+        help="Filter plans. "
+        "The specified plan filter will be used in tmt plan ls --filter <YOUR-FILTER> command. "
+        "By default enabled: true filter is applied by the Testing Farm.",
     )
 
-    reference.add_argument(
-        "-i",
-        "--task-id",
-        nargs=1,
-        help=f"""
-        For brew: Specify the TASK ID for required brew build.
-        {FormatText.bold}NOTE: Double check, that you are passing TASK ID for copr builds, not BUILD ID otherwise the
-        Testing Farm won't be able to install the package.{FormatText.end}
-        For copr: Specify the BUILD ID for required copr build.
-        {FormatText.format_text('Mutually exclusive with respect to --reference.', bold=True)}""",
+    test.add_argument(
+        "--testfilter",
+        "--tf",
+        nargs="?",
+        help="Filter tests. "
+        "The specified test filter will be used in tmt run discover plan test --filter <YOUR-FILTER> command.",
+    )
+
+    test.add_argument(
+        "-t",
+        "--target",
+        nargs="+",
+        help="Choose a target system for the test run.",
     )
 
     test.add_argument(
@@ -68,58 +94,21 @@ def get_arguments():
     test.add_argument(
         "-b",
         "--tests-git-branch",
-        help="Git branch to checkout tests from.",
+        help="Git branch to checkout the test suite from.",
     )
 
     test.add_argument(
         "--architecture",
         "--arch",
         default="x86_64",
-        help="""Choose suitable architecture.\nDefault: '%(default)s'.""",
-    )
-
-    test.add_argument(
-        "-p",
-        "--plans",
-        required=True,
-        nargs="+",
-        help="""Specify a test plan or multiple plans to request at testing farm.
-        To run whole set of tiers use /plans/tier*/
-        Accepts multiple space separated values, sends as a separate request.""",
-    )
-
-    test.add_argument(
-        "--planfilter",
-        "--pf",
-        nargs="?",
-        help="""Filter plans.
-        The specified plan filter will be used in tmt plan ls --filter <YOUR-FILTER> command.
-        By default enabled: true filter is applied.
-    """,
-    )
-
-    test.add_argument(
-        "--testfilter",
-        "--tf",
-        nargs="?",
-        help="""Filter tests.
-        The specified test filter will be used in tmt run discover plan test --filter <YOUR-FILTER> command.
-    """,
-    )
-
-    test.add_argument(
-        "-t",
-        "--target",
-        nargs="+",
-        help="""Choose targeted test run. For c2r targeted OS, for leapp targeted upgrade path.""",
+        help="Redefine suitable architecture.\nDefault: '%(default)s'.",
     )
 
     test.add_argument(
         "-w",
         "--wait",
-        default=20,
         type=int,
-        help="""Provide number of seconds to wait for successful response.\nDefault is 20 seconds.""",
+        help="Provide number of seconds to wait for successful response.",
     )
 
     test.add_argument(
@@ -138,16 +127,40 @@ def get_arguments():
     test.add_argument(
         "-u", "--uefi", action="store_true", help="Request UEFI in provisioning."
     )
+
+    test.add_argument(
+        "--tag", nargs=1, help="Tag the archived task file with a custom tag."
+    )
+
     report = subparsers.add_parser(
         "report",
         help="Report results for requested tasks.",
-        description="Parses task IDs, Testing Farm artifact URLs "
+        description="Parse task IDs, Testing Farm artifact URLs "
         "or Testing Farm API request URLs from multiple sources.",
     )
+    tasks_source = report.add_mutually_exclusive_group()
+    tasks_source.add_argument(
+        "-f",
+        "--file",
+        action="append",
+        help="A filepath is the source for the request_ids, artifact URLs or request URLs to parse. "
+        "Can be provided multiple times -f file1 -f ~/file2",
+    )
+    tasks_source.add_argument(
+        "-c",
+        "--cmd",
+        action="append",
+        help="Commandline is the source for the request_ids, artifact URLs or request URLs to parse. "
+        "Can be provided multiple times -c id1 -c id2",
+    )
+    tasks_source.add_argument(
+        "--tag", action="append", help="Query for all task results under a given tag."
+    )
     report.add_argument(
-        "--showarch",
-        action="store_true",
-        help="Display architecture. By default the architecture is not shown.",
+        "-p",
+        "--default-path",
+        type=pathlib.Path,
+        help="Redefine the default path to the archived task files.",
     )
     report.add_argument(
         "-l2",
@@ -174,6 +187,11 @@ def get_arguments():
         help="Download logs for requested run(s).",
     )
     report.add_argument(
+        "--showarch",
+        action="store_true",
+        help="Display architecture. By default the architecture is not shown.",
+    )
+    report.add_argument(
         "--skip-pass",
         action="store_true",
         help="Skip PASSED results while showing table and while downloading logs.",
@@ -187,40 +205,10 @@ def get_arguments():
         "-u",
         "--unify-results",
         action="append",
-        help="Plans name to be treated as one in plan1=plan2 format, useful for runs comparison in case of renaming.",
-    )
-    tasks_source = report.add_mutually_exclusive_group()
-    tasks_source.add_argument(
-        "-l",
-        "--latest",
-        action="store_true",
-        help=f"""
-        Parse the request_ids, artifact URLs or request URLs from the latest run.
-        {FormatText.format_text('Mutually exclusive with respect to --file and --cmd.', bold=True)}
-    """,
-    )
-    tasks_source.add_argument(
-        "-f",
-        "--file",
-        action="append",
-        help=f"""
-        A filepath is the source for the request_ids, artifact URLs or request URLs to parse.
-        Can be provided multiple times -f file1 -f ~/file2 ...
-        {FormatText.format_text('Mutually exclusive with respect to --latest and --cmd.', bold=True)}
-    """,
-    )
-    tasks_source.add_argument(
-        "-c",
-        "--cmd",
-        action="append",
-        help=f"""
-        Commandline is the source for the request_ids, artifact URLs or request URLs to parse.
-        Can be provided multiple times -c id1 -c id2 ...
-        {FormatText.format_text('Mutually exclusive with respect to --file and --latest.', bold=True)}
-    """,
+        help="Plan name to be treated as one in plan1=plan2 format, useful for runs comparison in case of renaming.",
     )
 
-    return vars(parser.parse_args())
+    return parser.parse_args()
 
 
 args = get_arguments()

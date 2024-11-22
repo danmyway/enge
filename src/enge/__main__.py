@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
+import logging
 import sys
 
-import logging
 from enge.utils.opt_manager import parsed_opts
 
 
@@ -10,7 +10,7 @@ def main():
     loglevel = logging.INFO
     logformat = "%(levelname)-8s | %(message)s"
 
-    if parsed_opts.debug:
+    if parsed_opts.cli_args.debug:
         loglevel = logging.DEBUG
 
     logging.basicConfig(
@@ -18,12 +18,12 @@ def main():
         format=logformat,
     )
 
-    if parsed_opts.action == "test":
+    if parsed_opts.cli_args.action == "test":
         from src.enge.dispatch.__main__ import main as dispatch
 
         sys.exit(dispatch())
 
-    elif parsed_opts.action == "report":
+    elif parsed_opts.cli_args.action == "report":
         from .report.__main__ import main as report
 
         sys.exit(report())
