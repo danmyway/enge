@@ -9,8 +9,8 @@ import lxml.etree
 import requests
 from prettytable import PrettyTable
 
-from src.enge.utils import FormatText
-from src.enge.utils.opt_manager import parsed_opts
+from enge.utils import FormatText
+from enge.utils.opt_manager import parsed_opts
 
 RETURN_VALUE = None
 """
@@ -43,7 +43,6 @@ def update_retval(new_value):
 
 
 def parse_tasks():
-    print(parsed_opts.cli_args)
     request_url_list = []
 
     def _get_tasks_source_data():

@@ -4,8 +4,8 @@ import sys
 
 import requests
 
-from src.enge.utils.globals import ARTIFACT_MAPPING
-from src.enge.utils.opt_manager import parsed_opts
+from enge.utils.globals import ARTIFACT_MAPPING
+from enge.utils.opt_manager import parsed_opts
 from .tf_send_request import SubmitTest
 
 LOGGER = logging.getLogger(__name__)

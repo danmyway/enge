@@ -6,8 +6,8 @@ import time
 
 import requests
 
-from src.enge.utils import FormatText, get_datetime
-from src.enge.utils.opt_manager import parsed_opts
+from enge.utils import FormatText, get_datetime
+from enge.utils.opt_manager import parsed_opts
 
 LOGGER = logging.getLogger(__name__)
 

@@ -2,9 +2,9 @@
 import ast
 import logging
 
-from src.enge.utils.arg_parser import args
-from src.enge.utils.config_parser import load_config
-from src.enge.utils.globals import DEFAULT_CONFIG_PATHS
+from enge.utils.arg_parser import args
+from enge.utils.config_parser import load_config
+from enge.utils.globals import DEFAULT_CONFIG_PATHS
 
 LOGGER = logging.getLogger(__name__)
 
