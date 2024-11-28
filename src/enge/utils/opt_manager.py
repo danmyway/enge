@@ -6,12 +6,11 @@ from enge.utils.arg_parser import args
 from enge.utils.config_parser import load_config
 from enge.utils.globals import DEFAULT_CONFIG_PATHS
 
-LOGGER = logging.getLogger(__name__)
-
 
 class ParsedOpts:
     def __init__(self, cli_args=None):
-        self.config = load_config(paths=DEFAULT_CONFIG_PATHS)
+        config_paths = [args.config] or DEFAULT_CONFIG_PATHS
+        self.config = load_config(paths=config_paths)
         self.cli_args = cli_args or {}
 
         self.options = self._get_config_options()

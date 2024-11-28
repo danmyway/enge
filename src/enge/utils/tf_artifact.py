@@ -51,6 +51,16 @@ class CoprRef:
         )
         self.compose_mapping = options.tests_compose_mapping
 
+        for target in options.cli_args.target:
+            if target not in self.compose_mapping.keys():
+                LOGGER.critical(
+                    f"Requested target {target} not found in the configured mapping!"
+                )
+                LOGGER.critical(
+                    f"The configured mapping contains the following targets: {[i for i in self.compose_mapping.keys()]}"
+                )
+                sys.exit(2)
+
         if self.build_reference:
 
             def _get_correct_build_list(build_ref=None):
@@ -188,7 +198,7 @@ class CoprRef:
                     LOGGER.warning("Invalid response, please enter 'y' or 'n'. ")
 
         LOGGER.info(
-            "Looking for a buildID for the %s version %s.",
+            "Looking for a buildID of the %s version %s.",
             build.source_package["name"],
             build.source_package["version"],
         )
@@ -197,7 +207,7 @@ class CoprRef:
         build_time = datetime.strptime(timestamp_str[0:13], timestamp_format)
 
         LOGGER.debug(f"Last build found was built at {build_time}")
-        LOGGER.info(
+        LOGGER.debug(
             f"Build URL: {os.path.join(self.copr_build_baseurl, str(build.id))}"
         )
 
@@ -219,7 +229,7 @@ class CoprRef:
                         copr_info_dict["compose"], bold=True
                     )
                     LOGGER.info(
-                        f"The copr buildID {buildid} for testing on {compose} was assigned for the test batch."
+                        f"The copr buildID {buildid} for testing on {compose} was assigned for the test job."
                     )
 
                     build_info.append(copr_info_dict)
@@ -293,7 +303,7 @@ class BrewRef:
                     "distro": None,
                 }
                 LOGGER.info(
-                    f"Assigning build id {build_reference} for testing on {distro} to test batch."
+                    f"The brew build {build_reference} for testing on {distro} was assigned for the test job."
                 )
                 # Assign correct SOURCE_RELEASE and TARGET_RELEASE
                 brew_info_dict["build_id"] = build_reference
@@ -347,7 +357,7 @@ class BrewRef:
 
         elif self.task_id:
             LOGGER.info(
-                f"Gathering the brew build information for the {package} task ID {reference}."
+                f"Gathering the brew build information for the {package} taskID {reference}."
             )
             tasks = reference
             volume_names = [

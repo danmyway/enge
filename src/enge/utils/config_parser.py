@@ -18,7 +18,5 @@ def load_config(paths):
             config.read(path)
             return config
     else:
-        LOGGER.critical(
-            f"No config file found on any of the expected paths: {list(expanded_paths)}"
-        )
+        LOGGER.critical(f"No config file found on any of the expected paths: {paths}")
         sys.exit(99)
