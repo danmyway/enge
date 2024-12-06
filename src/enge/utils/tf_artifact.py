@@ -34,7 +34,7 @@ class CoprRef:
             self.build_reference = reference
         owner = options.copr_api.get("owner") or options.project.get("owner")
         rpm_name = options.copr_api.get("package") or options.project.get("name")
-        owner_is_group = options.copr_api.get("owner_is_group")
+        owner_is_group = options.copr_api.get("owner_is_group") or False
         if owner_is_group:
             copr_owner = "".join(("@", owner))
         group = "g" if owner_is_group else ""
@@ -50,6 +50,11 @@ class CoprRef:
             "build",
         )
         self.compose_mapping = options.tests_compose_mapping
+        if not self.compose_mapping:
+            LOGGER.critical("Compose mapping not found!")
+            LOGGER.critical(
+                "Please validate, that you have configured the compose mapping in the configuration file."
+            )
 
         for target in options.cli_args.target:
             if target not in self.compose_mapping.keys():
@@ -274,6 +279,11 @@ class BrewRef:
         self.session.gssapi_login()
 
         self.compose_mapping = options.tests_compose_mapping
+        if not self.compose_mapping:
+            LOGGER.critical("Compose mapping not found!")
+            LOGGER.critical(
+                "Please validate, that you have configured the compose mapping in the configuration file."
+            )
 
         self.epel_composes = {
             f"rhel-{version}": [
@@ -335,7 +345,7 @@ class BrewRef:
             dict: A dictionary with Brew task IDs as keys and associated composes as values.
         """
         query = session.listBuilds(prefix=package)
-        brewbuild_baseurl = options.brew_api.get("build_baseurl")
+        brewbuild_baseurl = options.brew_api.get("taskid_baseurl")
         tasks = []
         if self.build_reference:
             LOGGER.info(

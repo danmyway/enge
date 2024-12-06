@@ -46,10 +46,8 @@ class SubmitTest:
         self.tag = parsed_opts.cli_args.tag
 
     def record_task_ids(self, task_id):
-        self.latest_tasks_file = parsed_opts.common.get("archive_tasks_latest")
-        self.archive_tasks_default_path = os.path.expanduser(
-            parsed_opts.common.get("archive_tasks_default")
-        )
+        self.latest_tasks_file = parsed_opts.archive_tasks_latest
+        self.archive_tasks_default_path = parsed_opts.archive_tasks_default
         self.archive_tasks_file = os.path.join(
             self.archive_tasks_default_path, self.archive_tasks_filename
         )
