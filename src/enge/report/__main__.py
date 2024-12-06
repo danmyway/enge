@@ -10,6 +10,7 @@ import lxml.etree
 import requests
 from enge.utils import FormatText
 from enge.utils.opt_manager import parsed_opts
+from enge.utils.globals import TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL
 from prettytable import PrettyTable
 from requests.exceptions import ConnectionError
 
@@ -29,8 +30,6 @@ NO_RESULT = 4
 
 LOGGER = logging.getLogger(__name__)
 LATEST_TASKS_FILE = parsed_opts.archive_tasks_latest
-TESTING_FARM_ENDPOINT = parsed_opts.testing_farm.get("endpoint_url")
-LOG_ARTIFACT_BASE_URL = parsed_opts.testing_farm.get("log_artifacts_url")
 
 
 def update_retval(new_value):

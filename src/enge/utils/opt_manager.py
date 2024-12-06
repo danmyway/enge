@@ -60,9 +60,17 @@ class ParsedOpts:
         }
 
         # Define essential options for each section
-        essential_options = {
-            "testing_farm": ["endpoint_url", "log_artifacts_url"],
-        }
+        essential_options = {}
+        if self.cli_args.action == "test":
+            essential_options.update(
+                {
+                    "project": ["name", "owner", "repo_url"],
+                    "tests": ["composes"],
+                    "testing_farm": ["api_key", "cloud_resources_tag"],
+                }
+            )
+            if self.cli_args.brew:
+                essential_options.update({"brew_api": ["session_url", "taskid_url"]})
 
         def _log_empty_essential_options():
             """Log critical messages for missing essential options."""
