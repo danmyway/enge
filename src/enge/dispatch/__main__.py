@@ -14,7 +14,6 @@ compose_mapping = parsed_opts.tests_compose_mapping
 tests_repo_base_url = parsed_opts.tests.get("git_url") or parsed_opts.project.get(
     "repo_url"
 )
-git_response = requests.get(tests_repo_base_url)
 
 plans = parsed_opts.plans
 
@@ -26,10 +25,14 @@ elif parsed_opts.cli_args.brew:
     artifact_type_alias = "brew"
     artifact_type = ARTIFACT_MAPPING["brew"]
     reference = [parsed_opts.brew_reference]
-copr_pkg_name = parsed_opts.copr_api.get("package") or ""
-copr_repo = parsed_opts.copr_api.get("repository") or ""
+copr_pkg_name = (
+    parsed_opts.copr_api.get("package") or parsed_opts.project.get("name") or ""
+)
+copr_repo = parsed_opts.copr_api.get("repository") or copr_pkg_name or ""
 
-brew_pkg_name = parsed_opts.brew_api.get("package") or ""
+brew_pkg_name = (
+    parsed_opts.brew_api.get("package") or parsed_opts.project.get("name") or ""
+)
 
 
 def main():
@@ -43,9 +46,7 @@ def main():
     submit_test.architecture = parsed_opts.cli_args.architecture
     submit_test.artifact_type = artifact_type
     submit_test.package = parsed_opts.project.get("name")
-    submit_test.business_unit_tag = (
-        parsed_opts.testing_farm.get("cloud_resources_tag") or None
-    )
+    submit_test.business_unit_tag = parsed_opts.testing_farm.get("cloud_resources_tag")
     submit_test.boot_method = "bios"
     if parsed_opts.cli_args.uefi:
         submit_test.boot_method = "uefi"
@@ -53,6 +54,8 @@ def main():
         parsed_opts.cli_args.parallel_limit or parsed_opts.parallel_limit or None
     )
     submit_test.print_header = True
+
+    git_response = requests.get(tests_repo_base_url)
 
     if git_response.status_code == 404:
         LOGGER.critical(f"There is an issue with reaching the tests repository url.")

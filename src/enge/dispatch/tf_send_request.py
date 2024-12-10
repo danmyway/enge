@@ -7,6 +7,7 @@ import time
 import requests
 
 from enge.utils import FormatText, get_datetime
+from enge.utils.globals import TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL
 from enge.utils.opt_manager import parsed_opts
 
 LOGGER = logging.getLogger(__name__)
@@ -37,8 +38,8 @@ class SubmitTest:
         self.datetime_stamp = get_datetime()
         self.archive_tasks_filename = f"enge_jobs_archive_{self.datetime_stamp}"
         self.task_id = None
-        self.log_artifact_base_url = parsed_opts.testing_farm.get("log_artifacts_url")
-        self.testing_farm_endpoint = parsed_opts.testing_farm.get("endpoint_url")
+        self.log_artifact_base_url = LOG_ARTIFACT_BASE_URL
+        self.testing_farm_endpoint = TESTING_FARM_ENDPOINT
         self.request_status = None
         self.log_artifact_url = None
         self.dispatch_summary = None
@@ -46,10 +47,8 @@ class SubmitTest:
         self.tag = parsed_opts.cli_args.tag
 
     def record_task_ids(self, task_id):
-        self.latest_tasks_file = parsed_opts.common.get("archive_tasks_latest")
-        self.archive_tasks_default_path = os.path.expanduser(
-            parsed_opts.common.get("archive_tasks_default")
-        )
+        self.latest_tasks_file = parsed_opts.archive_tasks_latest
+        self.archive_tasks_default_path = parsed_opts.archive_tasks_default
         self.archive_tasks_file = os.path.join(
             self.archive_tasks_default_path, self.archive_tasks_filename
         )

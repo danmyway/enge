@@ -1,11 +1,12 @@
 # #!/usr/bin/env python3
 import os
+import re
 import sys
 from datetime import datetime
 from logging import getLogger
 
 import koji
-from copr.v3 import BuildProxy
+from copr.v3 import BuildProxy, CoprNoResultException
 from copr.v3 import exceptions as coprexcept
 
 from . import FormatText
@@ -32,9 +33,16 @@ class CoprRef:
             self.build_id = int(reference[0])
         except (ValueError, TypeError):
             self.build_reference = reference
+
+        if self.build_reference == [None]:
+            LOGGER.warning("No specific value was provided for the copr build query!")
+            LOGGER.warning(
+                "The latest build from the project will be used as a testing artifact!"
+            )
         owner = options.copr_api.get("owner") or options.project.get("owner")
         rpm_name = options.copr_api.get("package") or options.project.get("name")
-        owner_is_group = options.copr_api.get("owner_is_group")
+        owner_is_group = options.copr_api.get("owner_is_group") or False
+        copr_owner = owner
         if owner_is_group:
             copr_owner = "".join(("@", owner))
         group = "g" if owner_is_group else ""
@@ -50,8 +58,8 @@ class CoprRef:
             "build",
         )
         self.compose_mapping = options.tests_compose_mapping
-
-        for target in options.cli_args.target:
+        targets = options.cli_args.target or self.compose_mapping.keys()
+        for target in targets:
             if target not in self.compose_mapping.keys():
                 LOGGER.critical(
                     f"Requested target {target} not found in the configured mapping!"
@@ -71,29 +79,40 @@ class CoprRef:
                     list: A list of COPR builds that match the specified reference.
                 """
                 clean_build_list = []
-                LOGGER.info(
-                    f"Gathering the fedora-copr-build information for the referenced {build_ref}."
-                )
-
-                query = self.session.get_list(copr_owner or owner, repository)
+                reference_pattern = fr".*{build_reference}(\..*|$)"
+                message = f"Gathering the fedora-copr-build information for the referenced {build_ref}."
+                # If no value is provided for the --copr argument nor is set in the config,
+                # query for the latest build in the project
+                if self.build_reference == [None]:
+                    message = f"Gathering the fedora-copr-build information for the project's latest copr build."
+                LOGGER.info(message)
+                try:
+                    query = self.session.get_list(copr_owner, repository)
+                except CoprNoResultException as no_copr:
+                    LOGGER.critical(
+                        "There seems to be an issue with the copr_api configuration."
+                    )
+                    if not owner_is_group:
+                        LOGGER.critical(
+                            "Please check, that the owner, owner_is_group and package options are set correctly."
+                        )
+                    LOGGER.debug(f"{type(no_copr).__name__}: {no_copr}")
+                    sys.exit(99)
 
                 for build_munch in query:
                     if (
                         build_munch.state != "failed"
                         and build_munch.source_package["name"] == package
                         and build_munch.source_package["version"] is not None
-                        and str(build_reference)
-                        in build_munch.source_package["version"]
+                        and re.match(
+                            reference_pattern, build_munch.source_package["version"]
+                        )
                     ):
                         clean_build_list.append(build_munch)
 
                 if not clean_build_list:
                     LOGGER.warning(
-                        FormatText.format_text(
-                            f"No build for given reference {build_reference} found!",
-                            text_col=FormatText.yellow,
-                            bold=True,
-                        )
+                        f"No build for given reference {build_reference} found!"
                     )
                     LOGGER.warning(self.copr_build_baseurl + "s")
                 return clean_build_list
@@ -274,6 +293,11 @@ class BrewRef:
         self.session.gssapi_login()
 
         self.compose_mapping = options.tests_compose_mapping
+        if not self.compose_mapping:
+            LOGGER.critical("Compose mapping not found!")
+            LOGGER.critical(
+                "Please validate, that you have configured the compose mapping in the configuration file."
+            )
 
         self.epel_composes = {
             f"rhel-{version}": [
@@ -335,7 +359,7 @@ class BrewRef:
             dict: A dictionary with Brew task IDs as keys and associated composes as values.
         """
         query = session.listBuilds(prefix=package)
-        brewbuild_baseurl = options.brew_api.get("build_baseurl")
+        brewbuild_baseurl = options.brew_api.get("taskid_url")
         tasks = []
         if self.build_reference:
             LOGGER.info(

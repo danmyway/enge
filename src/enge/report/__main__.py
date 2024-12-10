@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -7,10 +8,11 @@ import uuid
 
 import lxml.etree
 import requests
-from prettytable import PrettyTable
-
 from enge.utils import FormatText
 from enge.utils.opt_manager import parsed_opts
+from enge.utils.globals import TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL
+from prettytable import PrettyTable
+from requests.exceptions import ConnectionError
 
 RETURN_VALUE = None
 """
@@ -27,13 +29,7 @@ ERROR_HERE = 3
 NO_RESULT = 4
 
 LOGGER = logging.getLogger(__name__)
-LATEST_TASKS_FILE = parsed_opts.common.get("archive_tasks_latest")
-DEFAULT_TASKS_PATH = parsed_opts.cli_args.default_path or parsed_opts.common.get(
-    "archive_tasks_default"
-)
-TESTING_FARM_ENDPOINT = parsed_opts.testing_farm.get("endpoint_url")
-LOG_ARTIFACT_BASE_URL = parsed_opts.testing_farm.get("log_artifacts_url")
-TESTS_COMPOSE_MAPPING = parsed_opts.tests_compose_mapping
+LATEST_TASKS_FILE = parsed_opts.archive_tasks_latest
 
 
 def update_retval(new_value):
@@ -48,8 +44,8 @@ def parse_tasks():
     def _get_tasks_source_data():
         source = None
         source_data = []
-        task_ids = []
         if parsed_opts.cli_args.cmd:
+            source = "command-line"
             source_data.extend(parsed_opts.cli_args.cmd)
 
         elif parsed_opts.cli_args.file:
@@ -64,7 +60,7 @@ def parse_tasks():
                     )
                     sys.exit(1)
         elif parsed_opts.cli_args.tag:
-            default_path = os.path.expanduser(DEFAULT_TASKS_PATH)
+            default_path = parsed_opts.archive_tasks_default
             if not os.path.exists(default_path):
                 LOGGER.critical(f"The given path {default_path} does not exist!")
                 sys.exit(1)
@@ -95,28 +91,25 @@ def parse_tasks():
 
     tasks_source, tasks_source_data = _get_tasks_source_data()
 
+    uuid_pattern = re.compile(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+    )
+
     for task in tasks_source_data:
         task = task.strip().rstrip("/")
-
         if not task:
             continue
-        elif task.startswith(TESTING_FARM_ENDPOINT):
-            task = task
-        elif task.startswith(LOG_ARTIFACT_BASE_URL):
-            task = task.replace(LOG_ARTIFACT_BASE_URL, TESTING_FARM_ENDPOINT)
-        else:
-            try:
-                task = (
-                    TESTING_FARM_ENDPOINT
-                    + "/"
-                    + str(uuid.UUID([part for part in task.split("/") if part][-1]))
-                )
-            except ValueError:
-                LOGGER.warning(f"Unrecognized task {task}")
-                update_retval(NO_RESULT)
-                continue
+
+        match = uuid_pattern.search(task)
+        if not match:
+            LOGGER.debug(f"Cannot parse the UUID from {task}")
+            continue
+
+        matched_uuid = match.group(0)
+        task = os.path.join(TESTING_FARM_ENDPOINT, matched_uuid)
 
         # Validate UUID
+        task_id = None
         try:
             task_id = task.split("/")[-1]
             uuid.UUID(task_id)
@@ -129,15 +122,13 @@ def parse_tasks():
 
 
 def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=False):
-    logs_base_directory = "/var/tmp/tesar/logs"
+    logs_base_directory = "/var/tmp/enge/logs"
 
     if request_url_list is None or tasks_source is None:
         request_url_list, tasks_source = parse_tasks()
     if len(request_url_list) == 0 or all(element == "" for element in request_url_list):
-        LOGGER.critical("There are no tasks to report for.")
-        LOGGER.critical(
-            f"Verify the {tasks_source} has at least one task in it or pass the values to the commandline with -c/--cmd."
-        )
+        LOGGER.critical("There are no tasks to report for!")
+        LOGGER.critical(f"Please verify the input through the {tasks_source} is valid.")
         sys.exit(1)
 
     parsed_dict = {}
@@ -148,7 +139,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
 
     LOGGER.info("Reporting for the requested tasks:")
     for url in request_url_list:
-        LOGGER.debug(f"Getting results of '{url}'")
+        LOGGER.debug(f"Gathering the results for '{url}'")
         request = requests.get(url)
         request_state = request.json()["state"].upper()
         request_uuid = request.json()["id"]
@@ -176,11 +167,9 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             request_state, background, FormatText.black
         )
 
-        compose_len = _eval_longest_compose()
-
         LOGGER.info(
             FormatText.format_text(
-                f"{str(request_target):<{compose_len}} {request_plan:<20}",
+                f"{str(request_target):<40} {request_plan:<30} ",
                 text_col=FormatText.blue,
                 bold=True,
             )
@@ -233,7 +222,13 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
         if not results_xml_url:
             continue
 
-        results_xml_response = requests.get(results_xml_url)
+        try:
+            results_xml_response = requests.get(results_xml_url)
+        except ConnectionError as err:
+            LOGGER.critical("There was an issue attempting to create the connection.")
+            LOGGER.critical("Please verify, that you're connected to the VPN.")
+            LOGGER.debug(err)
+            sys.exit(99)
 
         if results_xml_response:
             xunit = results_xml_response.text
@@ -313,7 +308,6 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             testsuite_result = elem.xpath("./@result")[0].upper()
             testsuite_test_count = elem.xpath("./@tests")
             testsuite_log_dir = testsuite_name.split("/")[-1]
-            LOGGER.debug(f"Processing results of testsuit '{testsuite_name}'")
 
             if skip_pass and testsuite_result == "PASSED":
                 LOGGER.debug(
@@ -337,13 +331,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             for test in testsuite_testcase:
                 testcase_name = test.xpath("./@name")[0]
                 testcase_result = test.xpath("./@result")[0].upper()
-                LOGGER.debug(
-                    f"Processing result of test '{testsuite_name}/{testcase_name}'"
-                )
                 if skip_pass and testcase_result == "PASSED":
-                    LOGGER.debug(
-                        f"Skipping test '{testsuite_name}/{testcase_name}' as the result is pass"
-                    )
                     continue
                 testcase_log_url = test.xpath('./logs/log[@name="testout.log"]/@href')[
                     0
@@ -583,22 +571,6 @@ def colorize(result, label=None, color_format_default=FormatText.end):
     """
     label = label if label else result
     return get_color_format(result) + label + color_format_default
-
-
-def _eval_longest_compose():
-    """
-    Helper function evaluating the longest compose name in the mapping.
-    Returns len int of the longest.
-    """
-    compose_len = 0
-    for nest_dict in TESTS_COMPOSE_MAPPING.values():
-        eval_compose_len = len(nest_dict.get("compose"))
-        if eval_compose_len > compose_len:
-            compose_len = len(nest_dict.get("compose"))
-
-    compose_len = compose_len + 5
-
-    return compose_len
 
 
 def main(result_table=None):
