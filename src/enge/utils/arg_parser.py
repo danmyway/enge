@@ -138,22 +138,21 @@ def get_arguments():
         description="Parse task IDs, Testing Farm artifact URLs "
         "or Testing Farm API request URLs from multiple sources.",
     )
-    tasks_source = report.add_mutually_exclusive_group()
-    tasks_source.add_argument(
+    report.add_argument(
         "-f",
         "--file",
         action="append",
         help="A filepath is the source for the request_ids, artifact URLs or request URLs to parse. "
         "Can be provided multiple times -f file1 -f ~/file2",
     )
-    tasks_source.add_argument(
+    report.add_argument(
         "-c",
         "--cmd",
         action="append",
         help="Commandline is the source for the request_ids, artifact URLs or request URLs to parse. "
         "Can be provided multiple times -c id1 -c id2",
     )
-    tasks_source.add_argument(
+    report.add_argument(
         "--tag", action="append", help="Query for all task results under a given tag."
     )
     report.add_argument(
@@ -206,6 +205,43 @@ def get_arguments():
         "--unify-results",
         action="append",
         help="Plan name to be treated as one in plan1=plan2 format, useful for runs comparison in case of renaming.",
+    )
+
+    rerun = subparsers.add_parser(
+        "rerun",
+        help="Parse given tasks and rerun specified jobs.",
+    )
+    rerun.add_argument(
+        "-f",
+        "--file",
+        action="append",
+        help="A filepath is the source for the request_ids, artifact URLs or request URLs to parse. "
+        "Can be provided multiple times -f file1 -f ~/file2",
+    )
+    rerun.add_argument(
+        "-c",
+        "--cmd",
+        action="append",
+        help="Commandline is the source for the request_ids, artifact URLs or request URLs to parse. "
+        "Can be provided multiple times -c id1 -c id2",
+    )
+    rerun.add_argument(
+        "--tag", action="append", help="Query for all task results under a given tag."
+    )
+    rerun.add_argument(
+        "--dryrun",
+        action="store_true",
+        help="Print out just the payload that would be sent to the testing farm.\nDo not actually send any request.",
+    )
+    rerun.add_argument(
+        "--error",
+        action="store_true",
+        help="Re-run only ERROR state jobs.",
+    )
+    rerun.add_argument(
+        "--fail",
+        action="store_true",
+        help="Re-run only FAILED state jobs.",
     )
 
     return parser.parse_args()

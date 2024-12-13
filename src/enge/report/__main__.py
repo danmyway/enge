@@ -8,11 +8,12 @@ import uuid
 
 import lxml.etree
 import requests
-from enge.utils import FormatText
-from enge.utils.opt_manager import parsed_opts
-from enge.utils.globals import TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL
 from prettytable import PrettyTable
 from requests.exceptions import ConnectionError
+
+from enge.utils import FormatText
+from enge.utils.globals import TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL
+from enge.utils.opt_manager import parsed_opts
 
 RETURN_VALUE = None
 """
@@ -48,7 +49,7 @@ def parse_tasks():
             source = "command-line"
             source_data.extend(parsed_opts.cli_args.cmd)
 
-        elif parsed_opts.cli_args.file:
+        if parsed_opts.cli_args.file:
             source = parsed_opts.cli_args.file
             for file in source:
                 if os.path.exists(file):
@@ -59,7 +60,8 @@ def parse_tasks():
                         f"Given path {parsed_opts.cli_args.file} does not exist!"
                     )
                     sys.exit(1)
-        elif parsed_opts.cli_args.tag:
+
+        if parsed_opts.cli_args.tag:
             default_path = parsed_opts.archive_tasks_default
             if not os.path.exists(default_path):
                 LOGGER.critical(f"The given path {default_path} does not exist!")
@@ -74,7 +76,13 @@ def parse_tasks():
                 task_ids = open(file).readlines()
                 source_data.extend(task_ids)
 
-        else:
+        if not any(
+            (
+                parsed_opts.cli_args.file,
+                parsed_opts.cli_args.cmd,
+                parsed_opts.cli_args.tag,
+            )
+        ):
             if not os.path.exists(LATEST_TASKS_FILE):
                 LOGGER.critical(
                     f"The latest job file {LATEST_TASKS_FILE} does not exist!"
@@ -177,7 +185,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             + request_state
         )
 
-        if parsed_opts.cli_args.wait:
+        if parsed_opts.cli_args.action == "rerun" or parsed_opts.cli_args.wait:
             while request.json()["state"] not in ("complete", "error", "canceled"):
                 print(end=clear_line)
                 print(
@@ -206,16 +214,12 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
         request_summary = request.json()["result"]["summary"]
         request_result_overall = request.json()["result"]["overall"]
         if request.json()["state"] == "error":
-
-            error_formatted = FormatText.format_text(
-                "ERROR", FormatText.bg_red, FormatText.black
-            )
             error_reason = request_summary
             message = (
-                f"Request ended up in {error_formatted} state, because {error_reason}.\n"
+                f"The request state reports as ERROR, because of {error_reason}.\n"
                 f"See more details on the result page {url.replace(TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL)}"
             )
-            LOGGER.critical(FormatText.bold + message + FormatText.end)
+            LOGGER.warning(FormatText.format_text(message, bold=True))
             update_retval(ERROR_HERE)
 
         results_xml_url = request.json()["result"]["xunit_url"]
@@ -225,7 +229,9 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
         try:
             results_xml_response = requests.get(results_xml_url)
         except ConnectionError as err:
-            LOGGER.critical("There was an issue attempting to create the connection.")
+            LOGGER.critical(
+                "There was an issue while attempting to create an API connection."
+            )
             LOGGER.critical("Please verify, that you're connected to the VPN.")
             LOGGER.debug(err)
             sys.exit(99)
@@ -282,7 +288,10 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             LOGGER.debug(f"Skipping '{url}' as the overall result is pass")
             continue
 
-        if parsed_opts.cli_args.download_logs:
+        if (
+            parsed_opts.cli_args.action != "rerun"
+            and parsed_opts.cli_args.download_logs
+        ):
             LOGGER.info("  > Downloading the log files.")
             # Create the log directory path for the request
             log_dir_path = os.path.join(logs_base_directory, log_dir)
@@ -323,7 +332,10 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             }
             parsed_dict[request_uuid]["testsuites"].append(testsuite_data)
 
-            if parsed_opts.cli_args.download_logs:
+            if (
+                parsed_opts.cli_args.action != "rerun"
+                and parsed_opts.cli_args.download_logs
+            ):
                 # Create the log directory path for the testsuite
                 testsuite_log_dir_path = os.path.join(log_dir_path, testsuite_log_dir)
                 os.makedirs(testsuite_log_dir_path, exist_ok=True)
@@ -345,7 +357,10 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
                 }
                 testsuite_data["testcases"].append(testcase_data)
 
-                if parsed_opts.cli_args.download_logs:
+                if (
+                    parsed_opts.cli_args.action != "rerun"
+                    and parsed_opts.cli_args.download_logs
+                ):
                     response = urllib.request.urlopen(testcase_log_url)
                     log_data = response.read().decode("utf-8")
                     log_file_path = os.path.join(testsuite_log_dir_path, log_name)
@@ -353,7 +368,10 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
                     with open(log_file_path, "w") as logfile:
                         logfile.write(log_data)
 
-        if parsed_opts.cli_args.download_logs:
+        if (
+            parsed_opts.cli_args.action != "rerun"
+            and parsed_opts.cli_args.download_logs
+        ):
             LOGGER.info(f"    > Logfiles stored in {log_dir_path}")
 
     return parsed_dict
@@ -481,8 +499,6 @@ def build_table():
         fields += ["Test Case"]
         fields += ["Test Result"]
     result_table.field_names = fields
-
-    color_format_default = FormatText.end
 
     planname_split_index = 0
     testname_split_index = 0
