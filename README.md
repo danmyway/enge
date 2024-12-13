@@ -12,13 +12,7 @@
        1. [Commands](#sub-commands)
           1. [Test](#test)
           2. [Report](#report)
-       2. [Examples](#examples)
-4. [Currently used variables](#currently-used-variables)
-    1. [Payload](#payload)
-    2. [List globally available composes](#list-globally-available-composes)
-        1. [Public ranch](#public-ranch)
-        2. [Private ranch](#private-ranch)
-
+          3. [Rerun](#rerun)
 
 
 ENGE
@@ -91,7 +85,24 @@ Use `-w/--wait` to override the default 20 seconds waiting time for successful r
 If for any reason you would need to verify the validity of the raw payload, use `--dryrun` to get it pretty-printed to the command line.
 When no `-t/--target` option is specified, the request is sent for all mapped target composes for their respective tested packages.
 UEFI boot method can be requested by using the `-u/--uefi` option.
-Default limit for plans to be run in parallel is set to 20, to override the default use the `--parallel-limit` option or change the option in the config file..
+Default limit for plans to be run in parallel is set to 20, to override the default use the `--parallel-limit` option or change the option in the config file.
+
+```
+# Test latest build from main (most of the arguments set through the config file)
+enge test --copr
+
+# Test copr build for PR#123 with plan named basic_sanity_check on all targets
+enge test --copr pr123 -p /plans/tier0/basic_sanity_checks
+
+# Specify which composes you want to run test plan (in this case tier0 on RHEL9)
+enge test --copr pr123 -p /plans/tier0 -7 rhel9
+
+# Run every test plan for brew build 0.12-3 on all composes
+enge test --brew 0.12-3 -p /plans
+
+# Specify more individual test plans
+enge test --brew 0.12-3 -p /plans/tier0/basic_sanity_checks /plans/tier1/whatever_else
+```
 
 ##### Report
 With the report command you are able to get the results of the requested jobs straight to the command line.<br>
@@ -103,6 +114,20 @@ Default invocation `enge report` parses the tasks stored in the latest file at `
 You can specify a different path to the file with `-f/--file` or pass the jobs to get report for straight to the commandline with `-c/--cmd`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
 The tool is able to parse and report for multiple variants of values as long as they are separated by a new-line (in the files) or a `-c/--cmd` argument (on the commandline). Raw request_ids, artifact URLs (Testing Farm result page URLs) or request URLs are allowed.
 In case you want to get the log files stored locally, use `-d/--download-logs`. Log files for pytest runs will be stored in `/var/tmp/enge/logs/{request_id}_log/`. In case there are multiple plans in one pipeline, the logs should get divided in their respective plan directories.
+
+```
+# Get results for the requests in the latest file /tmp/enge_latest_jobs
+enge report
+
+# Report from custom file on the test level
+enge report --level2 --file ~/my_jobs_file
+
+# Pass requests' references to the commandline
+enge report --cmd d60ee5ab-194f-442d-9e37-933be1daf2ce --cmd https://api.endpoint/requests/9f42645f-bcaa-4c73-87e2-6e1efef16635
+
+# Shorten the displayed test and plan names
+enge report --level2 --cmd 9f42645f-bcaa-4c73-87e2-6e1efef16635 --short
+```
 
 Corresponding return code is set based on the results with following logic:
  * 0 - The results are complete for each request and all are pass
@@ -118,107 +143,28 @@ The default way to show results is by showing each run details as a separate tab
 ❯ enge report -c 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b -c c3726a72-8e6b-4c51-88d8-612556df7ac1 --short --unify-results=tier2=tier2_7to8 --compare
 ```
 
-#### Examples
+##### Rerun
+Rerun tasks which report as FAILED or ERROR.<br>
+Only works for whole plans.<br>
+Reads the same input as the report module - `--file`, `--cmd` or `--get-tag`, which can be combined.<br>
+Use `--error` or `--fail` if you want to further specify which type of non-zero result you want to re-run, default is both results. If the whole task reports state error, the original plan filtering will be used, otherwise each of the failing/erroring plans will be passed to the plan name field connected by a pipe `|`, meaning all qualified plans from a single original request will be sent as one request for a re-run.<br>
+Use `--dryrun` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
+Use `--set-tag` to label the archived jobs file.
+> NOTE:<br>The `--get-tag` option can be used multiple times and works with the `or` logic. `--get-tag firstrun --get-tag rc` will query and report for any file containing any of the tags requested.<br>
+`myfile.firstrun`<br>`myfile.firstrun.ga`<br>`myfile.secondrun.rc`<br>`myfile.rc`<br>To query for a specific file with multiple tags (e.g. myfile.firstrun.rc) one needs to provide the full string as a tag  `--get-tag firstrun.rc`.
 
 ```
-# Test latest build from main (most of the arguments set through the config file)
-$ enge test --copr
+# Rerun qualified jobs from a file
+enge rerun -f my_archive_file
 
-# Test copr build for PR#123 with plan named basic_sanity_check on all targets
-$ enge test --copr pr123 -p /plans/tier0/basic_sanity_checks
+# Disregard errors for a rerun qualification
+enge rerun -f my_archive_file --fail
 
-# Specify which composes you want to run test plan (in this case tier0 on RHEL9)
-$ enge test --copr pr123 -p /plans/tier0 -7 rhel9
+# Rerun qualified job from a commandline
+enge rerun -c 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b
 
-# Run every test plan for brew build 0.12-3 on all composes
-$ enge test --brew 0.12-3 -p /plans
-
-# Specify more individual test plans
-$ enge test --brew 0.12-3 -p /plans/tier0/basic_sanity_checks /plans/tier1/whatever_else
-
+# Query the archive files by tag
+enge rerun --get-tag rc --set-tag secondrun --set-tag rc
+# or
+enge rerun --get-tag rc --set-tag secondrun.rc
 ```
-
-```
-# Get results for the requests in the latest file /tmp/enge_latest_jobs
-$ enge report
-
-# Report from custom file on the test level
-$ enge report --level2 --file ~/my_jobs_file
-
-# Pass requests' references to the commandline
-$ enge report --cmd d60ee5ab-194f-442d-9e37-933be1daf2ce --cmd https://api.endpoint/requests/9f42645f-bcaa-4c73-87e2-6e1efef16635
-
-# Shorten the displayed test and plan names
-$ enge report --level2 --cmd 9f42645f-bcaa-4c73-87e2-6e1efef16635 --short
-
-```
-
-# Currently used variables
-
-## Payload
-
-Link to the testing farm payload documentation:<br>
-https://testing-farm.gitlab.io/api/ <br>
-As of now, the payload yields the following format.
-
-```json lines
-        {"Authorization": "Bearer {api_key}"}
-        {
-            "test": {
-                "fmf": {
-                    "url": tests_git_url,
-                    "ref": tests_git_branch,
-                    "name": plan,
-                    "plan_filter": planfilter,
-                    "test_filter": testfilter,
-                }
-            },
-            "environments": [
-                {
-                    "arch": architecture,
-                    "os": {"compose": compose},
-                    "artifacts": [
-                        {
-                            "id": artifact_id,
-                            "type": artifact_type,
-                            "packages": [package],
-                        }
-                    ],
-                    "settings": {
-                        "provisioning": {
-                            "tags": {"BusinessUnit": business_unit_tag},
-                        }
-                    },
-                    "tmt": {
-                        "context": {
-                            "distro": tmt_distro,
-                            "arch": architecture,
-                            "boot_method": boot_method,
-                        }
-                    },
-                    "hardware": {
-                        "boot": {
-                            "method": boot_method,
-                        }
-                    },
-                }
-            ],
-            "settings": {"pipeline": {"parallel-limit": parallel_limit}},
-        }
-```
-
-### Other
-#### List globally available composes
-
-The Testing Farm has many available composes on both public and private ranch.<br>
-To list them use commands bellow:
-
-#### Public ranch
-
-https://api.dev.testing-farm.io/v0.1/composes
-
-`https GET https://api.dev.testing-farm.io/v0.1/composes`
-
-#### Private ranch
-
-`curl -s https://gitlab.cee.redhat.com/baseos-qe/citool-config/-/raw/production/variables-composes.yaml | grep 'compose:' | tr -s ' '`
