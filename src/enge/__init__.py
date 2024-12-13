@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
 import logging
-from enge.utils.arg_parser import args
+
 from enge.utils import FormatText
+from enge.utils.arg_parser import args
 
 
 class ColorizedFormatter(logging.Formatter):

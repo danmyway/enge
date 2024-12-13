@@ -12,6 +12,7 @@
        1. [Commands](#sub-commands)
           1. [Test](#test)
           2. [Report](#report)
+          3. [Rerun](#rerun)
        2. [Examples](#examples)
 4. [Currently used variables](#currently-used-variables)
     1. [Payload](#payload)
@@ -91,7 +92,7 @@ Use `-w/--wait` to override the default 20 seconds waiting time for successful r
 If for any reason you would need to verify the validity of the raw payload, use `--dryrun` to get it pretty-printed to the command line.
 When no `-t/--target` option is specified, the request is sent for all mapped target composes for their respective tested packages.
 UEFI boot method can be requested by using the `-u/--uefi` option.
-Default limit for plans to be run in parallel is set to 20, to override the default use the `--parallel-limit` option or change the option in the config file..
+Default limit for plans to be run in parallel is set to 20, to override the default use the `--parallel-limit` option or change the option in the config file.
 
 ##### Report
 With the report command you are able to get the results of the requested jobs straight to the command line.<br>
@@ -117,6 +118,14 @@ The default way to show results is by showing each run details as a separate tab
 ```
 ❯ enge report -c 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b -c c3726a72-8e6b-4c51-88d8-612556df7ac1 --short --unify-results=tier2=tier2_7to8 --compare
 ```
+
+##### Rerun
+Rerun tasks which report as FAILED or ERROR.<br>
+Only works for whole plans.<br>
+Reads the same input as the report module - `--file`, `--cmd` or `--tag`, which can be combined.<br>
+Use `--error` or `--fail` if you want to further specify which type of non-zero result you want to re-run, default is both results. If the whole task reports state error, the original plan filtering will be used, otherwise each of the failing/erroring plans will be passed to the plan name field connected by a pipe `|`, meaning all qualified plans from a single original request will be sent as one request for a re-run.<br>
+Use `--dryrun` to only display the qualified plans, don't actually send any payload to the Testing Farm.
+
 
 #### Examples
 

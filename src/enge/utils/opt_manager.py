@@ -1,13 +1,12 @@
 # #!/usr/bin/env python3
 import ast
 import logging
-import sys
 import os
+import sys
 
 from enge.utils.arg_parser import args
 from enge.utils.config_parser import load_config
 from enge.utils.globals import DEFAULT_CONFIG_PATHS
-
 
 logger = logging.getLogger(__name__)
 
