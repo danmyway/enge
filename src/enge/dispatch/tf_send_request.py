@@ -189,7 +189,7 @@ class SubmitTest:
             task_id = response.json()["id"]
             self.log_artifact_url = f"{self.log_artifact_base_url}/{task_id}"
             self.dispatch_summary = self.assess_summary_message()
-            if parsed_opts.cli_args.wait:
+            if parsed_opts.cli_args.action != "rerun" and parsed_opts.cli_args.wait:
                 self._response_watcher(self.log_artifact_url)
             else:
                 print(self.dispatch_summary)
