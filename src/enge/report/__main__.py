@@ -205,18 +205,15 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
 
         request_summary = request.json()["result"]["summary"]
         request_result_overall = request.json()["result"]["overall"]
-        if request.json()["state"] == "error":
-
-            error_formatted = FormatText.format_text(
-                "ERROR", FormatText.bg_red, FormatText.black
-            )
+        if "error" in (request.json()["state"], request_result_overall):
             error_reason = request_summary
             message = (
-                f"Request ended up in {error_formatted} state, because {error_reason}.\n"
+                f"Request ended up in ERROR state, because of {error_reason if error_reason else "unknown reason"}.\n"
                 f"See more details on the result page {url.replace(TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL)}"
             )
             LOGGER.critical(FormatText.bold + message + FormatText.end)
             update_retval(ERROR_HERE)
+            continue
 
         results_xml_url = request.json()["result"]["xunit_url"]
         if not results_xml_url:
@@ -433,9 +430,9 @@ def build_table_comparison():
                 if test_key not in regroup_results_tests[plan_key]:
                     regroup_results_tests[plan_key][test_key] = {}
                 try:
-                    regroup_results_tests[plan_key][test_key][
-                        task_uuid
-                    ] = testcase_data["testcase_result"]
+                    regroup_results_tests[plan_key][test_key][task_uuid] = (
+                        testcase_data["testcase_result"]
+                    )
                 except KeyError:
                     regroup_results_tests[plan_key][test_key] = {
                         task_uuid: testcase_data["testcase_result"]

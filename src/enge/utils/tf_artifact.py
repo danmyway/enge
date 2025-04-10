@@ -79,7 +79,7 @@ class CoprRef:
                     list: A list of COPR builds that match the specified reference.
                 """
                 clean_build_list = []
-                reference_pattern = fr".*{build_reference}(\..*|$)"
+                reference_pattern = rf".*{build_reference}(\..*|$)"
                 message = f"Gathering the fedora-copr-build information for the referenced {build_ref}."
                 # If no value is provided for the --copr argument nor is set in the config,
                 # query for the latest build in the project

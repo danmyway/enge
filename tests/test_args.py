@@ -1,6 +1,7 @@
 """
 Unit tests for command-line options
 """
+
 import pytest
 
 from tesar.dispatch.__init__ import get_arguments
