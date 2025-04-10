@@ -211,9 +211,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
                 f"Request ended up in ERROR state, because of {error_reason if error_reason else "unknown reason"}.\n"
                 f"See more details on the result page {url.replace(TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL)}"
             )
-            LOGGER.critical(FormatText.bold + message + FormatText.end)
-            update_retval(ERROR_HERE)
-            continue
+            LOGGER.warning(FormatText.bold + message + FormatText.end)
 
         results_xml_url = request.json()["result"]["xunit_url"]
         if not results_xml_url:
@@ -280,10 +278,7 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             continue
 
         if parsed_opts.cli_args.download_logs:
-            LOGGER.info("  > Downloading the log files.")
-            # Create the log directory path for the request
-            log_dir_path = os.path.join(logs_base_directory, log_dir)
-            os.makedirs(log_dir_path, exist_ok=True)
+            LOGGER.info("Requested download of the logs. This might take a minute.")
 
         if request_uuid not in parsed_dict:
             parsed_dict[request_uuid] = {
@@ -320,20 +315,11 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             }
             parsed_dict[request_uuid]["testsuites"].append(testsuite_data)
 
-            if parsed_opts.cli_args.download_logs:
-                # Create the log directory path for the testsuite
-                testsuite_log_dir_path = os.path.join(log_dir_path, testsuite_log_dir)
-                os.makedirs(testsuite_log_dir_path, exist_ok=True)
-
             for test in testsuite_testcase:
                 testcase_name = test.xpath("./@name")[0]
                 testcase_result = test.xpath("./@result")[0].upper()
                 if skip_pass and testcase_result == "PASSED":
                     continue
-                testcase_log_url = test.xpath('./logs/log[@name="testout.log"]/@href')[
-                    0
-                ]
-                log_name = f"{request_target}_{testcase_name.split('/')[-1]}.log"
 
                 # Constructing the parsed dictionary
                 testcase_data = {
@@ -343,12 +329,35 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
                 testsuite_data["testcases"].append(testcase_data)
 
                 if parsed_opts.cli_args.download_logs:
-                    response = urllib.request.urlopen(testcase_log_url)
-                    log_data = response.read().decode("utf-8")
-                    log_file_path = os.path.join(testsuite_log_dir_path, log_name)
-
-                    with open(log_file_path, "w") as logfile:
-                        logfile.write(log_data)
+                    try:
+                        testcase_log_url = test.xpath(
+                            './logs/log[@name="testout.log"]/@href'
+                        )[0]
+                        log_name = (
+                            f"{request_target}_{testcase_name.split('/')[-1]}.log"
+                        )
+                        LOGGER.debug(
+                            f"Downloading the log files for testsuite {testsuite_name} testcase {testcase_name}."
+                        )
+                        # Create the log directory path for the request
+                        log_dir_path = os.path.join(logs_base_directory, log_dir)
+                        os.makedirs(log_dir_path, exist_ok=True)
+                        # Create the log directory path for the testsuite
+                        testsuite_log_dir_path = os.path.join(
+                            log_dir_path, testsuite_log_dir
+                        )
+                        os.makedirs(testsuite_log_dir_path, exist_ok=True)
+                        response = urllib.request.urlopen(testcase_log_url)
+                        log_data = response.read().decode("utf-8")
+                        log_file_path = os.path.join(testsuite_log_dir_path, log_name)
+                    except IndexError as e:
+                        LOGGER.warning(
+                            f"There is an issue with gathering logs for testsuite {testsuite_name} testcase {testcase_name}."
+                        )
+                        continue
+                    else:
+                        with open(log_file_path, "w") as logfile:
+                            logfile.write(log_data)
 
         if parsed_opts.cli_args.download_logs:
             LOGGER.info(f"    > Logfiles stored in {log_dir_path}")
@@ -554,7 +563,7 @@ def get_color_format(result):
         return FormatText.green + FormatText.bold
     elif result == "FAILED":
         return FormatText.red + FormatText.bold
-    elif result == "ERROR":
+    elif result in ("ERROR", "UNDEFINED", "PENDING"):
         return FormatText.yellow + FormatText.bold
     return color_format_default
 
