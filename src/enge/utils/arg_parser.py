@@ -129,7 +129,9 @@ def get_arguments():
     )
 
     test.add_argument(
-        "--tag", nargs=1, help="Tag the archived task file with a custom tag."
+        "--set-tag",
+        action="append",
+        help="Tag the archived task file with a custom tag.",
     )
 
     report = subparsers.add_parser(
@@ -153,7 +155,9 @@ def get_arguments():
         "Can be provided multiple times -c id1 -c id2",
     )
     report.add_argument(
-        "--tag", action="append", help="Query for all task results under a given tag."
+        "--get-tag",
+        action="append",
+        help="Query for all task results under a given tag.",
     )
     report.add_argument(
         "-p",
@@ -226,7 +230,14 @@ def get_arguments():
         "Can be provided multiple times -c id1 -c id2",
     )
     rerun.add_argument(
-        "--tag", action="append", help="Query for all task results under a given tag."
+        "--get-tag",
+        action="append",
+        help="Query for all task results under a given tag.",
+    )
+    rerun.add_argument(
+        "--set-tag",
+        action="append",
+        help="Tag the archived task file with a custom tag.",
     )
     rerun.add_argument(
         "--dryrun",
@@ -242,6 +253,11 @@ def get_arguments():
         "--fail",
         action="store_true",
         help="Re-run only FAILED state jobs.",
+    )
+    rerun.add_argument(
+        "--showarch",
+        action="store_true",
+        help="Display architecture. By default the architecture is not shown.",
     )
 
     return parser.parse_args()

@@ -61,7 +61,7 @@ def parse_tasks():
                     )
                     sys.exit(1)
 
-        if parsed_opts.cli_args.tag:
+        if parsed_opts.cli_args.get_tag:
             default_path = parsed_opts.archive_tasks_default
             if not os.path.exists(default_path):
                 LOGGER.critical(f"The given path {default_path} does not exist!")
@@ -69,7 +69,7 @@ def parse_tasks():
             source = [
                 file
                 for file in os.listdir(default_path)
-                if parsed_opts.cli_args.tag[0] in file.split(".")[-1]
+                if parsed_opts.cli_args.get_tag[0] in file.split(".")
             ]
             for file in source:
                 file = os.path.join(default_path, file)
@@ -80,7 +80,7 @@ def parse_tasks():
             (
                 parsed_opts.cli_args.file,
                 parsed_opts.cli_args.cmd,
-                parsed_opts.cli_args.tag,
+                parsed_opts.cli_args.get_tag,
             )
         ):
             if not os.path.exists(LATEST_TASKS_FILE):
@@ -211,8 +211,15 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
                 update_retval(NO_RESULT)
                 continue
 
-        request_summary = request.json()["result"]["summary"]
-        request_result_overall = request.json()["result"]["overall"]
+        request_summary = "Undefined"
+        request_result_overall = "Undefined"
+        results_xml_url = None
+
+        if request.json()["result"]:
+            request_summary = request.json()["result"]["summary"]
+            request_result_overall = request.json()["result"]["overall"]
+            results_xml_url = request.json()["result"]["xunit_url"]
+
         if "error" in (request.json()["state"], request_result_overall):
             error_reason = request_summary
             message = (
@@ -222,9 +229,10 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             LOGGER.warning(FormatText.format_text(message, bold=True))
             update_retval(ERROR_HERE)
 
-        results_xml_url = request.json()["result"]["xunit_url"]
         if not results_xml_url:
-            continue
+            results_xml_url = os.path.join(
+                LOG_ARTIFACT_BASE_URL, request_uuid, "results.xml"
+            )
 
         try:
             results_xml_response = requests.get(results_xml_url)
@@ -239,18 +247,18 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
         if results_xml_response:
             xunit = results_xml_response.text
         else:
-            LOGGER.critical("Unable to find the xml to parse.")
-            LOGGER.critical("Trying to fall back to the request results.")
+            LOGGER.warning("Unable to find the xml to parse.")
+            LOGGER.warning("Trying to fall back to the request results.")
             if request_result_overall and request_summary:
-                LOGGER.info(
+                LOGGER.warning(
                     f"Result: {FormatText.bold}{request_result_overall}{FormatText.end}"
                 )
-                LOGGER.info(
+                LOGGER.warning(
                     f"Summary: {FormatText.bold}{request_summary}{FormatText.end}"
                 )
             else:
-                LOGGER.info("Couldn't find any valuable information.")
-                LOGGER.info(f"Please consult with {url}")
+                LOGGER.warning("Couldn't find any valuable information.")
+                LOGGER.warning(f"Please consult with {url}")
             update_retval(ERROR_HERE)
             continue
 
@@ -288,7 +296,10 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
             LOGGER.debug(f"Skipping '{url}' as the overall result is pass")
             continue
 
-        if parsed_opts.cli_args.download_logs:
+        if (
+            parsed_opts.cli_args.action != "rerun"
+            and parsed_opts.cli_args.download_logs
+        ):
             LOGGER.info("Requested download of the logs. This might take a minute.")
 
         if request_uuid not in parsed_dict:
@@ -339,7 +350,10 @@ def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=Fals
                 }
                 testsuite_data["testcases"].append(testcase_data)
 
-                if parsed_opts.cli_args.download_logs:
+                if (
+                    parsed_opts.cli_args.action != "rerun"
+                    and parsed_opts.cli_args.download_logs
+                ):
                     try:
                         testcase_log_url = test.xpath(
                             './logs/log[@name="testout.log"]/@href'

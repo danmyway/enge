@@ -61,17 +61,18 @@ class RerunJobs:
 
         for key, details in self.parsed_dict.items():
             # Determine the result filter based on CLI arguments
-            result_filter = None
+            result_filter = ["SKIPPED"]  # We want to filter out skipped plans
+
             if parsed_opts.cli_args.error:
-                result_filter = "ERROR"
+                result_filter.extend("FAILED")
             elif parsed_opts.cli_args.fail:
-                result_filter = "FAILED"
+                result_filter.extend("ERROR")
 
             # Filter test suites based on the result filter
             filtered_suites = [
                 suite
                 for suite in details["testsuites"]
-                if result_filter is None or suite["testsuite_result"] == result_filter
+                if suite["testsuite_result"] not in result_filter
             ]
 
             # Process and store data for filtered test suites
@@ -82,13 +83,27 @@ class RerunJobs:
 
         # Log and display qualifying plans for a re-run
         if self.processed_data:
+            print(self.processed_data)
             info_table = PrettyTable()
-            info_table.field_names = ["Original Request", "Target", "Re-run Plans"]
+            info_table.field_names = [
+                "Original Request",
+                "Target",
+                "Arch",
+                "Re-run Plans",
+            ]
+            if not parsed_opts.cli_args.showarch:
+                info_table.field_names.pop(2)
+
             logger.info("The following plans qualify for a re-run:")
             for req in self.processed_data.keys():
                 rerun_plans = "\n".join(self.processed_data.get(req)[0].split("|"))
                 rerun_target = self.processed_data.get(req)[1]
-                info_table.add_row((req, rerun_target, rerun_plans), divider=True)
+                row = [req, rerun_target, rerun_plans]
+                if parsed_opts.cli_args.showarch:
+                    rerun_arch = "placeholder_arch"
+                    row = [req, rerun_target, rerun_arch, rerun_plans]
+
+                info_table.add_row(row, divider=True)
             info_table.align = "l"
             print(info_table)
             if parsed_opts.cli_args.dryrun:
@@ -97,7 +112,7 @@ class RerunJobs:
             logger.info("None of the provided tasks qualify for a re-run.")
             logger.debug(
                 colorize.format_text(
-                    "All the results seem to be PASSing, time to celebrate! \U0001F389",
+                    "All the results seem to be PASSing, time to celebrate! \U0001f389",
                     text_col=colorize.green,
                     bold=True,
                 )
@@ -134,7 +149,8 @@ class RerunJobs:
             # Determine the test plan to use for re-run based on the task state
             if request_details.get("state") == "error":
                 logger.info(
-                    "The original plan filtering will be used, since no plan from the original request finished successfully."
+                    "The original plan filtering will be used, "
+                    f"since no plan from the original request {request} finished successfully."
                 )
                 self.plan = (
                     request_details["test"]["fmf"]["name"]
