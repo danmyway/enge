@@ -16,6 +16,11 @@ def main():
 
         sys.exit(report())
 
+    elif parsed_opts.cli_args.action == "rerun":
+        from enge.rerun.__main__ import main as rerun
+
+        sys.exit(rerun())
+
 
 if __name__ == "__main__":
     sys.exit(main())

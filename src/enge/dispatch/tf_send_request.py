@@ -44,7 +44,7 @@ class SubmitTest:
         self.log_artifact_url = None
         self.dispatch_summary = None
         self.print_header = None
-        self.tag = parsed_opts.cli_args.tag
+        self.set_tag = parsed_opts.cli_args.set_tag
 
     def record_task_ids(self, task_id):
         self.latest_tasks_file = parsed_opts.archive_tasks_latest
@@ -53,8 +53,8 @@ class SubmitTest:
             self.archive_tasks_default_path, self.archive_tasks_filename
         )
         self.archive_tasks_file = (
-            ".".join([self.archive_tasks_file] + parsed_opts.cli_args.tag)
-            if self.tag
+            ".".join([self.archive_tasks_file] + parsed_opts.cli_args.set_tag)
+            if self.set_tag
             else self.archive_tasks_file
         )
 
@@ -189,7 +189,7 @@ class SubmitTest:
             task_id = response.json()["id"]
             self.log_artifact_url = f"{self.log_artifact_base_url}/{task_id}"
             self.dispatch_summary = self.assess_summary_message()
-            if parsed_opts.cli_args.wait:
+            if parsed_opts.cli_args.action != "rerun" and parsed_opts.cli_args.wait:
                 self._response_watcher(self.log_artifact_url)
             else:
                 print(self.dispatch_summary)
