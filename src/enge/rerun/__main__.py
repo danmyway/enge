@@ -83,7 +83,6 @@ class RerunJobs:
 
         # Log and display qualifying plans for a re-run
         if self.processed_data:
-            print(self.processed_data)
             info_table = PrettyTable()
             info_table.field_names = [
                 "Original Request",
@@ -91,7 +90,7 @@ class RerunJobs:
                 "Arch",
                 "Re-run Plans",
             ]
-            if not parsed_opts.cli_args.showarch:
+            if not getattr(parsed_opts.cli_args, "show_arch", False):
                 info_table.field_names.pop(2)
 
             logger.info("The following plans qualify for a re-run:")
@@ -99,7 +98,7 @@ class RerunJobs:
                 rerun_plans = "\n".join(self.processed_data.get(req)[0].split("|"))
                 rerun_target = self.processed_data.get(req)[1]
                 row = [req, rerun_target, rerun_plans]
-                if parsed_opts.cli_args.showarch:
+                if getattr(parsed_opts.cli_args, "show_arch", False):
                     rerun_arch = "placeholder_arch"
                     row = [req, rerun_target, rerun_arch, rerun_plans]
 
@@ -113,7 +112,7 @@ class RerunJobs:
             logger.debug(
                 colorize.format_text(
                     "All the results seem to be PASSing, time to celebrate! \U0001f389",
-                    text_col=colorize.green,
+                    text_col=colorize.GREEN,
                     bold=True,
                 )
             )

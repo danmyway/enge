@@ -2,14 +2,9 @@ import logging
 import os
 import re
 import sys
-import time
-import urllib.request
 import uuid
 
-import lxml.etree
-import requests
 from prettytable import PrettyTable
-from requests.exceptions import ConnectionError
 
 from enge.utils import FormatText
 from enge.utils.globals import TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL
@@ -45,9 +40,9 @@ def parse_tasks():
     def _get_tasks_source_data():
         source = None
         source_data = []
-        if parsed_opts.cli_args.cmd:
-            source = "command-line"
-            source_data.extend(parsed_opts.cli_args.cmd)
+        if getattr(parsed_opts.cli_args, "input", None):
+            LOGGER.debug("Getting tasks from command line input arguments")
+            source_data.extend(parsed_opts.cli_args.input)
 
         if parsed_opts.cli_args.file:
             source = parsed_opts.cli_args.file
@@ -69,7 +64,11 @@ def parse_tasks():
             source = [
                 file
                 for file in os.listdir(default_path)
-                if parsed_opts.cli_args.get_tag[0] in file.split(".")
+                if any(
+                    tag == file.split(".", 1)[-1]
+                    or tag in file.split(".", 1)[-1].split(".")
+                    for tag in parsed_opts.cli_args.get_tag
+                )
             ]
             for file in source:
                 file = os.path.join(default_path, file)
@@ -79,7 +78,7 @@ def parse_tasks():
         if not any(
             (
                 parsed_opts.cli_args.file,
-                parsed_opts.cli_args.cmd,
+                getattr(parsed_opts.cli_args, "input", None),
                 parsed_opts.cli_args.get_tag,
             )
         ):
@@ -89,7 +88,7 @@ def parse_tasks():
                 )
                 LOGGER.critical(
                     "Use the --file option with path to a file containing the job IDs. "
-                    "Or pass the job IDs through the --cmd argument."
+                    "Or pass the job IDs through the --input argument."
                 )
                 sys.exit(1)
             source = LATEST_TASKS_FILE
@@ -130,267 +129,10 @@ def parse_tasks():
 
 
 def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=False):
-    logs_base_directory = "/var/tmp/enge/logs"
+    """Parse request xunit with concurrent requests for better performance."""
+    from enge.report.concurrent_parser import parse_request_xunit_concurrent
 
-    if request_url_list is None or tasks_source is None:
-        request_url_list, tasks_source = parse_tasks()
-    if len(request_url_list) == 0 or all(element == "" for element in request_url_list):
-        LOGGER.critical("There are no tasks to report for!")
-        LOGGER.critical(f"Please verify the input through the {tasks_source} is valid.")
-        sys.exit(1)
-
-    parsed_dict = {}
-    clear_line = "\x1b[2K"
-    spacer = " " * 10
-    loading_chars = ["/", "-", "\\", "|"]
-    index = 0
-
-    LOGGER.info("Reporting for the requested tasks:")
-    for url in request_url_list:
-        LOGGER.debug(f"Gathering the results for '{url}'")
-        request = requests.get(url)
-        request_state = request.json()["state"].upper()
-        request_uuid = request.json()["id"]
-        request_target = request.json()["environments_requested"][0]["os"]["compose"]
-        request_arch = request.json()["environments_requested"][0]["arch"]
-        request_datetime_created = request.json()["created"]
-        request_datetime_parsed = request_datetime_created.split(".")[0]
-        request_plan = request.json()["test"]["fmf"]["name"] or ""
-        potential_pipeline_error = False
-
-        log_dir = f"{request_uuid}_logs"
-
-        background = None
-        if request_state == "COMPLETE":
-            background = FormatText.bg_green
-        elif request_state == "QUEUED":
-            background = FormatText.bg_blue
-        elif request_state == "RUNNING":
-            background = FormatText.bg_cyan
-        elif request_state == "ERROR":
-            background = FormatText.bg_yellow
-            update_retval(ERROR_HERE)
-
-        request_state = FormatText.format_text(
-            request_state, background, FormatText.black
-        )
-
-        LOGGER.info(
-            FormatText.format_text(
-                f"{str(request_target):<40} {request_plan:<30} ",
-                text_col=FormatText.blue,
-                bold=True,
-            )
-            + f"{url} "
-            + request_state
-        )
-
-        if parsed_opts.cli_args.action == "rerun" or parsed_opts.cli_args.wait:
-            while request.json()["state"] not in ("complete", "error", "canceled"):
-                print(end=clear_line)
-                print(
-                    f"Waiting for the job to finish.{spacer}{loading_chars[index]}",
-                    end="\r",
-                    flush=True,
-                )
-                index = (index + 1) % len(loading_chars)
-                time.sleep(30)
-                request = requests.get(url)
-            else:
-                LOGGER.info("Job finished!")
-        else:
-            if (
-                request.json()["state"] != "complete"
-                and request.json()["state"] != "error"
-            ):
-                LOGGER.warning(
-                    f"Request {url} is still running, wait for it to finish or use --wait."
-                )
-                LOGGER.info("Skipping to the next request.")
-                print("\n")
-                update_retval(NO_RESULT)
-                continue
-
-        request_summary = "Undefined"
-        request_result_overall = "Undefined"
-        results_xml_url = None
-
-        if request.json()["result"]:
-            request_summary = request.json()["result"]["summary"]
-            request_result_overall = request.json()["result"]["overall"]
-            results_xml_url = request.json()["result"]["xunit_url"]
-
-        if "error" in (request.json()["state"], request_result_overall):
-            error_reason = request_summary
-            message = (
-                f"Request ended up in ERROR state, because of {error_reason if error_reason else "unknown reason"}.\n"
-                f"See more details on the result page {url.replace(TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL)}"
-            )
-            LOGGER.warning(FormatText.format_text(message, bold=True))
-            update_retval(ERROR_HERE)
-
-        if not results_xml_url:
-            results_xml_url = os.path.join(
-                LOG_ARTIFACT_BASE_URL, request_uuid, "results.xml"
-            )
-
-        try:
-            results_xml_response = requests.get(results_xml_url)
-        except ConnectionError as err:
-            LOGGER.critical(
-                "There was an issue while attempting to create an API connection."
-            )
-            LOGGER.critical("Please verify, that you're connected to the VPN.")
-            LOGGER.debug(err)
-            sys.exit(99)
-
-        if results_xml_response:
-            xunit = results_xml_response.text
-        else:
-            LOGGER.warning("Unable to find the xml to parse.")
-            LOGGER.warning("Trying to fall back to the request results.")
-            if request_result_overall and request_summary:
-                LOGGER.warning(
-                    f"Result: {FormatText.bold}{request_result_overall}{FormatText.end}"
-                )
-                LOGGER.warning(
-                    f"Summary: {FormatText.bold}{request_summary}{FormatText.end}"
-                )
-            else:
-                LOGGER.warning("Couldn't find any valuable information.")
-                LOGGER.warning(f"Please consult with {url}")
-            update_retval(ERROR_HERE)
-            continue
-
-        xml = lxml.etree.fromstring(xunit.encode())
-
-        job_result_overall = xml.xpath("/testsuites/@overall-result")[0]
-        job_test_suite = xml.xpath("//testsuite")
-
-        # If there is just a single test suite returned and the name of the test suite
-        # is pipeline, we can assume that the response contains only information about the pipeline.
-        # Set the potential_pipeline_error to True and hand over to the overall job result evaluation
-        if (
-            len(job_test_suite) == 1
-            and job_test_suite[0].xpath("./@name")[0] == "pipeline"
-        ):
-            potential_pipeline_error = True
-
-        if job_result_overall == "passed":
-            update_retval(ALL_PASS)
-        elif job_result_overall == "failed":
-            update_retval(FAIL_HERE)
-        elif job_result_overall == "error":
-            update_retval(ERROR_HERE)
-            # Bail out, when the potential pipeline error assessment returns True
-            if potential_pipeline_error:
-                LOGGER.critical(
-                    f"Potential pipeline ERROR, please verify the accuracy of the assessment at {url}"
-                )
-                LOGGER.critical(f"Result summary: {request_summary}")
-                continue
-        else:
-            update_retval(99)
-
-        if skip_pass and job_result_overall.upper() == "PASSED":
-            LOGGER.debug(f"Skipping '{url}' as the overall result is pass")
-            continue
-
-        if (
-            parsed_opts.cli_args.action != "rerun"
-            and parsed_opts.cli_args.download_logs
-        ):
-            LOGGER.info("Requested download of the logs. This might take a minute.")
-
-        if request_uuid not in parsed_dict:
-            parsed_dict[request_uuid] = {
-                "target_name": request_target,
-                "testsuites": [],
-            }
-
-        for elem in job_test_suite:
-            testsuite_testcase = elem.xpath("./testcase")
-            # With the latest Testing Farm release, the testsuite name does not include the target name
-            # it consist of only the plan name
-            testsuite_name = elem.xpath("./@name")[0].split(":")[-1]
-            try:
-                testsuite_arch = elem.xpath(
-                    "./testing-environment/property[@name='arch']/@value"
-                )[0]
-            except IndexError:
-                testsuite_arch = elem.xpath("./@name")[0].split(":")[-1]
-            testsuite_result = elem.xpath("./@result")[0].upper()
-            testsuite_test_count = elem.xpath("./@tests")
-            testsuite_log_dir = testsuite_name.split("/")[-1]
-
-            if skip_pass and testsuite_result == "PASSED":
-                LOGGER.debug(
-                    f"Skipping testsuite '{testsuite_name}' as the result is pass"
-                )
-                continue
-
-            testsuite_data = {
-                "testsuite_name": testsuite_name,
-                "testsuite_arch": testsuite_arch,
-                "testsuite_result": testsuite_result,
-                "testcases": [],
-            }
-            parsed_dict[request_uuid]["testsuites"].append(testsuite_data)
-
-            for test in testsuite_testcase:
-                testcase_name = test.xpath("./@name")[0]
-                testcase_result = test.xpath("./@result")[0].upper()
-                if skip_pass and testcase_result == "PASSED":
-                    continue
-
-                # Constructing the parsed dictionary
-                testcase_data = {
-                    "testcase_name": testcase_name,
-                    "testcase_result": testcase_result,
-                }
-                testsuite_data["testcases"].append(testcase_data)
-
-                if (
-                    parsed_opts.cli_args.action != "rerun"
-                    and parsed_opts.cli_args.download_logs
-                ):
-                    try:
-                        testcase_log_url = test.xpath(
-                            './logs/log[@name="testout.log"]/@href'
-                        )[0]
-                        log_name = (
-                            f"{request_target}_{testcase_name.split('/')[-1]}.log"
-                        )
-                        LOGGER.debug(
-                            f"Downloading the log files for testsuite {testsuite_name} testcase {testcase_name}."
-                        )
-                        # Create the log directory path for the request
-                        log_dir_path = os.path.join(logs_base_directory, log_dir)
-                        os.makedirs(log_dir_path, exist_ok=True)
-                        # Create the log directory path for the testsuite
-                        testsuite_log_dir_path = os.path.join(
-                            log_dir_path, testsuite_log_dir
-                        )
-                        os.makedirs(testsuite_log_dir_path, exist_ok=True)
-                        response = urllib.request.urlopen(testcase_log_url)
-                        log_data = response.read().decode("utf-8")
-                        log_file_path = os.path.join(testsuite_log_dir_path, log_name)
-                    except IndexError as e:
-                        LOGGER.warning(
-                            f"There is an issue with gathering logs for testsuite {testsuite_name} testcase {testcase_name}."
-                        )
-                        continue
-                    else:
-                        with open(log_file_path, "w") as logfile:
-                            logfile.write(log_data)
-
-        if (
-            parsed_opts.cli_args.action != "rerun"
-            and parsed_opts.cli_args.download_logs
-        ):
-            LOGGER.info(f"    > Logfiles stored in {log_dir_path}")
-
-    return parsed_dict
+    return parse_request_xunit_concurrent(request_url_list, tasks_source, skip_pass)
 
 
 def _split_name(name, index):
@@ -431,7 +173,7 @@ def build_table_comparison():
     # plan_name -> test_name -> uuid run result for particular test
     regroup_results_tests = {}
     unified_names_map = {}
-    for plan_name in parsed_opts.cli_args.unify_results or []:
+    for plan_name in getattr(parsed_opts.cli_args, "unify", []) or []:
         name1, name2 = plan_name.split("=", 2)
         unified_names_map[name1] = plan_name
         unified_names_map[name2] = plan_name
@@ -476,7 +218,7 @@ def build_table_comparison():
                     }
 
     for plan_name, plan_data in regroup_results_plans.items():
-        if parsed_opts.cli_args.level2:
+        if getattr(parsed_opts.cli_args, "show_tests", False):
             # Append first row with plan name only
             result_table.add_row([plan_name] + [""] * len(uuids))
             result_table.add_row(["*"] + [""] * len(uuids))
@@ -507,11 +249,11 @@ def build_table():
     # prepare field names
     fields = []
     fields += ["UUID", "Target"]
-    if parsed_opts.cli_args.showarch:
+    if getattr(parsed_opts.cli_args, "show_arch", False):
         fields += ["Arch"]
     fields += ["Test Plan"]
     fields += ["Plan Result"]
-    if parsed_opts.cli_args.level2:
+    if getattr(parsed_opts.cli_args, "show_tests", False):
         fields += ["Test Case"]
         fields += ["Test Result"]
     result_table.field_names = fields
@@ -548,7 +290,7 @@ def build_table():
             yield testcase_result
 
     def add_row(*args, **kwargs):
-        result_table.add_row(tuple(_gen_row(*args, **kwargs)))
+        result_table.add_row(list(_gen_row(*args, **kwargs)))
 
     for task_uuid, data in parsed_dict.items():
         add_row(task_uuid, data["target_name"])
@@ -584,17 +326,17 @@ def build_table():
 
 
 def get_color_format(result):
-    color_format_default = FormatText.end
+    color_format_default = FormatText.END
     if result == "PASSED":
-        return FormatText.green + FormatText.bold
+        return FormatText.GREEN + FormatText.BOLD
     elif result == "FAILED":
-        return FormatText.red + FormatText.bold
+        return FormatText.RED + FormatText.BOLD
     elif result in ("ERROR", "UNDEFINED", "PENDING"):
-        return FormatText.yellow + FormatText.bold
+        return FormatText.YELLOW + FormatText.BOLD
     return color_format_default
 
 
-def colorize(result, label=None, color_format_default=FormatText.end):
+def colorize(result, label=None, color_format_default=FormatText.END):
     """
     Colorize provided label (or result) using color associated to the provided result.
 
@@ -614,4 +356,11 @@ def main(result_table=None):
         print(result_table)
     else:
         LOGGER.info("Nothing to report!")
-    return RETURN_VALUE
+
+    # Get return value from concurrent parser
+    try:
+        from enge.report.concurrent_parser import get_return_value
+
+        return get_return_value()
+    except ImportError:
+        return RETURN_VALUE

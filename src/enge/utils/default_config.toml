@@ -1,0 +1,126 @@
+# Default configuration for enge
+# This file provides sensible defaults for all configuration options.
+# User configurations will override these defaults.
+
+[project]
+name = ""
+owner = ""
+repo_url = ""
+
+[testing_farm]
+api_key = ""
+cloud_resources_tag = ""
+
+[copr_api]
+owner = ""
+owner_is_group = false
+repository = ""
+package = ""
+# Single reference
+build_references = []
+# Multiple references (alternative)
+# build_references = ["ref1", "ref2", "ref3"]
+
+[brew_api]
+session_url = ""
+taskid_url = ""
+package = ""
+# Single reference
+build_references = []
+# Multiple references (alternative)
+# build_references = ["nvr-1", "nvr-2", "nvr-3"]
+
+[tests]
+git_url = ""
+git_branch = "main"
+# Target architectures for testing (must be a list)
+# Examples:
+# architectures = ["x86_64"]  # Single architecture
+# architectures = ["x86_64", "aarch64"]  # Multiple architectures
+architectures = ["x86_64"]
+parallel_limit = 10
+plan = []
+
+# Source compose to be upgraded.
+# Can be provided in a format of <major>.<minor> (e.g. 8.10) or explicit compose name (e.g. RHEL-8.10.0-Nightly).
+source = ""
+
+# Target compose for upgrade (optional).
+# Can be provided in a format of <major>.<minor> (e.g. 9.4) or explicit compose name (e.g. RHEL-9.4.0-Nightly).
+# If not specified, will be derived from source as <source_major + 1>.<source_minor - 6> (e.g. 8.10 -> 9.4).
+target = ""
+
+[tests.tier]
+# Example tier mappings for plan_filter generation
+# The filter defined here gets joined by the derived upgrade path
+# tier-smoke = "tag:smoke" -> "plan_filter": "tag:8to9 & tag:smoke"
+# tier-regression = "tag:regression"
+# tier-full = "tag:full"
+
+[tests.set]
+# Pre-configured test sets for common testing scenarios
+# Each set can define source, target, tiers, architectures, artifacts, and environment variables
+# CLI arguments will override set configurations when provided
+
+# Example: Pre-release testing with single brew RC
+# [tests.set.pre-release-smoke]
+# source = "9.7"
+# target = "10.1"  # Optional, will be auto-derived if not specified
+# tiers = ["tier0", "tier1"]
+# architecture = "x86_64,aarch64"
+# git_branch = "main"
+#
+# [tests.set.pre-release-smoke.brew_api]
+# package = ""
+# build_references = ["leapp-0.1.2-3.el9"]
+#
+# [tests.set.pre-release-smoke.environment]
+# TARGET_RELEASE_URL = "https://some.url/to-the-target"
+# EXPERIMENTAL = "true"
+# SKIP_CHECKS = "true"
+
+# Example: Testing multiple packages with brew builds
+# [tests.set.multi-package-test]
+# source = "8.10"
+# target = "9.4"
+# tiers = ["tier0"]
+#
+# [tests.set.multi-package-test.brew_api]
+# build_references = [
+#     "leapp-0.16.0-1.el8",
+#     "python3-leapp-0.16.0-1.el8",
+#     "leapp-repository-0.16.0-1.el8"
+# ]
+#
+# # Example: Full regression testing with COPR
+# [tests.set.full-regression]
+# source = "9.7"
+# tiers = ["tier2", "tier3"]
+# architecture = "x86_64"
+# parallel_limit = 20
+#
+# [tests.set.full-regression.copr_api]
+# package = ""
+# build_references = ["pr123"]
+#
+# [tests.set.full-regression.environment]
+# DEBUG_MODE = "true"
+# VERBOSE = "true"
+#
+# # Example: Compose-only testing (no artifacts)
+# [tests.set.compose-baseline]
+# source = "9.7"
+# tiers = ["tier0"]
+# architecture = "x86_64,aarch64"
+# # No artifact sections = compose testing
+#
+# [tests.set.compose-baseline.environment]
+# BASELINE_TEST = "true"
+
+[common]
+archive_tasks_latest = "/tmp/enge_latest_jobs"
+archive_tasks_default = "~/.enge/jobs_archive/"
+logs_directory = "/var/tmp/enge/logs/"
+boot_method = "bios"
+available_composes_url = ""
+post_install_script = "#!/bin/sh\\nsudo sed -i s/.*ssh-rsa/ssh-rsa/ /root/.ssh/authorized_keys"

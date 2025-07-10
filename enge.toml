@@ -1,0 +1,149 @@
+# ============================================================================
+# ENGE Configuration File
+# ============================================================================
+# This is the default configuration for enge. Copy this file to one of:
+#   - ~/.config/enge.toml (recommended)
+#   - ~/.enge.toml
+#   - ./enge.toml (project-specific)
+#
+# All settings marked "REQUIRED" must be configured for enge to work.
+# All other settings have sensible defaults.
+# ============================================================================
+
+[project]
+# REQUIRED: Name of the project/package being tested
+name = ""
+
+# REQUIRED: Owner/organization of the project
+owner = ""
+
+# REQUIRED: Full URL to the project repository
+repo_url = ""
+
+
+[testing_farm]
+# REQUIRED: Testing Farm API access token
+# Get yours at: https://docs.testing-farm.io/Testing%20Farm/0.1/onboarding.html#_api_version_v0_1
+api_key = ""
+
+# REQUIRED: Cloud resources business unit tag for cost tracking
+cloud_resources_tag = ""
+
+
+[tests]
+# URL to tests metadata repository (if different from project repo)
+# Leave empty to use project.repo_url
+git_url = ""
+
+# Git branch to checkout test suite from
+# Default: main
+git_branch = "main"
+
+# Target architectures for testing (must be a list)
+# Default: ["x86_64"]
+architectures = ["x86_64"]
+
+# Maximum number of plans to run in parallel
+# Default: 10
+parallel_limit = 10
+
+
+# List of test plans to execute
+# Can be overridden via command line
+# Example: plans = ["/plans/basic", "/plans/integration"]
+plans = []
+
+
+[copr_api]
+# COPR repository owner (leave empty to use project.owner)
+owner = ""
+
+# Set to true if owner is a group/organization (prepends '@' to owner)
+# Default: false
+owner_is_group = false
+
+# COPR repository name (leave empty to use project.name)
+repository = ""
+
+# Package name (leave empty to use project.name)
+package = ""
+
+# Default build reference for artifact testing
+# Leave empty to use latest build
+build_references = []
+
+
+[brew_api]
+# Brew/Koji session URL for API access
+# Example: "https://koji.fedoraproject.org/kojihub"
+session_url = ""
+
+# URL pattern for task information
+# Example: "https://koji.fedoraproject.org/koji/taskinfo?taskID="
+taskid_url = ""
+
+# Package name (leave empty to use project.name)
+package = ""
+
+# Default build reference for artifact testing
+# Example: "1.2.3-4.el8" or task ID
+build_references = []
+
+
+[common]
+# Path for temporary latest jobs file
+# Default: /tmp/enge_latest_jobs
+archive_tasks_latest = "/tmp/enge_latest_jobs"
+
+# Directory for archived job files
+# Default: ~/.enge/jobs_archive/
+archive_tasks_default = "~/.enge/jobs_archive/"
+
+# Directory for downloaded log files
+# Default: /var/tmp/enge/logs/
+logs_directory = "/var/tmp/enge/logs/"
+
+# Boot method for provisioning
+# Options: bios, uefi
+# Default: bios
+boot_method = "bios"
+
+# Note: API response timeout is hardcoded to 20 seconds
+# Use --no-wait flag to skip waiting for HTTP 200 response
+
+# URL for available composes information (if needed)
+available_composes_url = ""
+
+
+# ============================================================================
+# Example Complete Configuration:
+# ============================================================================
+#
+# [project]
+# name = "my-package"
+# owner = "myorg"
+# repo_url = "https://github.com/myorg/my-package"
+#
+# [testing_farm]
+# api_key = "your-testing-farm-api-key-here"
+# cloud_resources_tag = "myorg-engineering"
+#
+# [tests]
+# git_url = ""  # Uses project.repo_url
+# git_branch = "main"
+# architecture = "x86_64"
+# parallel_limit = 5
+# composes = {
+#   "rhel8" = {compose = "RHEL-8.9.0-20231101.1", distro = "rhel-8", chroot = "rhel-8-x86_64"},
+#   "rhel9" = {compose = "RHEL-9.3.0-20231101.1", distro = "rhel-9", chroot = "rhel-9-x86_64"}
+# }
+# plans = ["/plans/basic", "/plans/integration"]
+#
+# [copr_api]
+# owner = ""  # Uses project.owner
+# owner_is_group = false
+# repository = ""  # Uses project.name
+# package = ""  # Uses project.name
+# build_references = []
+#
+# ============================================================================

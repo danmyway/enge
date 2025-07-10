@@ -12,16 +12,16 @@ class ColorizedFormatter(logging.Formatter):
 
         if record.levelname == "WARNING":
             log_message = FormatText.format_text(
-                log_message, text_col=FormatText.yellow
+                log_message, text_col=FormatText.YELLOW
             )
         elif record.levelname == "ERROR":
             log_message = FormatText.format_text(
-                log_message, text_col=FormatText.red, bold=True
+                log_message, text_col=FormatText.RED, bold=True
             )
         elif record.levelname == "CRITICAL":
-            log_message = FormatText.format_text(log_message, text_col=FormatText.red)
+            log_message = FormatText.format_text(log_message, text_col=FormatText.RED)
         elif record.levelname == "DEBUG":
-            log_message = FormatText.format_text(log_message)
+            log_message = FormatText.format_text(log_message, text_col=FormatText.DIM)
         elif record.levelname == "INFO":
             log_message = FormatText.format_text(log_message)
 
@@ -32,6 +32,7 @@ loglevel = logging.INFO
 logformat = "%(levelname)-8s | %(message)s"
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("requests_gssapi").setLevel(logging.WARNING)
+logging.getLogger("koji").setLevel(logging.WARNING)
 
 
 if args.debug:
