@@ -336,11 +336,6 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
 
     parsed_args = parser.parse_args(args)
 
-    # Custom validation: --source is required unless --set is provided
-    if hasattr(parsed_args, "action") and parsed_args.action == "test":
-        if not parsed_args.source and not parsed_args.set:
-            parser.error("--source is required unless --set is provided")
-
     return parsed_args
 
 

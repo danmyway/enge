@@ -8,7 +8,6 @@ from typing import Optional, Dict, Any, List
 import requests
 
 from enge.utils import FormatText, get_datetime
-from enge.utils.globals import TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL
 from enge.utils.opt_manager import parsed_opts
 
 LOGGER = logging.getLogger(__name__)
@@ -22,17 +21,10 @@ class SubmitTest:
         self.plan: Optional[str] = None
         self.planfilter: Optional[str] = None
         self.testfilter: Optional[str] = None
-        # Get required config values (validated by operational defaults check)
-        architectures = parsed_opts.tests.get("architectures")
+        # Get required config values (validated by centralized validation)
         boot_method = parsed_opts.common.get("boot_method")
+        assert boot_method, "boot_method validated by centralized validation"
 
-        # These should be guaranteed by operational defaults validation
-        assert architectures, "Architectures should be validated by config loader"
-        assert boot_method, "Boot method should be validated by config loader"
-
-        self.architecture: str = architectures[
-            0
-        ]  # Use first architecture for backward compatibility
         self.compose: Optional[str] = None
         self.artifacts: List[Dict[str, str]] = []  # List of artifact dictionaries
         self.business_unit_tag: Optional[str] = None
@@ -54,12 +46,16 @@ class SubmitTest:
             self.archive_tasks_filename = f"enge_jobs_archive_{self.datetime_stamp}"
 
         self.task_id: Optional[str] = None
-        self.log_artifact_base_url: str = LOG_ARTIFACT_BASE_URL
+        self.log_artifact_base_url: str = str(
+            parsed_opts.testing_farm_endpoint.log_artifact_baseurl
+        )
+        self.testing_farm_endpoint: str = str(
+            parsed_opts.testing_farm_endpoint.api_endpoint_url
+        )
         # Set-specific data (will be overridden by set_specific_data if provided)
         self.set_architectures: Optional[List[str]] = None
         self.set_environment_variables: Optional[Dict[str, str]] = None
         self.set_tmt_context: Optional[Dict[str, Any]] = None
-        self.testing_farm_endpoint: str = TESTING_FARM_ENDPOINT
         self.request_status: Optional[str] = None
         self.log_artifact_url: Optional[str] = None
         self.dispatch_summary: Optional[str] = None
@@ -142,10 +138,9 @@ class SubmitTest:
             else getattr(parsed_opts, "tmt_context", {})
         )
 
-        # Build the base TMT context
+        # Build the base TMT context (arch will be set per environment)
         base_tmt_context = {
             "distro": self.tmt_distro,
-            "arch": self.architecture,
             "boot_method": self.boot_method,
         }
 
@@ -157,7 +152,7 @@ class SubmitTest:
         architectures = (
             self.set_architectures
             if self.set_architectures is not None
-            else getattr(parsed_opts, "architectures", [self.architecture])
+            else getattr(parsed_opts, "architectures", [])
         )
 
         # Build environment configurations for each architecture
@@ -283,7 +278,7 @@ class SubmitTest:
         architectures = (
             self.set_architectures
             if self.set_architectures is not None
-            else getattr(parsed_opts, "architectures", [self.architecture])
+            else getattr(parsed_opts, "architectures", [])
         )
         if len(architectures) == 1:
             arch_info = f"   Architecture:     {architectures[0]}\n"

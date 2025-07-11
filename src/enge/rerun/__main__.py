@@ -7,7 +7,6 @@ from prettytable import PrettyTable
 
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks, parse_request_xunit
-from enge.utils.globals import TESTING_FARM_ENDPOINT
 from enge.utils.opt_manager import parsed_opts
 from enge.utils import FormatText
 
@@ -132,7 +131,11 @@ class RerunJobs:
 
         for request in uuids:
             # Fetch the task details from the API
-            response = requests.get(os.path.join(TESTING_FARM_ENDPOINT, request))
+            response = requests.get(
+                os.path.join(
+                    str(parsed_opts.testing_farm_endpoint.api_endpoint_url), request
+                )
+            )
             request_details = response.json()
 
             match_uuid = request_details.get("id")

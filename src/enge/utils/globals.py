@@ -17,16 +17,6 @@ ARTIFACT_MAPPING: Dict[str, str] = {
 }
 """Mapping of artifact type aliases to Testing Farm artifact types."""
 
-
-# ==================== API ENDPOINTS ====================
-
-TESTING_FARM_ENDPOINT: str = "https://api.dev.testing-farm.io/v0.1/requests"
-"""Testing Farm API endpoint for submitting test requests."""
-
-LOG_ARTIFACT_BASE_URL: str = "http://artifacts.osci.redhat.com/testing-farm"
-"""Base URL for Testing Farm log artifacts and results."""
-
-
 # ==================== DEFAULT CONFIG SEARCH PATHS ====================
 
 DEFAULT_CONFIG_PATHS: Tuple[str, ...] = (

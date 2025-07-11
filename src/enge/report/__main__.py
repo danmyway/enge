@@ -7,7 +7,6 @@ import uuid
 from prettytable import PrettyTable
 
 from enge.utils import FormatText
-from enge.utils.globals import TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL
 from enge.utils.opt_manager import parsed_opts
 
 RETURN_VALUE = None
@@ -113,7 +112,9 @@ def parse_tasks():
             continue
 
         matched_uuid = match.group(0)
-        task = os.path.join(TESTING_FARM_ENDPOINT, matched_uuid)
+        task = os.path.join(
+            str(parsed_opts.testing_farm_endpoint.api_endpoint_url), matched_uuid
+        )
 
         # Validate UUID
         task_id = None

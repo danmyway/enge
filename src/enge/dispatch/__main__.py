@@ -18,91 +18,6 @@ from .tf_send_request import SubmitTest
 
 LOGGER = logging.getLogger(__name__)
 
-
-def validate_configuration() -> None:
-    """Validate critical configuration at startup."""
-    errors = []
-
-    # Check source/target configuration
-    if not hasattr(parsed_opts, "source_spec") or not hasattr(
-        parsed_opts, "target_spec"
-    ):
-        errors.append("Source/target configuration not found!")
-
-    # Check tests repository URL
-    tests_repo_base_url = parsed_opts.tests.get("git_url") or parsed_opts.project.get(
-        "repo_url"
-    )
-    if not tests_repo_base_url:
-        errors.append("Tests repository URL not configured!")
-
-    # Check test plans - validate based on what's actually specified
-    cli_plans = getattr(parsed_opts.cli_args, "plan", None)
-    cli_tiers = getattr(parsed_opts.cli_args, "tier", None)
-    cli_sets = getattr(parsed_opts.cli_args, "set", None)
-    config_plans = parsed_opts.plans if parsed_opts.plans else []
-    effective_tiers = getattr(parsed_opts, "effective_tiers", None)
-
-    # If CLI arguments are provided, validate only those
-    if cli_plans:
-        # CLI plans specified, no additional validation needed
-        pass
-    elif cli_tiers:
-        # CLI tiers specified, validate tier configuration
-        tier_config = parsed_opts.tests.get("tier", {})
-        if not tier_config:
-            errors.append("No tier configuration found in config file!")
-        else:
-            for tier in cli_tiers:
-                if tier not in tier_config:
-                    available_tiers = list(tier_config.keys())
-                    errors.append(
-                        f"Tier '{tier}' not found in configuration. Available tiers: {available_tiers}"
-                    )
-    elif cli_sets:
-        # CLI sets specified, test set validation was already performed in opt_manager
-        # If there are effective tiers from sets, validate those
-        if effective_tiers:
-            tier_config = parsed_opts.tests.get("tier", {})
-            if not tier_config:
-                errors.append("No tier configuration found in config file!")
-            else:
-                for tier in effective_tiers:
-                    if tier not in tier_config:
-                        available_tiers = list(tier_config.keys())
-                        errors.append(
-                            f"Tier '{tier}' from test set not found in configuration. Available tiers: {available_tiers}"
-                        )
-    else:
-        # No CLI arguments specified, validate config has at least one plan
-        if not config_plans:
-            errors.append("No test plans specified in CLI or configuration!")
-
-    # Check CLI arguments
-    if not hasattr(parsed_opts, "cli_args") or parsed_opts.cli_args is None:
-        errors.append("CLI arguments not properly initialized!")
-
-    # Check essential configuration sections
-    if not hasattr(parsed_opts, "testing_farm") or not parsed_opts.testing_farm:
-        errors.append("Testing Farm configuration missing!")
-    elif not parsed_opts.testing_farm.get("api_key"):
-        errors.append("Testing Farm API key not configured!")
-
-    if not hasattr(parsed_opts, "project") or not parsed_opts.project:
-        errors.append("Project configuration missing!")
-    elif not parsed_opts.project.get("name"):
-        errors.append("Project name not configured!")
-
-    if errors:
-        LOGGER.critical("Configuration validation failed:")
-        for error in errors:
-            LOGGER.critical(f"  - {error}")
-        sys.exit(99)
-
-
-# Perform early validation
-validate_configuration()
-
 tests_repo_base_url = parsed_opts.tests.get("git_url") or parsed_opts.project.get(
     "repo_url"
 )
@@ -243,24 +158,19 @@ def setup_submit_test(shared_archive_filename: Optional[str] = None) -> SubmitTe
             parsed_opts, "plan_filter", None
         )
         submit_test.testfilter = getattr(parsed_opts.cli_args, "testfilter", None)
-        # Get configuration values (validated by operational defaults check)
-        # Use first architecture from the parsed list for compatibility
-        architectures = getattr(parsed_opts, "architectures", [])
-        if not architectures:
-            LOGGER.critical("No architectures available from configuration!")
-            sys.exit(99)
-        architecture = architectures[0]  # Use first architecture for compatibility
+        # Get configuration values (validated by centralized validation)
         boot_method = (
             "uefi"
             if getattr(parsed_opts.cli_args, "uefi", False)
             else parsed_opts.common.get("boot_method")
         )
 
-        # These should be guaranteed by operational defaults validation
-        assert architecture, "Architecture should be validated by config loader"
-        assert boot_method, "Boot method should be validated by config loader"
+        # Boot method is guaranteed to be valid by centralized validation
+        assert (
+            isinstance(boot_method, str) and boot_method
+        ), "Boot method validated by centralized validation"
 
-        submit_test.architecture = architecture
+        # Note: Architecture handling is done in build_payload() method with full list support
         submit_test.business_unit_tag = parsed_opts.testing_farm.get(
             "cloud_resources_tag"
         )
@@ -438,10 +348,16 @@ def validate_compose_targets(compose_name: str) -> None:
 def main() -> int:
     global artifact_type
     try:
-        # tests_repo_base_url is already validated to be non-None at module level
-        assert tests_repo_base_url is not None, "tests_repo_base_url should not be None"
+        # tests_repo_base_url is validated by centralized validation in opt_manager.py
         if getattr(parsed_opts.cli_args, "copr", None):
-            validate_git_repository(tests_repo_base_url)
+            # Fallback to ensure it's not None (should be validated by centralized validation)
+            repo_url = (
+                tests_repo_base_url
+                or parsed_opts.tests.get("git_url")
+                or parsed_opts.project.get("repo_url")
+            )
+            if repo_url:
+                validate_git_repository(repo_url)
 
         total_requests = 0
         successful_requests = 0
@@ -558,12 +474,16 @@ def main() -> int:
                 ) or parsed_opts.tests.get("parallel_limit")
                 submit_test.print_header = idx == 1
 
-                # Set boot method
+                # Set boot method (validated to be present by centralized validation)
                 boot_method = (
                     "uefi"
                     if getattr(parsed_opts.cli_args, "uefi", False)
-                    else parsed_opts.common.get("boot_method", "bios")
+                    else parsed_opts.common.get("boot_method")
                 )
+                # Boot method is guaranteed to be valid by centralized validation
+                assert (
+                    isinstance(boot_method, str) and boot_method
+                ), "Boot method validated by centralized validation"
                 submit_test.boot_method = boot_method
 
                 # Generate plan filter for this tier

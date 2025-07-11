@@ -14,7 +14,6 @@ import requests.adapters
 from requests.exceptions import ConnectionError, Timeout, RequestException
 
 from enge.utils import FormatText
-from enge.utils.globals import TESTING_FARM_ENDPOINT, LOG_ARTIFACT_BASE_URL
 from enge.utils.opt_manager import parsed_opts
 
 LOGGER = logging.getLogger(__name__)
@@ -150,8 +149,10 @@ class ConcurrentRequestParser:
                     else None
                 )
                 if not results_xml_url:
-                    results_xml_url = (
-                        f"{LOG_ARTIFACT_BASE_URL}/{task_data['id']}/results.xml"
+                    results_xml_url = os.path.join(
+                        str(parsed_opts.testing_farm_endpoint.log_artifact_baseurl),
+                        task_data["id"],
+                        "results.xml",
                     )
 
                 task_result = TaskResult(
