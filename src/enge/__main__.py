@@ -21,6 +21,11 @@ def main():
 
         sys.exit(rerun())
 
+    elif parsed_opts.cli_args.action == "cancel":
+        from enge.cancel.__main__ import main as cancel
+
+        sys.exit(cancel())
+
 
 if __name__ == "__main__":
     sys.exit(main())

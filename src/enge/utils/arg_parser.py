@@ -334,6 +334,46 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Display architecture in results. By default, architecture is hidden.",
     )
 
+    # ==================== CANCEL SUBCOMMAND ====================
+    cancel = subparsers.add_parser(
+        "cancel",
+        help="Cancel Testing Farm tasks.",
+        description="Cancel running or queued Testing Farm tasks by sending DELETE requests.",
+    )
+
+    # Input sources (same as report and rerun)
+    cancel.add_argument(
+        "-f",
+        "--file",
+        action="append",
+        metavar="FILE",
+        help="Filepath containing request IDs, artifact URLs, or request URLs to cancel. "
+        "Can be provided multiple times: -f file1 -f ~/file2",
+    )
+
+    cancel.add_argument(
+        "-i",
+        "--input",
+        action="append",
+        metavar="ID_OR_URL",
+        help="Request ID, artifact URL, or request URL to cancel from command line. "
+        "Can be provided multiple times: -i id1 -i id2",
+    )
+
+    cancel.add_argument(
+        "--get-tag",
+        action="append",
+        metavar="TAG",
+        help="Query for all tasks under a given tag to cancel. Can be used multiple times.",
+    )
+
+    # Cancel control
+    cancel.add_argument(
+        "--dryrun",
+        action="store_true",
+        help="Show which tasks would be cancelled without actually cancelling them.",
+    )
+
     parsed_args = parser.parse_args(args)
 
     return parsed_args
