@@ -21,6 +21,7 @@ class SubmitTest:
         self.plan: Optional[str] = None
         self.planfilter: Optional[str] = None
         self.testfilter: Optional[str] = None
+        self.test_name: Optional[str] = None
         # Get required config values (validated by centralized validation)
         boot_method = parsed_opts.common.get("boot_method")
         assert boot_method, "boot_method validated by centralized validation"
@@ -198,6 +199,7 @@ class SubmitTest:
                     "url": self.tests_git_url,
                     "ref": self.tests_git_branch,
                     "name": self.plan,
+                    "test_name": self.test_name,
                     "plan_filter": self.planfilter,
                     "test_filter": self.testfilter,
                 }
@@ -269,6 +271,8 @@ class SubmitTest:
 
         # Format plan information
         plan_info = f"   Plan:             {self.plan if self.plan else 'Auto-selected via plan filter'}\n"
+        if self.test_name:
+            plan_info += f"   Test name:        {self.test_name}\n"
         if self.planfilter:
             plan_info += f"   Plan filter:      {self.planfilter}\n"
         if self.testfilter:

@@ -114,8 +114,14 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
 
     test.add_argument(
         "--test",
-        help="Further specify tests to be executed. "
+        help="Specify test name to be executed. "
         "Only used in conjunction with --plan or --tier.",
+    )
+
+    test.add_argument(
+        "--testfilter",
+        help="Filter tests using FMF filter syntax. "
+        "This allows fine-grained filtering of which tests to run.",
     )
 
     test.add_argument(

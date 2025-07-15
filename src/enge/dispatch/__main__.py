@@ -133,12 +133,13 @@ def validate_plan_filters(plans_list: List[str]) -> None:
     cli_planfilter = getattr(parsed_opts.cli_args, "planfilter", None)
     generated_planfilter = getattr(parsed_opts, "plan_filter", None)
     cli_testfilter = getattr(parsed_opts.cli_args, "testfilter", None)
+    cli_test_name = getattr(parsed_opts.cli_args, "test", None)
 
     if len(plans_list) > 1 and (
-        cli_planfilter or generated_planfilter or cli_testfilter
+        cli_planfilter or generated_planfilter or cli_testfilter or cli_test_name
     ):
         LOGGER.critical(
-            "It is not advised to use testfilter or planfilter with multiple requested plans."
+            "It is not advised to use testfilter, planfilter, or test name with multiple requested plans."
             " Please specify one plan with additional filters per request."
         )
         sys.exit(2)
@@ -150,14 +151,21 @@ def setup_submit_test(shared_archive_filename: Optional[str] = None) -> SubmitTe
         submit_test = SubmitTest(shared_archive_filename=shared_archive_filename)
 
         submit_test.api_key = parsed_opts.testing_farm.get("api_key")
-        submit_test.tests_git_url = tests_repo_base_url
-        submit_test.tests_git_branch = parsed_opts.tests.get("git_branch")
+        submit_test.tests_git_url = (
+            getattr(parsed_opts.cli_args, "git_url", None)
+            or parsed_opts.tests.get("git_url")
+            or parsed_opts.project.get("repo_url")
+        )
+        submit_test.tests_git_branch = getattr(
+            parsed_opts.cli_args, "git_branch", None
+        ) or parsed_opts.tests.get("git_branch")
         # Use CLI planfilter if provided, otherwise use generated plan_filter
         cli_planfilter = getattr(parsed_opts.cli_args, "planfilter", None)
         submit_test.planfilter = cli_planfilter or getattr(
             parsed_opts, "plan_filter", None
         )
         submit_test.testfilter = getattr(parsed_opts.cli_args, "testfilter", None)
+        submit_test.test_name = getattr(parsed_opts.cli_args, "test", None)
         # Get configuration values (validated by centralized validation)
         boot_method = (
             "uefi"
@@ -459,13 +467,18 @@ def main() -> int:
                     shared_archive_filename=shared_archive_filename
                 )
                 submit_test.api_key = parsed_opts.testing_farm.get("api_key")
-                submit_test.tests_git_url = tests_repo_base_url
+                submit_test.tests_git_url = (
+                    effective_values.get("git_url")
+                    or parsed_opts.tests.get("git_url")
+                    or parsed_opts.project.get("repo_url")
+                )
                 submit_test.tests_git_branch = effective_values.get(
                     "git_branch"
                 ) or parsed_opts.tests.get("git_branch")
                 submit_test.testfilter = getattr(
                     parsed_opts.cli_args, "testfilter", None
                 )
+                submit_test.test_name = getattr(parsed_opts.cli_args, "test", None)
                 submit_test.business_unit_tag = parsed_opts.testing_farm.get(
                     "cloud_resources_tag"
                 )

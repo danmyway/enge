@@ -300,6 +300,8 @@ def build_table():
             if last_arch != testsuite_data["testsuite_arch"] and "Arch" in fields:
                 last_arch = testsuite_data["testsuite_arch"]
                 add_row(arch=last_arch)
+            if testsuite_data["testsuite_result"] == "SKIPPED":
+                continue
             testsuite_result = testsuite_data["testsuite_result"]
             add_row(
                 testplan=colorize(
@@ -310,6 +312,8 @@ def build_table():
             )
             if "Test Case" in fields:
                 for testcase in testsuite_data["testcases"]:
+                    if testcase["testcase_result"] == "SKIPPED":
+                        continue
                     testcase_result = testcase["testcase_result"]
                     add_row(
                         testcase=colorize(

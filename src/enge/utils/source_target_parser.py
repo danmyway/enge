@@ -454,6 +454,13 @@ def resolve_effective_values(
         or config.get("tests", {}).get("git_branch")
     )
 
+    # Resolve git url (CLI > Set > Config)
+    resolved["git_url"] = (
+        getattr(cli_args, "git_url", None)
+        or set_config.get("git_url")
+        or config.get("tests", {}).get("git_url")
+    )
+
     # Resolve parallel limit (Set > Config, no CLI option)
     resolved["parallel_limit"] = set_config.get("parallel_limit") or config.get(
         "tests", {}
