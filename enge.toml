@@ -103,17 +103,6 @@ archive_tasks_default = "~/.enge/jobs_archive/"
 # Default: /var/tmp/enge/logs/
 logs_directory = "/var/tmp/enge/logs/"
 
-# Boot method for provisioning
-# Options: bios, uefi
-# Default: bios
-boot_method = "bios"
-
-# Note: API response timeout is hardcoded to 20 seconds
-# Use --no-wait flag to skip waiting for HTTP 200 response
-
-# URL for available composes information (if needed)
-available_composes_url = ""
-
 
 # ============================================================================
 # Example Complete Configuration:

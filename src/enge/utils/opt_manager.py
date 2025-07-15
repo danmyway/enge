@@ -191,11 +191,6 @@ class ParsedOpts:
         if not tests_repo_url:
             errors.append("Tests repository URL not configured!")
 
-        # Validate boot method is configured (no hardcoded defaults)
-        boot_method = self.common.get("boot_method")
-        if not boot_method:
-            errors.append("Boot method not configured in [common] section!")
-
         # Validate architectures are configured (no empty defaults)
         architectures = self.tests.get("architectures")
         if not architectures:
@@ -613,21 +608,8 @@ class ParsedOpts:
 
             self.architectures = parse_architectures(arch_input)
 
-            # Determine boot method (CLI --uefi overrides config, no hardcoded fallback)
-            config_boot_method = self.common.get("boot_method")
-            boot_method = (
-                "uefi" if getattr(self.cli_args, "uefi", False) else config_boot_method
-            )
-
-            # Boot method is validated by centralized validation to be present
-            assert isinstance(
-                boot_method, str
-            ), "Boot method validated by centralized validation"
-
             # Generate TMT context (architecture will be set per environment)
-            self.tmt_context = generate_tmt_context(
-                self.source_spec, self.target_spec, boot_method=boot_method
-            )
+            self.tmt_context = generate_tmt_context(self.source_spec, self.target_spec)
 
             # Handle CLI planfilter (tier-based filtering is handled in dispatch)
             cli_planfilter = getattr(self.cli_args, "planfilter", None)

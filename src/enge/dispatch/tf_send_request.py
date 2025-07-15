@@ -22,15 +22,11 @@ class SubmitTest:
         self.planfilter: Optional[str] = None
         self.testfilter: Optional[str] = None
         self.test_name: Optional[str] = None
-        # Get required config values (validated by centralized validation)
-        boot_method = parsed_opts.common.get("boot_method")
-        assert boot_method, "boot_method validated by centralized validation"
 
         self.compose: Optional[str] = None
         self.artifacts: List[Dict[str, str]] = []  # List of artifact dictionaries
         self.business_unit_tag: Optional[str] = None
         self.tmt_distro: Optional[str] = None
-        self.boot_method: str = boot_method
         self.parallel_limit: Optional[int] = None
         self.authorization_header: Dict[str, str] = {}
         self.payload_raw: Dict[str, Any] = {}
@@ -142,7 +138,6 @@ class SubmitTest:
         # Build the base TMT context (arch will be set per environment)
         base_tmt_context = {
             "distro": self.tmt_distro,
-            "boot_method": self.boot_method,
         }
 
         # Merge with additional TMT context if available
@@ -172,11 +167,6 @@ class SubmitTest:
                     }
                 },
                 "tmt": {"context": arch_tmt_context},
-                "hardware": {
-                    "boot": {
-                        "method": self.boot_method,
-                    }
-                },
                 "variables": env_vars,
             }
 

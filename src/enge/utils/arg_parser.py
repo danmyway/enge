@@ -159,10 +159,6 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "Can be provided multiple times: --environment VAR1=VAL1 --environment VAR2=VAL2",
     )
 
-    test.add_argument(
-        "--uefi", action="store_true", help="Request UEFI boot method in provisioning."
-    )
-
     # Execution control
     test.add_argument(
         "--wait",

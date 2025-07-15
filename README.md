@@ -89,7 +89,7 @@ Multiple `--plan` options can be specified and will be dispatched in separate jo
 When using `--planfilter` or `--test` to specify singular test it is disallowed to request multiple `--plan` options in one command.<br>
 Use `--wait` if waiting for a successful response from the endpoint is required.
 If for any reason you would need to verify the validity of the raw payload, use `--dryrun` to get it pretty-printed to the command line.
-UEFI boot method can be requested by using the `--uefi` option.
+
 Use `--set-tag` to tag archived task files with custom tags for later retrieval (can be used multiple times).
 The `--source` argument is required unless using `--set` (which defines source in the configuration).
 

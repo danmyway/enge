@@ -141,7 +141,7 @@ def generate_environment_variables(
 
 
 def generate_tmt_context(
-    source_spec: Dict[str, Any], target_spec: Dict[str, Any], boot_method: str = "bios"
+    source_spec: Dict[str, Any], target_spec: Dict[str, Any]
 ) -> Dict[str, str]:
     """
     Generate TMT context for the Testing Farm payload.
@@ -149,7 +149,6 @@ def generate_tmt_context(
     Args:
         source_spec: Source specification dictionary
         target_spec: Target specification dictionary
-        boot_method: Boot method (defaults to "bios")
 
     Returns:
         Dictionary of TMT context variables (arch will be set per environment)
@@ -157,7 +156,6 @@ def generate_tmt_context(
     return {
         "distro": f"rhel-{source_spec['major']}.{source_spec['minor']}",
         "target_distro": f"rhel-{target_spec['major']}.{target_spec['minor']}",
-        "boot_method": boot_method,
     }
 
 

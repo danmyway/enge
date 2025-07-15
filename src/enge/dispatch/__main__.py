@@ -166,23 +166,11 @@ def setup_submit_test(shared_archive_filename: Optional[str] = None) -> SubmitTe
         )
         submit_test.testfilter = getattr(parsed_opts.cli_args, "testfilter", None)
         submit_test.test_name = getattr(parsed_opts.cli_args, "test", None)
-        # Get configuration values (validated by centralized validation)
-        boot_method = (
-            "uefi"
-            if getattr(parsed_opts.cli_args, "uefi", False)
-            else parsed_opts.common.get("boot_method")
-        )
-
-        # Boot method is guaranteed to be valid by centralized validation
-        assert (
-            isinstance(boot_method, str) and boot_method
-        ), "Boot method validated by centralized validation"
 
         # Note: Architecture handling is done in build_payload() method with full list support
         submit_test.business_unit_tag = parsed_opts.testing_farm.get(
             "cloud_resources_tag"
         )
-        submit_test.boot_method = boot_method
 
         submit_test.parallel_limit = getattr(parsed_opts, "parallel_limit", None)
         submit_test.print_header = True
@@ -487,18 +475,6 @@ def main() -> int:
                 ) or parsed_opts.tests.get("parallel_limit")
                 submit_test.print_header = idx == 1
 
-                # Set boot method (validated to be present by centralized validation)
-                boot_method = (
-                    "uefi"
-                    if getattr(parsed_opts.cli_args, "uefi", False)
-                    else parsed_opts.common.get("boot_method")
-                )
-                # Boot method is guaranteed to be valid by centralized validation
-                assert (
-                    isinstance(boot_method, str) and boot_method
-                ), "Boot method validated by centralized validation"
-                submit_test.boot_method = boot_method
-
                 # Generate plan filter for this tier
                 try:
                     tier_config = parsed_opts.tests.get("tier", {})
@@ -568,9 +544,7 @@ def main() -> int:
                 temp_opts.architectures = [arch]  # Only the current architecture
 
                 # Generate TMT context for this set
-                temp_opts.tmt_context = generate_tmt_context(
-                    source_spec, target_spec, boot_method=boot_method
-                )
+                temp_opts.tmt_context = generate_tmt_context(source_spec, target_spec)
 
                 # Handle artifacts from set config
                 set_copr_api = effective_values.get("copr_api", {})
