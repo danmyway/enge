@@ -254,12 +254,6 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     report.add_argument(
-        "--show-arch",
-        action="store_true",
-        help="Display architecture in results. By default, architecture is hidden.",
-    )
-
-    report.add_argument(
         "--skip-pass",
         action="store_true",
         help="Skip PASSED results in table and log downloads.",
@@ -277,6 +271,12 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         metavar="PLAN1=PLAN2",
         help="Treat plan names as equivalent in 'plan1=plan2' format. "
         "Useful for comparing runs with renamed plans.",
+    )
+
+    report.add_argument(
+        "--show-ids",
+        action="store_true",
+        help="Display only a list of UUIDs queried from the requested inputs.",
     )
 
     # ==================== RERUN SUBCOMMAND ====================
@@ -344,12 +344,6 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "--fail",
         action="store_true",
         help="Rerun only jobs that reported FAILED state.",
-    )
-
-    rerun.add_argument(
-        "--show-arch",
-        action="store_true",
-        help="Display architecture in results. By default, architecture is hidden.",
     )
 
     # ==================== CANCEL SUBCOMMAND ====================

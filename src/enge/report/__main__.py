@@ -249,9 +249,7 @@ def build_table():
     result_table = PrettyTable()
     # prepare field names
     fields = []
-    fields += ["UUID", "Target"]
-    if getattr(parsed_opts.cli_args, "show_arch", False):
-        fields += ["Arch"]
+    fields += ["UUID", "Target", "Arch"]  # Always show architecture
     fields += ["Test Plan"]
     fields += ["Plan Result"]
     if getattr(parsed_opts.cli_args, "show_tests", False):
@@ -293,11 +291,20 @@ def build_table():
     def add_row(*args, **kwargs):
         result_table.add_row(list(_gen_row(*args, **kwargs)))
 
+    # Collect UUIDs and URLs for summary section
+    uuid_url_mapping = {}
+
     for task_uuid, data in parsed_dict.items():
+        # Store URL mapping for later display
+        result_url = (
+            f"{parsed_opts.testing_farm_endpoint.log_artifact_baseurl}/{task_uuid}"
+        )
+        uuid_url_mapping[task_uuid] = result_url
+
         add_row(task_uuid, data["target_name"])
         last_arch = None
         for testsuite_data in data["testsuites"]:
-            if last_arch != testsuite_data["testsuite_arch"] and "Arch" in fields:
+            if last_arch != testsuite_data["testsuite_arch"]:
                 last_arch = testsuite_data["testsuite_arch"]
                 add_row(arch=last_arch)
             if testsuite_data["testsuite_result"] == "SKIPPED":
@@ -327,7 +334,7 @@ def build_table():
 
     result_table.align = "l"
 
-    return result_table
+    return result_table, uuid_url_mapping
 
 
 def get_color_format(result):
@@ -353,12 +360,34 @@ def colorize(result, label=None, color_format_default=FormatText.END):
 
 
 def main(result_table=None):
+    # Handle --show-ids option
+    if getattr(parsed_opts.cli_args, "show_ids", False):
+        request_url_list, _ = parse_tasks()
+        if request_url_list:
+            for request_url in request_url_list:
+                # Extract UUID from the URL
+                task_id = request_url.split("/")[-1]
+                print(task_id)
+        else:
+            LOGGER.info("No UUIDs found!")
+        return ALL_PASS
+
+    uuid_url_mapping = {}
     if result_table is None:
-        result_table = (
-            build_table_comparison() if parsed_opts.cli_args.compare else build_table()
-        )
-    if result_table.rowcount > 0:
+        if parsed_opts.cli_args.compare:
+            result_table = build_table_comparison()
+        else:
+            result_table, uuid_url_mapping = build_table()
+
+    if hasattr(result_table, "rowcount") and result_table.rowcount > 0:
         print(result_table)
+
+        # Display URLs after the table if we have any
+        if uuid_url_mapping:
+            print("\nResult URLs:")
+            print("-" * 50)
+            for uuid, url in uuid_url_mapping.items():
+                print(f"{uuid}: {url}")
     else:
         LOGGER.info("Nothing to report!")
 

@@ -89,17 +89,16 @@ class RerunJobs:
                 "Arch",
                 "Re-run Plans",
             ]
-            if not getattr(parsed_opts.cli_args, "show_arch", False):
-                info_table.field_names.pop(2)
 
             logger.info("The following plans qualify for a re-run:")
             for req in self.processed_data.keys():
-                rerun_plans = "\n".join(self.processed_data.get(req)[0].split("|"))
-                rerun_target = self.processed_data.get(req)[1]
-                row = [req, rerun_target, rerun_plans]
-                if getattr(parsed_opts.cli_args, "show_arch", False):
-                    rerun_arch = "placeholder_arch"
-                    row = [req, rerun_target, rerun_arch, rerun_plans]
+                data = self.processed_data[
+                    req
+                ]  # Use direct access since we're iterating over keys
+                rerun_plans = "\n".join(data[0].split("|"))
+                rerun_target = data[1]
+                rerun_arch = "placeholder_arch"
+                row = [req, rerun_target, rerun_arch, rerun_plans]
 
                 info_table.add_row(row, divider=True)
             info_table.align = "l"

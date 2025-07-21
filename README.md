@@ -170,6 +170,7 @@ Default invocation `enge report` parses the tasks stored in the latest file at `
 You can specify a different path to the file with `-f/--file` or pass the jobs to get report for straight to the commandline with `-i/--input`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
 You can also use `--get-tag` to query archived task files by tag (see [Task Archiving and Tagging](#task-archiving-and-tagging) section for details).<br>
 The tool is able to parse and report for multiple variants of values as long as they are separated by a new-line (in the files) or a `-i/--input` argument (on the commandline). Raw request_ids, artifact URLs (Testing Farm result page URLs) or request URLs are allowed.
+Use `--show-ids` to display only a list of UUIDs queried from the requested inputs, which is useful for extracting task IDs for further processing or scripting.<br>
 In case you want to get the log files stored locally, use `--download`. Log files for pytest runs will be stored in `/var/tmp/enge/logs/{request_id}_log/`. In case there are multiple plans in one pipeline, the logs should get divided in their respective plan directories.
 
 ```
@@ -184,6 +185,9 @@ enge report --input d60ee5ab-194f-442d-9e37-933be1daf2ce --input https://api.end
 
 # Shorten the displayed test and plan names
 enge report --show-tests --input 9f42645f-bcaa-4c73-87e2-6e1efef16635 --short
+
+# Display only UUIDs from the requested inputs
+enge report --show-ids --file ~/my_jobs_file
 ```
 
 Corresponding return code is set based on the results with following logic:
