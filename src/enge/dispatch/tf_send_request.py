@@ -60,6 +60,8 @@ class SubmitTest:
         self.set_tag: Optional[List[str]] = getattr(
             parsed_opts.cli_args, "set_tag", None
         )
+        self.auto_tag_enabled: bool = getattr(parsed_opts.cli_args, "auto_tag", False)
+        self.auto_generated_tags: List[str] = []
 
     def add_artifact(
         self,
@@ -73,6 +75,44 @@ class SubmitTest:
         if nvr is not None:
             artifact_dict["nvr"] = nvr
         self.artifacts.append(artifact_dict)
+
+    def set_auto_tags(
+        self,
+        set_name: Optional[str] = None,
+        architecture: Optional[str] = None,
+        tier: Optional[str] = None,
+    ):
+        """
+        Set auto-generated tags based on set name, architecture, and tier.
+
+        Args:
+            set_name: Name of the test set (optional)
+            architecture: Target architecture (optional)
+            tier: Test tier (optional)
+        """
+        if not self.auto_tag_enabled:
+            return
+
+        auto_tags = []
+
+        # Generate the most specific combined tag possible, avoiding duplicates
+        if set_name and architecture and tier:
+            # All three components - use combined tag only
+            auto_tags.append(f"{set_name}.{architecture}.{tier}")
+        elif architecture and tier:
+            # Two components - use combined tag only
+            auto_tags.append(f"{architecture}.{tier}")
+        else:
+            # Individual components when we don't have enough for a meaningful combination
+            if set_name:
+                auto_tags.append(set_name)
+            if architecture:
+                auto_tags.append(architecture)
+            if tier:
+                auto_tags.append(tier)
+
+        self.auto_generated_tags = auto_tags
+        LOGGER.debug(f"Generated auto tags: {auto_tags}")
 
     def set_specific_data(
         self,
@@ -98,9 +138,17 @@ class SubmitTest:
             self.archive_tasks_default_path, self.archive_tasks_filename
         )
 
-        # Add set_tag if provided
+        # Combine manual and auto-generated tags, eliminating duplicates
+        all_tags = set()
         if self.set_tag:
-            self.archive_tasks_file = ".".join([self.archive_tasks_file] + self.set_tag)
+            all_tags.update(self.set_tag)
+        if self.auto_generated_tags:
+            all_tags.update(self.auto_generated_tags)
+
+        # Add tags to filename if any exist
+        if all_tags:
+            sorted_tags = sorted(list(all_tags))  # Sort for consistent ordering
+            self.archive_tasks_file = ".".join([self.archive_tasks_file] + sorted_tags)
 
         def _handle_archive_files():
             if self.latest_tasks_file and os.path.exists(self.latest_tasks_file):

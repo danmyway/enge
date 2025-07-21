@@ -179,6 +179,14 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Tag the archived task file with a custom tag. Can be used multiple times.",
     )
 
+    test.add_argument(
+        "--auto-tag",
+        action="store_true",
+        help="Automatically tag archived task files with set name, architecture, and tier information. "
+        "Tags will be in the format: setname.arch.tier (e.g., pre-release.x86_64.tier0). "
+        "Can be combined with --set-tag for additional custom tags.",
+    )
+
     # ==================== REPORT SUBCOMMAND ====================
     report = subparsers.add_parser(
         "report",
@@ -310,6 +318,14 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         action="append",
         metavar="TAG",
         help="Tag the archived task file with a custom tag. Can be used multiple times.",
+    )
+
+    rerun.add_argument(
+        "--auto-tag",
+        action="store_true",
+        help="Automatically tag archived task files with set name, architecture, and tier information. "
+        "Tags will be in the format: setname.arch.tier (e.g., pre-release.x86_64.tier0). "
+        "Can be combined with --set-tag for additional custom tags.",
     )
 
     rerun.add_argument(

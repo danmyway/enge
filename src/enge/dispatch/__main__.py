@@ -475,6 +475,11 @@ def main() -> int:
                 ) or parsed_opts.tests.get("parallel_limit")
                 submit_test.print_header = idx == 1
 
+                # Set auto-generated tags if enabled
+                submit_test.set_auto_tags(
+                    set_name=set_name, architecture=arch, tier=tier
+                )
+
                 # Generate plan filter for this tier
                 try:
                     tier_config = parsed_opts.tests.get("tier", {})
@@ -700,6 +705,7 @@ def main() -> int:
 
             # Process tiers or plans
             if tiers:
+
                 # Process each tier separately
                 for tier_idx, tier in enumerate(tiers, 1):
                     LOGGER.info(
@@ -725,8 +731,19 @@ def main() -> int:
                     if not cli_planfilter:
                         submit_test.planfilter = tier_plan_filter
 
-                    # For tiers, we don't need specific plans - the plan_filter handles selection
+                        # For tiers, we don't need specific plans - the plan_filter handles selection
                     submit_test.plan = None
+
+                    # Set auto-generated tags if enabled (for tier + architecture combinations)
+                    architectures = getattr(parsed_opts, "architectures", [])
+                    if len(architectures) == 1:
+                        # Single architecture - use specific arch in tag
+                        submit_test.set_auto_tags(
+                            architecture=architectures[0], tier=tier
+                        )
+                    else:
+                        # Multiple architectures - use tier only
+                        submit_test.set_auto_tags(tier=tier)
 
                     # Use the source compose name for the request
                     compose_name = parsed_opts.source_spec["compose_name"]
@@ -785,12 +802,19 @@ def main() -> int:
                         LOGGER.error(f"Failed to process builds: {e}")
                         continue
             else:
+
                 # Original plan processing logic (when no tiers specified)
                 for plan_idx, plan in enumerate(plans, 1):
                     LOGGER.info(
                         f"Processing request {plan_idx}/{total_expected_requests}: plan '{plan}'"
                     )
                     submit_test.plan = plan.rstrip("/")
+
+                    # Set auto-generated tags if enabled (for architecture)
+                    architectures = getattr(parsed_opts, "architectures", [])
+                    if len(architectures) == 1:
+                        # Single architecture - use specific arch in tag
+                        submit_test.set_auto_tags(architecture=architectures[0])
 
                     # Use the source compose name for the request
                     compose_name = parsed_opts.source_spec["compose_name"]

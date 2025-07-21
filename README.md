@@ -91,6 +91,7 @@ Use `--wait` if waiting for a successful response from the endpoint is required.
 If for any reason you would need to verify the validity of the raw payload, use `--dryrun` to get it pretty-printed to the command line.
 
 Use `--set-tag` to tag archived task files with custom tags for later retrieval (can be used multiple times).
+Use `--auto-tag` to automatically tag archived task files with contextual information (set name, architecture, tier) and create separate, organized archive files for each unique combination.
 The `--source` argument is required unless using `--set` (which defines source in the configuration).
 
 ```
@@ -117,6 +118,12 @@ enge test --set pre-release-smoke
 
 # Test with custom tags for archiving
 enge test --copr pr123 --tier tier0 --set-tag regression --set-tag pr123
+
+# Test with automatic tagging based on context
+enge test --set pre-release-smoke --auto-tag
+
+# Combine automatic and manual tagging
+enge test --set pre-release-smoke --auto-tag --set-tag custom-run
 ```
 
 ##### Test Sets
@@ -221,13 +228,23 @@ enge rerun --get-tag rc --set-tag secondrun.rc
 
 ##### Task Archiving and Tagging
 
-The `--set-tag` and `--get-tag` options provide a powerful way to organize and retrieve test results:
+The `--set-tag`, `--auto-tag`, and `--get-tag` options provide a powerful way to organize and retrieve test results:
 
 **Setting Tags (`--set-tag`):**
 - Available in `test` and `rerun` commands
 - Tags archived task files with custom labels for later retrieval
 - Can be used multiple times: `--set-tag tag1 --set-tag tag2`
 - Tagged files are stored as `filename.tag1.tag2` in the archive directory
+
+**Automatic Tagging (`--auto-tag`):**
+- Available in `test` and `rerun` commands
+- Automatically generates tags based on contextual information:
+  - **Sets**: Creates combined tags like `setname.architecture.tier` for precise identification
+  - **Tiers**: Creates combined tags like `architecture.tier` when no set is specified
+  - **Plans**: Creates tags for architecture (when single architecture is configured)
+- Can be combined with `--set-tag` for additional custom tags
+- **Generates separate archive files** - each unique tag combination creates its own file
+- Particularly useful for test sets with multiple tier/architecture combinations as it creates granular, organized files
 
 **Getting Tagged Results (`--get-tag`):**
 - Available in `report` and `rerun` commands
@@ -240,20 +257,49 @@ The `--set-tag` and `--get-tag` options provide a powerful way to organize and r
 - Latest job IDs: `/tmp/enge_latest_jobs`
 - Archived jobs: `~/.enge/jobs_archive/` (configurable)
 - Tagged files: `~/.enge/jobs_archive/filename.tag1.tag2`
+- **With `--auto-tag`**: Multiple separate files like `filename.setname.arch.tier`
+
+**File Organization Example:**
+When running `enge test --set pre-release --auto-tag` with tiers [tier0, tier1] and architectures [x86_64, aarch64], you get:
+```
+~/.enge/jobs_archive/
+├── enge_jobs_archive_20250121_143022.pre-release.x86_64.tier0
+├── enge_jobs_archive_20250121_143022.pre-release.x86_64.tier1
+├── enge_jobs_archive_20250121_143022.pre-release.aarch64.tier0
+└── enge_jobs_archive_20250121_143022.pre-release.aarch64.tier1
+```
+Each file contains exactly one task ID for its specific combination, enabling precise organization and querying.
 
 **Examples:**
 ```bash
-# Test with custom tags
+# Test with custom tags (creates one shared file)
 enge test --copr pr123 --tier tier0 --set-tag regression --set-tag pr123
 
-# Get results by tag
+# Test with automatic tagging (creates separate file: enge_jobs_archive_timestamp.x86_64.tier0)
+enge test --copr pr123 --tier tier0 --auto-tag
+
+# Test set with automatic tagging (creates separate files for each tier/arch combination)
+# Example files: enge_jobs_archive_timestamp.pre-release-smoke.x86_64.tier0
+#                enge_jobs_archive_timestamp.pre-release-smoke.aarch64.tier0
+enge test --set pre-release-smoke --auto-tag
+
+# Combine automatic and manual tagging (separate files with both auto and manual tags)
+enge test --set pre-release-smoke --auto-tag --set-tag custom-run
+
+# Get results by tag (works across all files)
 enge report --get-tag regression
 
-# Report results for both regression and pr123 tags
+# Get results by auto-generated tag (finds specific combination)
+enge report --get-tag x86_64
+
+# Get results for specific set and tier combination
+enge report --get-tag pre-release-smoke.x86_64.tier0
+
+# Report results for multiple tags (OR logic)
 enge report --get-tag regression --get-tag pr123
 
-# Rerun failed jobs tagged with 'rc'
-enge rerun --get-tag rc --fail
+# Rerun failed jobs tagged with specific tag
+enge rerun --get-tag tier0 --fail --auto-tag
 
 # Combine tag search with other inputs
 enge report --get-tag regression --file ~/my_jobs --input 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b
