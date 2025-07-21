@@ -246,16 +246,9 @@ def build_table_comparison():
 def build_table():
     parsed_dict = parse_request_xunit(skip_pass=parsed_opts.cli_args.skip_pass)
 
-    result_table = PrettyTable()
-    # prepare field names
-    fields = []
-    fields += ["UUID", "Target", "Arch"]  # Always show architecture
-    fields += ["Test Plan"]
-    fields += ["Plan Result"]
-    if getattr(parsed_opts.cli_args, "show_tests", False):
-        fields += ["Test Case"]
-        fields += ["Test Result"]
-    result_table.field_names = fields
+    # For multiple UUIDs, we'll create separate tables
+    tables_list = []
+    uuid_url_mapping = {}
 
     planname_split_index = 0
     testname_split_index = 0
@@ -264,49 +257,45 @@ def build_table():
         planname_split_index = -1
         testname_split_index = -1
 
-    def _gen_row(
-        uuid="",
-        target="",
-        arch="",
-        testplan="",
-        testplan_result="",
-        testcase="",
-        testcase_result="",
-    ):
-        if "UUID" in fields:
-            yield uuid
-        if "Target" in fields:
-            yield target
-        if "Arch" in fields:
-            yield arch
-        if "Test Plan" in fields:
-            yield testplan
-        if "Plan Result" in fields:
-            yield testplan_result
-        if "Test Case" in fields:
-            yield testcase
-        if "Test Result" in fields:
-            yield testcase_result
-
-    def add_row(*args, **kwargs):
-        result_table.add_row(list(_gen_row(*args, **kwargs)))
-
-    # Collect UUIDs and URLs for summary section
-    uuid_url_mapping = {}
-
     for task_uuid, data in parsed_dict.items():
-        # Store URL mapping for later display
+        # Create metadata title for each table
         result_url = (
             f"{parsed_opts.testing_farm_endpoint.log_artifact_baseurl}/{task_uuid}"
         )
-        uuid_url_mapping[task_uuid] = result_url
+        # Get architecture from first testsuite or default to 'Unknown'
+        arch = (
+            data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
+        )
 
-        add_row(task_uuid, data["target_name"])
-        last_arch = None
+        result_table = PrettyTable()
+        # Keep table title clean - metadata will be displayed separately
+
+        # prepare field names - no more UUID, Target, Arch columns
+        fields = ["Test Plan", "Plan Result"]
+        if getattr(parsed_opts.cli_args, "show_tests", False):
+            fields += ["Test Case", "Test Result"]
+        result_table.field_names = fields
+
+        def _gen_row(
+            testplan="",
+            testplan_result="",
+            testcase="",
+            testcase_result="",
+        ):
+            if "Test Plan" in fields:
+                yield testplan
+            if "Plan Result" in fields:
+                yield testplan_result
+            if "Test Case" in fields:
+                yield testcase
+            if "Test Result" in fields:
+                yield testcase_result
+
+        def add_row(*args, **kwargs):
+            result_table.add_row(list(_gen_row(*args, **kwargs)))
+
+        # Build table for this specific UUID
         for testsuite_data in data["testsuites"]:
-            if last_arch != testsuite_data["testsuite_arch"]:
-                last_arch = testsuite_data["testsuite_arch"]
-                add_row(arch=last_arch)
             if testsuite_data["testsuite_result"] == "SKIPPED":
                 continue
             testsuite_result = testsuite_data["testsuite_result"]
@@ -332,9 +321,20 @@ def build_table():
                         testcase_result=colorize(testcase_result),
                     )
 
-    result_table.align = "l"
+        result_table.align = "l"
 
-    return result_table, uuid_url_mapping
+        # Store metadata for display
+        metadata = {
+            "Compose:": data["target_name"],
+            "Architecture:": arch,
+            "Task UUID:": task_uuid,
+            "Result URL:": result_url,
+        }
+
+        tables_list.append((result_table, metadata))
+
+    # Return list of (table, metadata) tuples
+    return tables_list
 
 
 def get_color_format(result):
@@ -372,23 +372,37 @@ def main(result_table=None):
             LOGGER.info("No UUIDs found!")
         return ALL_PASS
 
-    uuid_url_mapping = {}
     if result_table is None:
         if parsed_opts.cli_args.compare:
-            result_table = build_table_comparison()
+            # For comparison mode, wrap in tuple format for consistency
+            comparison_table = build_table_comparison()
+            result_table = [(comparison_table, None)]  # No metadata for comparison mode
         else:
-            result_table, uuid_url_mapping = build_table()
+            result_table = build_table()
 
-    if hasattr(result_table, "rowcount") and result_table.rowcount > 0:
-        print(result_table)
+    # Handle list of (table, metadata) tuples
+    has_content = False
+    for table, metadata in result_table:
+        if table.rowcount > 0:
+            print()
+            print(
+                FormatText.format_text(
+                    "~~~ REQUEST METADATA ~~~~~~~~~~~~~~", text_col=FormatText.DIM
+                )
+            )
+            # Display metadata block before table
+            if metadata:
+                for title, value in metadata.items():
+                    print(
+                        FormatText.format_text(
+                            f"{title:<15}{value}", text_col=FormatText.DIM
+                        )
+                    )
 
-        # Display URLs after the table if we have any
-        if uuid_url_mapping:
-            print("\nResult URLs:")
-            print("-" * 50)
-            for uuid, url in uuid_url_mapping.items():
-                print(f"{uuid}: {url}")
-    else:
+            print(table)
+            has_content = True
+
+    if not has_content:
         LOGGER.info("Nothing to report!")
 
     # Get return value from concurrent parser

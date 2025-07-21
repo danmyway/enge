@@ -255,10 +255,8 @@ class ConcurrentRequestParser:
             if parsed_opts.cli_args.action == "rerun" or parsed_opts.cli_args.wait:
                 self._wait_for_completion(task_result)
             else:
-                LOGGER.warning(f"[{uuid_short}] Request is still running.")
-                LOGGER.warning(
-                    f"[{uuid_short}] Try later or use --wait to wait for it to finish"
-                )
+                # Don't log individual warnings - will show general warning later
+                LOGGER.debug(f"[{uuid_short}] Request is still running.")
                 LOGGER.debug(f"[{uuid_short}]   URL: {task_result.url}")
                 update_retval(NO_RESULT)
                 task_result.should_skip = True
@@ -271,9 +269,8 @@ class ConcurrentRequestParser:
         else:
             # Check if task is still running
             if task_result.request_state not in ("COMPLETE", "ERROR"):
-                LOGGER.warning(
-                    f"[{task_result.request_uuid}] Request is still running, try later or use --wait to wait for it to finish"
-                )
+                # Don't log individual warnings - will show general warning later
+                LOGGER.debug(f"[{task_result.request_uuid}] Request is still running")
                 LOGGER.debug(f"[{uuid_short}]   URL: {task_result.url}")
                 update_retval(NO_RESULT)
                 task_result.should_skip = True
@@ -463,6 +460,16 @@ class ConcurrentRequestParser:
             f"{FormatText.BLUE}Fetching XML results for {len(tasks_for_xml)} tasks{FormatText.END}"
         )
         LOGGER.info(f"{FormatText.DIM}{'─' * 60}{FormatText.END}")
+
+        # Check for running/queued tasks and show general warning
+        running_or_queued_tasks = [
+            task
+            for task in task_results
+            if task.should_skip and task.skip_reason in ("running", "queued")
+        ]
+        if running_or_queued_tasks:
+            LOGGER.warning("One or more requests are still running.")
+            LOGGER.warning("Please try later or use --wait to wait for them to finish")
 
         # Phase 2: Fetch XML results concurrently (only for non-skipped tasks)
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
