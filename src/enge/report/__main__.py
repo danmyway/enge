@@ -325,10 +325,12 @@ def build_table():
 
         # Store metadata for display
         metadata = {
-            "Compose:": data["target_name"],
+            "SourceCompose:": data["target_name"],
+            "TargetVersion:": data.get("target_release", "Unknown"),
+            "UpgradePath:": data.get("upgrade_path", "Unknown"),
             "Architecture:": arch,
-            "Task UUID:": task_uuid,
-            "Result URL:": result_url,
+            "TaskUUID:": task_uuid,
+            "ResultURL:": result_url,
         }
 
         tables_list.append((result_table, metadata))
@@ -395,11 +397,16 @@ def main(result_table=None):
                 for title, value in metadata.items():
                     print(
                         FormatText.format_text(
-                            f"{title:<15}{value}", text_col=FormatText.DIM
+                            f"{title:<20}{value}", text_col=FormatText.DIM
                         )
                     )
+            if parsed_opts.cli_args.jira:
+                print("{noformat}")
+                print(table)
+                print("{noformat}")
+            else:
+                print(table)
 
-            print(table)
             has_content = True
 
     if not has_content:

@@ -40,7 +40,9 @@ class TaskResult:
     """Data class for task results to improve type safety and readability."""
 
     request_uuid: str
-    request_target: str
+    request_source_compose: str
+    request_target_release: str
+    request_upgrade_path: str
     request_arch: str
     request_state: str
     request_datetime_created: str
@@ -157,10 +159,28 @@ class ConcurrentRequestParser:
 
                 task_result = TaskResult(
                     request_uuid=task_data["id"],
-                    request_target=(
+                    request_source_compose=(
                         environments[0].get("os", {}).get("compose", "Unknown")
                         if isinstance(environments[0], dict)
                         else "Unknown"
+                    ),
+                    request_target_release=(
+                        environments[0]
+                        .get("variables", {})
+                        .get("TARGET_RELEASE", "Unknown")
+                        if isinstance(environments[0], dict)
+                        else "Unknown"
+                    ),
+                    request_upgrade_path=(
+                        (
+                            environments[0]
+                            .get("variables", {})
+                            .get("SOURCE_RELEASE", "Unknown")
+                            + " to "
+                            + environments[0]
+                            .get("variables", {})
+                            .get("TARGET_RELEASE", "Unknown")
+                        )
                     ),
                     request_arch=(
                         environments[0].get("arch", "Unknown")
@@ -520,7 +540,9 @@ class XMLParser:
         if not task_result.xunit_content:
             return {
                 "request_uuid": task_result.request_uuid,
-                "target_name": task_result.request_target,
+                "target_name": task_result.request_source_compose,
+                "target_release": task_result.request_target_release,
+                "upgrade_path": task_result.request_upgrade_path,
                 "testsuites": [],
                 "error": task_result.error_message or "No XML content",
             }
@@ -556,7 +578,9 @@ class XMLParser:
                     LOGGER.critical(f"Result summary: {task_result.request_summary}")
                     return {
                         "request_uuid": task_result.request_uuid,
-                        "target_name": task_result.request_target,
+                        "target_name": task_result.request_source_compose,
+                        "target_release": task_result.request_target_release,
+                        "upgrade_path": task_result.request_upgrade_path,
                         "testsuites": [],
                         "error": "Pipeline error detected",
                     }
@@ -571,7 +595,9 @@ class XMLParser:
                 LOGGER.debug(f"[{uuid_short}] Skipping as the overall result is pass")
                 return {
                     "request_uuid": task_result.request_uuid,
-                    "target_name": task_result.request_target,
+                    "target_name": task_result.request_source_compose,
+                    "target_release": task_result.request_target_release,
+                    "upgrade_path": task_result.request_upgrade_path,
                     "testsuites": [],
                     "skipped": "PASSED result skipped",
                 }
@@ -586,7 +612,9 @@ class XMLParser:
 
             parsed_data = {
                 "request_uuid": task_result.request_uuid,
-                "target_name": task_result.request_target,
+                "target_name": task_result.request_source_compose,
+                "target_release": task_result.request_target_release,
+                "upgrade_path": task_result.request_upgrade_path,
                 "testsuites": [],
                 "overall_result": job_result_overall,
             }
@@ -605,7 +633,9 @@ class XMLParser:
             LOGGER.error(f"[{task_result.request_uuid}] Error parsing XML: {e}")
             return {
                 "request_uuid": task_result.request_uuid,
-                "target_name": task_result.request_target,
+                "target_name": task_result.request_source_compose,
+                "target_release": task_result.request_target_release,
+                "upgrade_path": task_result.request_upgrade_path,
                 "testsuites": [],
                 "error": f"XML parsing error: {e}",
             }
@@ -701,9 +731,7 @@ class XMLParser:
             testcase_log_url = testcase_elem.xpath(
                 './logs/log[@name="testout.log"]/@href'
             )[0]
-            log_name = (
-                f"{task_result.request_target}_{testcase_name.split('/')[-1]}.log"
-            )
+            log_name = f"{task_result.request_source_compose}_{testcase_name.split('/')[-1]}.log"
             uuid_short = ConcurrentRequestParser._get_short_uuid(
                 task_result.request_uuid
             )

@@ -279,6 +279,12 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Display only a list of UUIDs queried from the requested inputs.",
     )
 
+    report.add_argument(
+        "--jira",
+        action="store_true",
+        help="Display tables formatted for JIRA comments.",
+    )
+
     # ==================== RERUN SUBCOMMAND ====================
     rerun = subparsers.add_parser(
         "rerun",
