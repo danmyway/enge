@@ -12,9 +12,10 @@
        1. [Commands](#sub-commands)
           1. [Test](#test)
           2. [Test Sets](#test-sets)
-          3. [Report](#report)
-          4. [Rerun](#rerun)
-          5. [Task Archiving and Tagging](#task-archiving-and-tagging)
+          3. [TMT Context Integration](#tmt-context-integration)
+          4. [Report](#report)
+          5. [Rerun](#rerun)
+          6. [Task Archiving and Tagging](#task-archiving-and-tagging)
 
 
 ENGE
@@ -72,20 +73,23 @@ In case of any question, please reach out to the project maintainer(s).
 ### Usage
 
 #### Sub-Commands
-As of now enge is able to perform three tasks.<br>
+Enge provides several commands for comprehensive test workflow management:<br>
 `test` feeds the request payload with provided config options or arguments and dispatches a test job to the Testing Farm.<br>
 `report` outputs the test results back to the command line.<br>
-`rerun` re-dispatches failed or errored test jobs.
+`rerun` re-dispatches failed or errored test jobs.<br>
+`cancel` cancels running or queued Testing Farm tasks.
 
 ##### Test
 
 The goal of enge is to make requesting test jobs as easy as possible.<br>
 A default artifact to install (if not specified otherwise) is the one available in the compose.<br>
 The `--brew` and `--copr` options denote which type of a build artifact is to be requested for testing.<br>
-Instead of looking for build IDs to pass to the payload, all you need to know is a reference for a pull request number (e.g. pr123) which triggered the build you need to test. In case you have the Build ID handy, you can use that instead of the reference.<br> For brew builds you just need to know the release version (e.g. 0.1.2-3). Or pass the TaskID as a value of the respective option.<br>
+Instead of looking for build IDs to pass to the payload, all you need to know is a reference for a pull request number (e.g. pr123) which triggered the build you need to test. In case you have the Build ID handy, you can use that instead of the reference.<br>
+For brew builds you can provide either the NVR (e.g. leapp-0.16.0-1.el9) or the TaskID. Both are validated via the Brew API, and Task IDs are automatically resolved to their corresponding NVR. The NVR is always used in the Testing Farm payload for consistency.<br>
 Multiple `--plan` options can be specified and will be dispatched in separate jobs.
 `--tier` options allow you to run predefined test tiers from your configuration.
 `--set` options allow you to use pre-configured test sets (see Test Sets section below).
+**Plan Override Behavior:** When using `--plan` with `--tier` or `--set`, the CLI plans override any plans defined in configuration or test sets.
 When using `--planfilter` or `--test` to specify singular test it is disallowed to request multiple `--plan` options in one command.<br>
 Use `--wait` if waiting for a successful response from the endpoint is required.
 If for any reason you would need to verify the validity of the raw payload, use `--dryrun` to get it pretty-printed to the command line.
@@ -124,6 +128,18 @@ enge test --set pre-release-smoke --auto-tag
 
 # Combine automatic and manual tagging
 enge test --set pre-release-smoke --auto-tag --set-tag custom-run
+
+# Use Task ID - automatically resolved to NVR in payload
+enge test --brew 12345678 --tier tier0
+
+# Combine tier with specific plans (CLI plans override config plans)
+enge test --tier tier0 --plan /plans/custom-plan --source 9.7
+
+# Override test set plans with CLI plans
+enge test --set pre-release-smoke --plan /plans/override-plan
+
+# Test multiple brew packages (each gets NVR in TMT context)
+enge test --brew leapp-0.16.0-1.el9 --brew leapp-repository-0.1-32.el9 --tier tier0
 ```
 
 ##### Test Sets
@@ -136,6 +152,7 @@ Test sets are pre-configured test scenarios that can be defined in your configur
 source = "9.7"
 target = "10.1"  # Optional, will be auto-derived if not specified
 tiers = ["tier0", "tier1"]
+plans = ["/plans/custom-smoke", "/plans/integration"]  # Optional: specific plans (overridden by CLI --plan)
 architectures = ["x86_64", "aarch64"]
 git_branch = "main"
 parallel_limit = 20
@@ -149,16 +166,59 @@ TARGET_RELEASE_URL = "https://some.url/to-the-target"
 EXPERIMENTAL = "true"
 ```
 
-When a test set defines multiple tiers and architectures, a separate payload is generated for every combination of tier and architecture. For example, with `tiers = ["tier0", "tier1"]` and `architectures = ["x86_64", "aarch64"]`, four payloads will be dispatched: one for each (tier, architecture) pair (tier0 on x86_64, tier0 on aarch64, tier1 on x86_64, tier1 on aarch64).
+When a test set defines multiple tiers and architectures, a separate payload is generated for every combination of tier and architecture. If the test set also includes specific plans, each (tier, architecture, plan) combination generates a separate request.
 
 **Usage:**
 - Use `--set <set-name>` to run a predefined test set
 - Multiple sets can be specified: `--set set1 --set set2`
 - CLI arguments override test set configurations when provided
-- Test sets can define artifacts, environment variables, and test selection criteria
+- Test sets can define plans, artifacts, environment variables, and test selection criteria
+- When using `--plan` with `--set`, CLI plans completely override any plans defined in the test set
 - The `--source` argument is not required when using `--set` (it's defined in the set configuration)
 
 **Priority Order:** CLI arguments > Test Set configuration > Main configuration
+
+##### TMT Context Integration
+
+Enge automatically populates TMT context variables that are available to test scripts and TMT plugins (including ReportPortal integration). The context includes:
+
+**Standard Context Fields:**
+- `distro`: Source release (e.g., "rhel-9.7")
+- `target_distro`: Target release (e.g., "rhel-10.1")
+- `source_compose`: Source compose name (e.g., "RHEL-9.7.0-Nightly")
+- `upgrade_path`: Generated upgrade path (e.g., "9to10")
+- `arch`: Target architecture (e.g., "x86_64")
+
+**Conditional Context Fields:**
+- `event`: Test set name (only when using `--set`)
+- `tier`: Test tier (when using `--tier` or test sets with tiers)
+
+**Brew Artifact Context:**
+When using `--brew`, package version information is automatically added in the format `package_name: version-release`:
+- `leapp`: "0.16.0-1.el9"
+- `leapp-repository`: "0.1-32.el9"
+
+**Example TMT Context:**
+```json
+{
+  "distro": "rhel-9.7",
+  "target_distro": "rhel-10.1",
+  "source_compose": "RHEL-9.7.0-Nightly",
+  "upgrade_path": "9to10",
+  "arch": "x86_64",
+  "event": "pre-release-smoke",
+  "tier": "tier0",
+  "leapp": "0.16.0-1.el9"
+}
+```
+
+**Usage in Tests:**
+```python
+# Access context in test scripts
+context = self.context
+leapp_version = context.get("leapp")  # "0.16.0-1.el9"
+upgrade_path = context.get("upgrade_path")  # "9to10"
+```
 
 ##### Report
 With the report command you are able to get the results of the requested jobs straight to the command line.<br>

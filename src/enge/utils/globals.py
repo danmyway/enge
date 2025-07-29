@@ -25,3 +25,8 @@ DEFAULT_CONFIG_PATHS: Tuple[str, ...] = (
     "./enge.toml",
 )
 """Default paths to search for configuration files, in order of preference."""
+
+# ==================== REPORTPORTAL CONFIGURATION ====================
+
+TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX: str = "TMT_PLUGIN_REPORT_REPORTPORTAL_"
+"""Prefix for ReportPortal environment variables generated from config values."""

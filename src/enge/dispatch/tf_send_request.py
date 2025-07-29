@@ -183,6 +183,18 @@ class SubmitTest:
             else getattr(parsed_opts, "tmt_context", {})
         )
 
+        # Separate ReportPortal environment variables from regular variables
+        from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+
+        regular_env_vars = {}
+        reportportal_env_vars = {}
+
+        for key, value in env_vars.items():
+            if key.startswith(TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX):
+                reportportal_env_vars[key] = value
+            else:
+                regular_env_vars[key] = value
+
         # Build the base TMT context (arch will be set per environment)
         base_tmt_context = {
             "distro": self.tmt_distro,
@@ -191,6 +203,38 @@ class SubmitTest:
         # Merge with additional TMT context if available
         if tmt_context:
             base_tmt_context.update(tmt_context)
+
+        # Add NVR information to TMT context if we have brew artifacts
+        if self.artifacts:
+            for artifact in self.artifacts:
+                if artifact.get("type") == "redhat-brew-build" and "id" in artifact:
+                    nvr = artifact[
+                        "id"
+                    ]  # This is now always the NVR thanks to our changes
+                    package_name = artifact.get("package", "")
+
+                    LOGGER.debug(
+                        f"Processing artifact: NVR='{nvr}', package='{package_name}'"
+                    )
+
+                    # Parse NVR into name (n) and version-release (vr)
+                    # NVR format: package-version-release (e.g., leapp-0.16.0-1.el9)
+                    if nvr and package_name:
+                        # Verify the NVR starts with the package name followed by a hyphen
+                        expected_prefix = package_name + "-"
+                        if nvr.startswith(expected_prefix):
+                            version_release = nvr[len(expected_prefix) :]
+
+                            # Avoid overwriting if key already exists
+                            if package_name in base_tmt_context:
+                                LOGGER.warning(
+                                    f"TMT context key '{package_name}' already exists with value '{base_tmt_context[package_name]}', overwriting with '{version_release}'"
+                                )
+
+                            base_tmt_context[package_name] = version_release
+                            LOGGER.debug(
+                                f"Added to TMT context: {package_name}: {version_release}"
+                            )
 
         # Get architectures - use set-specific data if available
         architectures = (
@@ -206,6 +250,13 @@ class SubmitTest:
             arch_tmt_context = base_tmt_context.copy()
             arch_tmt_context["arch"] = arch
 
+            # Build TMT configuration with context and environment
+            tmt_config = {"context": arch_tmt_context}
+
+            # Add ReportPortal environment variables to TMT environment if any exist
+            if reportportal_env_vars:
+                tmt_config["environment"] = reportportal_env_vars
+
             environment_config = {
                 "arch": arch,
                 "os": {"compose": self.compose},
@@ -214,8 +265,8 @@ class SubmitTest:
                         "tags": {"BusinessUnit": self.business_unit_tag},
                     }
                 },
-                "tmt": {"context": arch_tmt_context},
-                "variables": env_vars,
+                "tmt": tmt_config,
+                "variables": regular_env_vars,
             }
 
             # Only include artifacts if we have any artifacts (for copr/brew builds)

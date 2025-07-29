@@ -277,7 +277,6 @@ class ConcurrentRequestParser:
             else:
                 # Don't log individual warnings - will show general warning later
                 LOGGER.debug(f"[{uuid_short}] Request is still running.")
-                LOGGER.debug(f"[{uuid_short}]   URL: {task_result.url}")
                 update_retval(NO_RESULT)
                 task_result.should_skip = True
                 # Set specific skip reason based on state
@@ -290,8 +289,7 @@ class ConcurrentRequestParser:
             # Check if task is still running
             if task_result.request_state not in ("COMPLETE", "ERROR"):
                 # Don't log individual warnings - will show general warning later
-                LOGGER.debug(f"[{task_result.request_uuid}] Request is still running")
-                LOGGER.debug(f"[{uuid_short}]   URL: {task_result.url}")
+                LOGGER.debug(f"[{uuid_short}] Request is still running")
                 update_retval(NO_RESULT)
                 task_result.should_skip = True
                 # Set specific skip reason based on state

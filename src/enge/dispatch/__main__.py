@@ -13,6 +13,7 @@ from enge.utils.source_target_parser import (
     generate_upgrade_path_alias,
     parse_architectures,
     generate_tmt_context,
+    generate_tier_plan_filter,
 )
 from .tf_send_request import SubmitTest
 
@@ -31,22 +32,21 @@ config_plans = parsed_opts.plans if parsed_opts.plans else []
 # Get effective tiers (from CLI, test sets, or None)
 effective_tiers = getattr(parsed_opts, "effective_tiers", None)
 
-if cli_plans:
-    # CLI plans take precedence
-    plans = cli_plans
+# NEW LOGIC: Allow combining CLI plans with tiers/sets
+if cli_tiers or effective_tiers:
+    # Use tiers (from CLI or test sets)
+    tiers = cli_tiers or effective_tiers
+    # CLI plans override config plans (don't combine)
+    plans = cli_plans if cli_plans else config_plans
+elif cli_sets:
+    # Test sets are handled in the test set processing section
+    # CLI plans are handled within test sets via resolve_effective_values (no separate processing needed)
     tiers = None
-elif cli_tiers:
-    # CLI tiers take precedence
-    plans = config_plans if config_plans else []
-    tiers = cli_tiers
-elif effective_tiers:
-    # Test set tiers (when no CLI tiers specified)
-    plans = config_plans if config_plans else []
-    tiers = effective_tiers
+    plans = []  # Don't process CLI plans separately when using sets
 else:
-    # Use config plans
-    plans = config_plans
+    # No tiers or sets - use only plans (CLI or config)
     tiers = None
+    plans = cli_plans or config_plans
 
 # Initialize artifact type variables
 artifact_type_alias: str
@@ -408,19 +408,41 @@ def main() -> int:
                         LOGGER.error(f"No tiers specified for test set '{set_name}'")
                         continue
 
-                    # Process each (tier, architecture) pair in this set
-                    for tier in set_tiers:
-                        for arch in architectures:
-                            set_request = {
-                                "set_name": set_name,
-                                "tier": tier,
-                                "source_spec": source_spec,
-                                "target_spec": target_spec,
-                                "upgrade_path": upgrade_path,
-                                "architecture": arch,
-                                "effective_values": effective_values,
-                            }
-                            all_set_requests.append(set_request)
+                    # Get specific plans from effective values (already resolved with override logic)
+                    all_specific_plans = effective_values.get("plans", [])
+
+                    # Process each (tier, architecture, plan) combination in this set
+                    if all_specific_plans:
+                        # If we have specific plans, create a request for each plan within each tier/arch combo
+                        for tier in set_tiers:
+                            for arch in architectures:
+                                for plan in all_specific_plans:
+                                    set_request = {
+                                        "set_name": set_name,
+                                        "tier": tier,
+                                        "plan": plan,
+                                        "source_spec": source_spec,
+                                        "target_spec": target_spec,
+                                        "upgrade_path": upgrade_path,
+                                        "architecture": arch,
+                                        "effective_values": effective_values,
+                                    }
+                                    all_set_requests.append(set_request)
+                    else:
+                        # If no specific plans, just create tier/arch combinations (original behavior)
+                        for tier in set_tiers:
+                            for arch in architectures:
+                                set_request = {
+                                    "set_name": set_name,
+                                    "tier": tier,
+                                    "plan": None,
+                                    "source_spec": source_spec,
+                                    "target_spec": target_spec,
+                                    "upgrade_path": upgrade_path,
+                                    "architecture": arch,
+                                    "effective_values": effective_values,
+                                }
+                                all_set_requests.append(set_request)
 
                 except ValueError as e:
                     LOGGER.error(
@@ -440,15 +462,22 @@ def main() -> int:
             for idx, set_request in enumerate(all_set_requests, 1):
                 set_name = set_request["set_name"]
                 tier = set_request["tier"]
+                specific_plan = set_request["plan"]
                 source_spec = set_request["source_spec"]
                 target_spec = set_request["target_spec"]
                 upgrade_path = set_request["upgrade_path"]
                 arch = set_request["architecture"]
                 effective_values = set_request["effective_values"]
 
-                LOGGER.info(
-                    f"Processing request {idx}/{total_expected_requests}: {set_name} tier '{tier}' [{arch}]"
-                )
+                # Update log message to include specific plan if present
+                if specific_plan:
+                    LOGGER.info(
+                        f"Processing request {idx}/{total_expected_requests}: {set_name} tier '{tier}' plan '{specific_plan}' [{arch}]"
+                    )
+                else:
+                    LOGGER.info(
+                        f"Processing request {idx}/{total_expected_requests}: {set_name} tier '{tier}' [{arch}]"
+                    )
 
                 # Create a new SubmitTest instance for this request with shared archive filename
                 submit_test = SubmitTest(
@@ -467,6 +496,13 @@ def main() -> int:
                     parsed_opts.cli_args, "testfilter", None
                 )
                 submit_test.test_name = getattr(parsed_opts.cli_args, "test", None)
+
+                # Set the specific plan if we have one
+                if specific_plan:
+                    submit_test.plan = specific_plan.rstrip("/")
+                else:
+                    submit_test.plan = None
+
                 submit_test.business_unit_tag = parsed_opts.testing_farm.get(
                     "cloud_resources_tag"
                 )
@@ -480,7 +516,7 @@ def main() -> int:
                     set_name=set_name, architecture=arch, tier=tier
                 )
 
-                # Generate plan filter for this tier
+                # Generate plan filter for this tier (tier-based filtering only)
                 try:
                     tier_config = parsed_opts.tests.get("tier", {})
                     tier_plan_filter = generate_tier_plan_filter(
@@ -490,9 +526,12 @@ def main() -> int:
                         f"Generated plan filter for tier '{tier}': {tier_plan_filter}"
                     )
 
-                    # Use CLI planfilter if provided, otherwise use generated tier filter
+                    # Use CLI planfilter if provided, otherwise use tier-based filter
                     cli_planfilter = getattr(parsed_opts.cli_args, "planfilter", None)
                     submit_test.planfilter = cli_planfilter or tier_plan_filter
+
+                    if specific_plan:
+                        LOGGER.debug(f"Using specific plan: {specific_plan}")
 
                 except ValueError as e:
                     LOGGER.error(
@@ -549,7 +588,9 @@ def main() -> int:
                 temp_opts.architectures = [arch]  # Only the current architecture
 
                 # Generate TMT context for this set
-                temp_opts.tmt_context = generate_tmt_context(source_spec, target_spec)
+                temp_opts.tmt_context = generate_tmt_context(
+                    source_spec, target_spec, event=set_name, tier=tier
+                )
 
                 # Handle artifacts from set config
                 set_copr_api = effective_values.get("copr_api", {})
@@ -579,7 +620,19 @@ def main() -> int:
 
                 # Merge environment variables (CLI > Test Set > Automatic)
                 merged_env_vars = merge_set_environment_variables(
-                    auto_env_vars, set_env_vars, cli_env_vars
+                    auto_env_vars,
+                    set_env_vars,
+                    cli_env_vars,
+                    parsed_opts.config,
+                    parsed_opts.cli_args,
+                    effective_values.get("reportportal", {}),
+                    set_name,
+                    arch,
+                    tier,
+                    f"{source_spec['major']}.{source_spec['minor']}",
+                    f"{target_spec['major']}.{target_spec['minor']}",
+                    source_spec["compose_name"],
+                    target_spec["compose_name"],
                 )
 
                 # Set the set-specific data for this SubmitTest instance
@@ -686,127 +739,253 @@ def main() -> int:
 
             # Import tier generation function if needed
             if tiers:
-                from enge.utils.source_target_parser import generate_tier_plan_filter
-
                 tier_config = parsed_opts.tests.get("tier", {})
                 upgrade_path = parsed_opts.upgrade_path_alias
 
-            # Calculate total requests to show progress
+            # Calculate total requests to show progress - now we combine tiers with plans
             if tiers:
-                total_expected_requests = len(tiers)
-                LOGGER.info(
-                    f"Preparing to process {total_expected_requests} tier-based request(s)"
-                )
+                # When we have tiers, we process one request per tier (or tier+plan combination)
+                if plans:
+                    # Create one request per (tier, plan) combination
+                    total_expected_requests = len(tiers) * len(plans)
+                    LOGGER.info(
+                        f"Preparing to process {total_expected_requests} request(s) ({len(tiers)} tier(s) × {len(plans)} plan(s))"
+                    )
+                else:
+                    # Just tiers, no specific plans
+                    total_expected_requests = len(tiers)
+                    LOGGER.info(
+                        f"Preparing to process {total_expected_requests} tier-based request(s)"
+                    )
             else:
+                # When we have only plans, we process one request per plan
                 total_expected_requests = len(plans)
                 LOGGER.info(
                     f"Preparing to process {total_expected_requests} plan-based request(s)"
                 )
 
-            # Process tiers or plans
+            # Process tiers with plans (if any)
+            request_counter = 0
             if tiers:
-
-                # Process each tier separately
-                for tier_idx, tier in enumerate(tiers, 1):
-                    LOGGER.info(
-                        f"Processing request {tier_idx}/{total_expected_requests}: tier '{tier}'"
-                    )
-
-                    # Generate plan filter for this specific tier
-                    try:
-                        tier_plan_filter = generate_tier_plan_filter(
-                            [tier], tier_config, upgrade_path
-                        )
-                        LOGGER.debug(
-                            f"Generated plan filter for tier '{tier}': {tier_plan_filter}"
-                        )
-                    except ValueError as e:
-                        LOGGER.error(
-                            f"Failed to generate plan filter for tier '{tier}': {e}"
-                        )
-                        continue
-
-                    # Override the planfilter for this tier (unless CLI planfilter is specified)
-                    cli_planfilter = getattr(parsed_opts.cli_args, "planfilter", None)
-                    if not cli_planfilter:
-                        submit_test.planfilter = tier_plan_filter
-
-                        # For tiers, we don't need specific plans - the plan_filter handles selection
-                    submit_test.plan = None
-
-                    # Set auto-generated tags if enabled (for tier + architecture combinations)
-                    architectures = getattr(parsed_opts, "architectures", [])
-                    if len(architectures) == 1:
-                        # Single architecture - use specific arch in tag
-                        submit_test.set_auto_tags(
-                            architecture=architectures[0], tier=tier
-                        )
-                    else:
-                        # Multiple architectures - use tier only
-                        submit_test.set_auto_tags(tier=tier)
-
-                    # Use the source compose name for the request
-                    compose_name = parsed_opts.source_spec["compose_name"]
-
-                    validate_compose_targets(compose_name)
-                    info = get_artifact_info(compose_name)
-                    if not info:
-                        LOGGER.warning(
-                            f"No artifact information found for tier: {tier}"
-                        )
-                        continue
-
-                    # Process the request
-                    try:
-                        total_requests += 1
-                        LOGGER.debug(f"Processing {len(info)} builds for tier: {tier}")
-
-                        # Use the first build's compose info for the overall request
-                        first_build = info[0]
-                        submit_test.compose = first_build["compose"]
-                        submit_test.tmt_distro = first_build["distro"]
-
-                        # Clear any previous artifacts
-                        submit_test.artifacts.clear()
-
-                        # Add all builds as artifacts
-                        for build in info:
-                            LOGGER.debug(
-                                f"Adding build: {build.get('build_id', 'unknown')}"
+                if plans:
+                    # Process each (tier, plan) combination
+                    for tier in tiers:
+                        for plan in plans:
+                            request_counter += 1
+                            LOGGER.info(
+                                f"Processing request {request_counter}/{total_expected_requests}: tier '{tier}' + plan '{plan}'"
                             )
 
-                            if build.get("build_id") is not None:
-                                submit_test.add_artifact(
-                                    artifact_id=str(build["build_id"]),
-                                    artifact_type=artifact_type,
-                                    package=build.get(
-                                        "package", parsed_opts.project.get("name", "")
-                                    ),
-                                    nvr=build.get("nvr"),
+                            # Generate plan filter for this specific tier
+                            try:
+                                tier_plan_filter = generate_tier_plan_filter(
+                                    [tier], tier_config, upgrade_path
+                                )
+                                LOGGER.debug(
+                                    f"Generated plan filter for tier '{tier}': {tier_plan_filter}"
                                 )
 
-                        # Send single request with all artifacts
-                        req_header, req_payload = submit_test.build_payload()
-                        submit_test.send_request(req_payload, req_header)
-                        successful_requests += 1
+                            except ValueError as e:
+                                LOGGER.error(
+                                    f"Failed to generate plan filter for tier '{tier}': {e}"
+                                )
+                                continue
+
+                            # Set the tier-based plan filter and specific plan name
+                            cli_planfilter = getattr(
+                                parsed_opts.cli_args, "planfilter", None
+                            )
+                            if not cli_planfilter:
+                                submit_test.planfilter = tier_plan_filter
+
+                            # Set the specific plan name
+                            submit_test.plan = plan.rstrip("/")
+
+                            # Set auto-generated tags if enabled
+                            architectures = getattr(parsed_opts, "architectures", [])
+                            if len(architectures) == 1:
+                                # Single architecture - use specific arch in tag
+                                submit_test.set_auto_tags(
+                                    architecture=architectures[0], tier=tier
+                                )
+                            else:
+                                # Multiple architectures - use tier only
+                                submit_test.set_auto_tags(tier=tier)
+
+                            # Use the source compose name for the request
+                            compose_name = parsed_opts.source_spec["compose_name"]
+
+                            validate_compose_targets(compose_name)
+                            info = get_artifact_info(compose_name)
+                            if not info:
+                                LOGGER.warning(
+                                    f"No artifact information found for tier '{tier}' + plan '{plan}'"
+                                )
+                                continue
+
+                            # Process the request
+                            try:
+                                total_requests += 1
+                                LOGGER.debug(
+                                    f"Processing {len(info)} builds for tier '{tier}' + plan '{plan}'"
+                                )
+
+                                # Use the first build's compose info for the overall request
+                                first_build = info[0]
+                                submit_test.compose = first_build["compose"]
+                                submit_test.tmt_distro = first_build["distro"]
+
+                                # Clear any previous artifacts
+                                submit_test.artifacts.clear()
+
+                                # Add all builds as artifacts
+                                for build in info:
+                                    LOGGER.debug(
+                                        f"Adding build: {build.get('build_id', 'unknown')}"
+                                    )
+
+                                    if build.get("build_id") is not None:
+                                        submit_test.add_artifact(
+                                            artifact_id=str(build["build_id"]),
+                                            artifact_type=artifact_type,
+                                            package=build.get(
+                                                "package",
+                                                parsed_opts.project.get("name", ""),
+                                            ),
+                                            nvr=build.get("nvr"),
+                                        )
+
+                                # Send single request with all artifacts
+                                req_header, req_payload = submit_test.build_payload()
+                                submit_test.send_request(req_payload, req_header)
+                                successful_requests += 1
+                                LOGGER.info(
+                                    f"✓ Completed request {request_counter}/{total_expected_requests} successfully"
+                                )
+
+                                submit_test.print_header = False
+
+                            except KeyError as e:
+                                LOGGER.error(
+                                    f"Missing required field in build info: {e}"
+                                )
+                                continue
+                            except Exception as e:
+                                LOGGER.error(f"Failed to process builds: {e}")
+                                continue
+                else:
+                    # Process each tier separately (no specific plans)
+                    for tier_idx, tier in enumerate(tiers, 1):
+                        request_counter += 1
                         LOGGER.info(
-                            f"✓ Completed request {tier_idx}/{total_expected_requests} successfully"
+                            f"Processing request {request_counter}/{total_expected_requests}: tier '{tier}'"
                         )
 
-                        submit_test.print_header = False
+                        # Generate plan filter for this specific tier
+                        try:
+                            tier_plan_filter = generate_tier_plan_filter(
+                                [tier], tier_config, upgrade_path
+                            )
+                            LOGGER.debug(
+                                f"Generated plan filter for tier '{tier}': {tier_plan_filter}"
+                            )
+                        except ValueError as e:
+                            LOGGER.error(
+                                f"Failed to generate plan filter for tier '{tier}': {e}"
+                            )
+                            continue
 
-                    except KeyError as e:
-                        LOGGER.error(f"Missing required field in build info: {e}")
-                        continue
-                    except Exception as e:
-                        LOGGER.error(f"Failed to process builds: {e}")
-                        continue
-            else:
+                        # Override the planfilter for this tier (unless CLI planfilter is specified)
+                        cli_planfilter = getattr(
+                            parsed_opts.cli_args, "planfilter", None
+                        )
+                        if not cli_planfilter:
+                            submit_test.planfilter = tier_plan_filter
 
-                # Original plan processing logic (when no tiers specified)
+                        # For tier-only requests, we use the plan filter (not specific plan name)
+                        submit_test.plan = None
+
+                        # Set auto-generated tags if enabled (for tier + architecture combinations)
+                        architectures = getattr(parsed_opts, "architectures", [])
+                        if len(architectures) == 1:
+                            # Single architecture - use specific arch in tag
+                            submit_test.set_auto_tags(
+                                architecture=architectures[0], tier=tier
+                            )
+                        else:
+                            # Multiple architectures - use tier only
+                            submit_test.set_auto_tags(tier=tier)
+
+                        # Use the source compose name for the request
+                        compose_name = parsed_opts.source_spec["compose_name"]
+
+                        validate_compose_targets(compose_name)
+                        info = get_artifact_info(compose_name)
+                        if not info:
+                            LOGGER.warning(
+                                f"No artifact information found for tier: {tier}"
+                            )
+                            continue
+
+                        # Process the request
+                        try:
+                            total_requests += 1
+                            LOGGER.debug(
+                                f"Processing {len(info)} builds for tier: {tier}"
+                            )
+
+                            # Use the first build's compose info for the overall request
+                            first_build = info[0]
+                            submit_test.compose = first_build["compose"]
+                            submit_test.tmt_distro = first_build["distro"]
+
+                            # Clear any previous artifacts
+                            submit_test.artifacts.clear()
+
+                            # Add all builds as artifacts
+                            for build in info:
+                                LOGGER.debug(
+                                    f"Adding build: {build.get('build_id', 'unknown')}"
+                                )
+
+                                if build.get("build_id") is not None:
+                                    submit_test.add_artifact(
+                                        artifact_id=str(build["build_id"]),
+                                        artifact_type=artifact_type,
+                                        package=build.get(
+                                            "package",
+                                            parsed_opts.project.get("name", ""),
+                                        ),
+                                        nvr=build.get("nvr"),
+                                    )
+
+                            # Send single request with all artifacts
+                            req_header, req_payload = submit_test.build_payload()
+                            submit_test.send_request(req_payload, req_header)
+                            successful_requests += 1
+                            LOGGER.info(
+                                f"✓ Completed request {request_counter}/{total_expected_requests} successfully"
+                            )
+
+                            submit_test.print_header = False
+
+                        except KeyError as e:
+                            LOGGER.error(f"Missing required field in build info: {e}")
+                            continue
+                        except Exception as e:
+                            LOGGER.error(f"Failed to process builds: {e}")
+                            continue
+
+            # Process plans only if no tiers (since tiers already include plans)
+            elif plans:
+                # Plan-only processing (no tiers specified)
+                validate_plan_filters(plans)
+
+                # Process each plan separately
                 for plan_idx, plan in enumerate(plans, 1):
+                    request_counter += 1
                     LOGGER.info(
-                        f"Processing request {plan_idx}/{total_expected_requests}: plan '{plan}'"
+                        f"Processing request {request_counter}/{total_expected_requests}: plan '{plan}'"
                     )
                     submit_test.plan = plan.rstrip("/")
 
@@ -861,7 +1040,7 @@ def main() -> int:
                         submit_test.send_request(req_payload, req_header)
                         successful_requests += 1
                         LOGGER.info(
-                            f"✓ Completed request {plan_idx}/{total_expected_requests} successfully"
+                            f"✓ Completed request {request_counter}/{total_expected_requests} successfully"
                         )
 
                         submit_test.print_header = False

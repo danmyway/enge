@@ -468,6 +468,7 @@ class BrewRef:
 
         Returns:
             list: A list of dictionaries with build information for each reference.
+                  The 'build_id' field will always contain the NVR (resolved from task ID if needed).
         """
         # Validate and process references
         if not reference or len(reference) == 0:
@@ -552,7 +553,7 @@ class BrewRef:
             if build_count == 1:
                 task_id, (volume_name, nvr) = next(iter(task_ids_dict.items()))
                 LOGGER.info(
-                    f"Including brew build {task_id} ({effective_package_name}) from {volume_name}"
+                    f"Including brew build {nvr} ({effective_package_name}) from {volume_name}"
                 )
             else:
                 volume_names = list(set(item[0] for item in task_ids_dict.values()))
@@ -565,12 +566,20 @@ class BrewRef:
                     f"Including {build_count} brew builds for {effective_package_name} from {volume_str}"
                 )
                 for task_id, (volume_name, nvr) in task_ids_dict.items():
-                    LOGGER.debug(f"  • Build {task_id} from {volume_name}")
+                    LOGGER.debug(f"  • Build {nvr} (task {task_id}) from {volume_name}")
 
         for task_id, (volume_name, nvr) in task_ids_dict.items():
+            # Parse package name from each individual NVR to handle multiple different packages
+            individual_package_name = self._parse_package_name_from_nvr(nvr)
+            if not individual_package_name:
+                LOGGER.warning(
+                    f"Failed to parse package name from NVR '{nvr}', using fallback '{effective_package_name}'"
+                )
+                individual_package_name = effective_package_name
+
             brew_info_dict = {
-                "build_id": task_id,
-                "package": effective_package_name,
+                "build_id": nvr,  # Use NVR instead of task_id as the artifact identifier
+                "package": individual_package_name,  # Use individual package name per NVR
                 "compose": source_compose,
                 "distro": options.source_spec.get("compose_name", source_compose),
                 "nvr": nvr,
@@ -583,12 +592,16 @@ class BrewRef:
         """
         Get the Brew build task IDs and associated composes for a given package and reference.
 
+        Validates both Task IDs and NVRs through the Brew API. Task IDs are resolved to their
+        corresponding NVRs, and NVRs are validated for existence.
+
         Args:
             package (str): The name of the package.
-            reference (str, int): List of references for the package.
+            reference (str, int): List of references for the package (Task IDs or NVRs).
 
         Returns:
             dict: A dictionary with Brew task IDs as keys and tuples of (volume_name, nvr) as values.
+                  The NVRs from these tuples are used as artifact identifiers in the payload.
         """
         query = session.listBuilds(prefix=package)
         brewbuild_baseurl = options.brew_api.get("taskid_url")

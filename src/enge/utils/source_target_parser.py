@@ -10,6 +10,8 @@ import re
 from typing import Dict, Tuple, Optional, Any, List, TYPE_CHECKING
 from logging import getLogger
 
+from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+
 if TYPE_CHECKING:
     from enge.utils.opt_manager import ParsedOpts
 
@@ -141,7 +143,10 @@ def generate_environment_variables(
 
 
 def generate_tmt_context(
-    source_spec: Dict[str, Any], target_spec: Dict[str, Any]
+    source_spec: Dict[str, Any],
+    target_spec: Dict[str, Any],
+    event: Optional[str] = None,
+    tier: Optional[str] = None,
 ) -> Dict[str, str]:
     """
     Generate TMT context for the Testing Farm payload.
@@ -149,14 +154,28 @@ def generate_tmt_context(
     Args:
         source_spec: Source specification dictionary
         target_spec: Target specification dictionary
+        event: Event type (optional)
+        tier: Test tier (optional)
 
     Returns:
-        Dictionary of TMT context variables (arch will be set per environment)
+        Dictionary of TMT context variables (arch will be set per environment).
+        Note: Brew artifact NVRs are automatically added later during payload building
+        in the format package_name: version-release (e.g., leapp: 0.16.0-1.el9).
     """
-    return {
+    context = {
         "distro": f"rhel-{source_spec['major']}.{source_spec['minor']}",
         "target_distro": f"rhel-{target_spec['major']}.{target_spec['minor']}",
+        "source_compose": source_spec.get("compose_name", ""),
+        "upgrade_path": f"{source_spec['major']}to{target_spec['major']}",
     }
+
+    # Add optional context fields if provided
+    if event:
+        context["event"] = event
+    if tier:
+        context["tier"] = tier
+
+    return context
 
 
 def parse_environment_variables(env_args: Optional[list] = None) -> Dict[str, str]:
@@ -390,7 +409,7 @@ def merge_test_set_config(
     merged = base_config.copy()
 
     for key, value in set_config.items():
-        if key in ["copr_api", "brew_api", "environment"]:
+        if key in ["copr_api", "brew_api", "environment", "reportportal"]:
             # These are nested dictionaries that should be merged
             if key not in merged:
                 merged[key] = {}
@@ -467,10 +486,26 @@ def resolve_effective_values(
     # Resolve tiers (CLI > Set)
     resolved["tiers"] = getattr(cli_args, "tier", None) or set_config.get("tiers")
 
+    # Resolve plans (CLI > Set > Config) - override, not combine
+    cli_plans = getattr(cli_args, "plan", None)
+    set_plans = set_config.get("plans", [])
+    config_plans = config.get("tests", {}).get("plan", [])
+
+    # Priority override: CLI plans override set plans, set plans override config plans
+    if cli_plans:
+        resolved["plans"] = cli_plans
+    elif set_plans:
+        resolved["plans"] = set_plans
+    elif config_plans:
+        resolved["plans"] = config_plans
+    else:
+        resolved["plans"] = []
+
     # Resolve artifact configurations
     resolved["copr_api"] = set_config.get("copr_api", {})
     resolved["brew_api"] = set_config.get("brew_api", {})
     resolved["environment"] = set_config.get("environment", {})
+    resolved["reportportal"] = set_config.get("reportportal", {})
 
     return resolved
 
@@ -479,21 +514,205 @@ def merge_set_environment_variables(
     auto_env_vars: Dict[str, str],
     set_env_vars: Dict[str, str],
     cli_env_vars: Dict[str, str],
+    config: Optional[Dict[str, Any]] = None,
+    cli_args: Any = None,
+    set_reportportal_config: Optional[Dict[str, Any]] = None,
+    set_name: Optional[str] = None,
+    architecture: Optional[str] = None,
+    tier: Optional[str] = None,
+    source_release: Optional[str] = None,
+    target_release: Optional[str] = None,
+    source_compose: Optional[str] = None,
+    target_compose: Optional[str] = None,
 ) -> Dict[str, str]:
     """
-    Merge environment variables from automatic generation, test sets, and CLI.
-    Priority: CLI > Test Set > Automatic
+    Merge environment variables from automatic generation, test sets, CLI, and ReportPortal config.
+    Priority: CLI > Test Set > Automatic > ReportPortal config
 
     Args:
         auto_env_vars: Automatically generated environment variables
         set_env_vars: Environment variables from test sets
         cli_env_vars: Environment variables from CLI --environment option
+        config: Full configuration dictionary (for ReportPortal config)
+        cli_args: CLI arguments object (for ReportPortal overrides)
+        set_reportportal_config: ReportPortal config from test set (overrides main config)
+        set_name: Name of the test set (for auto-generation)
+        architecture: Target architecture (for auto-generation)
+        tier: Test tier (for auto-generation)
+        source_release: Source release version (for auto-generation)
+        target_release: Target release version (for auto-generation)
+        source_compose: Source compose name (for auto-generation)
+        target_compose: Target compose name (for auto-generation)
 
     Returns:
         Merged environment variables dictionary
     """
     merged_vars = auto_env_vars.copy()
-    merged_vars.update(set_env_vars)  # Set vars override automatic ones
+
+    # Add ReportPortal environment variables first (lowest priority)
+    if config or set_reportportal_config:
+        # Create a merged reportportal config with test set values taking precedence
+        reportportal_config = {}
+        if config and config.get("reportportal"):
+            reportportal_config.update(config["reportportal"])
+        if set_reportportal_config:
+            reportportal_config.update(set_reportportal_config)
+
+        # Create a temporary config dict with the merged reportportal config
+        temp_config = (
+            {"reportportal": reportportal_config} if reportportal_config else {}
+        )
+        reportportal_vars = generate_reportportal_environment_variables(
+            temp_config,
+            cli_args,
+            set_name,
+            architecture,
+            tier,
+            source_release,
+            target_release,
+            source_compose,
+            target_compose,
+        )
+        merged_vars.update(reportportal_vars)
+
+    merged_vars.update(
+        set_env_vars
+    )  # Set vars override automatic ones and reportportal
     merged_vars.update(cli_env_vars)  # CLI vars override everything
 
     return merged_vars
+
+
+def generate_reportportal_environment_variables(
+    config: Dict[str, Any],
+    cli_args: Any = None,
+    set_name: Optional[str] = None,
+    architecture: Optional[str] = None,
+    tier: Optional[str] = None,
+    source_release: Optional[str] = None,
+    target_release: Optional[str] = None,
+    source_compose: Optional[str] = None,
+    target_compose: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Generate ReportPortal environment variables from config and CLI overrides.
+
+    Args:
+        config: Full configuration dictionary
+        cli_args: CLI arguments object (optional)
+        set_name: Name of the test set (optional, for auto-generation)
+        architecture: Target architecture (optional, for auto-generation)
+        tier: Test tier (optional, for auto-generation)
+        source_release: Source release version (optional, for auto-generation)
+        target_release: Target release version (optional, for auto-generation)
+        source_compose: Source compose name (optional, for auto-generation)
+        target_compose: Target compose name (optional, for auto-generation)
+
+    Returns:
+        Dictionary of ReportPortal environment variables with TMT_PLUGIN_REPORT_REPORTPORTAL_ prefix
+    """
+    from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+
+    reportportal_env_vars = {}
+
+    # Get reportportal section from config
+    reportportal_config = config.get("reportportal", {})
+
+    if not reportportal_config:
+        # If no config but we have context for auto-generation, generate launch name
+        launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+        auto_launch = _generate_auto_launch_name(
+            set_name, architecture, tier, source_release, target_release, source_compose
+        )
+        if auto_launch:
+            reportportal_env_vars[launch_key] = auto_launch
+        return reportportal_env_vars
+
+    # Process all config values with the prefix
+    for key, value in reportportal_config.items():
+        if value:  # Only include non-empty values
+            env_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}{key.upper()}"
+            reportportal_env_vars[env_key] = str(value)
+
+    # Handle CLI overrides for specific keys
+    if cli_args:
+        rp_launch = getattr(cli_args, "rp_launch", None)
+        if rp_launch:
+            reportportal_env_vars[f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"] = (
+                rp_launch
+            )
+
+        rp_description = getattr(cli_args, "rp_description", None)
+        if rp_description:
+            reportportal_env_vars[
+                f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH_DESCRIPTION"
+            ] = rp_description
+
+    # Auto-generate launch name if not provided anywhere
+    launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+    if launch_key not in reportportal_env_vars:
+        auto_launch = _generate_auto_launch_name(
+            set_name, architecture, tier, source_release, target_release, source_compose
+        )
+        if auto_launch:
+            reportportal_env_vars[launch_key] = auto_launch
+
+    return reportportal_env_vars
+
+
+def _generate_auto_launch_name(
+    set_name: Optional[str] = None,
+    architecture: Optional[str] = None,
+    tier: Optional[str] = None,
+    source_release: Optional[str] = None,
+    target_release: Optional[str] = None,
+    source_compose: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Generate automatic launch name based on set name, architecture, tier, release versions, and compose.
+    Similar to auto-tag logic but for launch names with hyphens and release versions.
+
+    Args:
+        set_name: Name of the test set (optional)
+        architecture: Target architecture (optional)
+        tier: Test tier (optional)
+        source_release: Source release version (optional)
+        target_release: Target release version (optional)
+        source_compose: Source compose name (optional)
+
+    Returns:
+        Generated launch name or None if no components available
+    """
+    components = []
+
+    # Generate the most specific combined launch name possible, similar to auto-tag logic
+    if set_name and architecture and tier:
+        # All three components - use combined name
+        components = [set_name, tier, architecture]
+    elif architecture and tier:
+        # Two components - use combined name
+        components = [tier, architecture]
+    else:
+        # Individual components when we don't have enough for a meaningful combination
+        if set_name:
+            components.append(set_name)
+        if tier:
+            components.append(tier)
+        if architecture:
+            components.append(architecture)
+
+    # Add release versions if available
+    if source_release:
+        components.append(source_release)
+    if target_release:
+        components.append(target_release)
+
+    # Add source compose if available
+    if source_compose:
+        components.append(source_compose)
+
+    if not components:
+        return None
+
+    # Join components with hyphens and convert to appropriate case
+    return "~".join(str(comp).replace("-", "_") for comp in components)

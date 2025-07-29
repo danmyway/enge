@@ -69,6 +69,7 @@ target = ""
 # source = "9.7"
 # target = "10.1"  # Optional, will be auto-derived if not specified
 # tiers = ["tier0", "tier1"]
+# plans = ["/plans/custom-smoke", "/plans/integration"]  # Optional: specific plans (overridden by CLI --plan)
 # architecture = "x86_64,aarch64"
 # git_branch = "main"
 #
@@ -80,6 +81,11 @@ target = ""
 # TARGET_RELEASE_URL = "https://some.url/to-the-target"
 # EXPERIMENTAL = "true"
 # SKIP_CHECKS = "true"
+#
+# [tests.set.pre-release-smoke.reportportal]
+# launch = "Pre-release Smoke Tests"
+# description = "Smoke testing with brew RC builds"
+# tags = "pre-release,smoke,brew"
 
 # Example: Testing multiple packages with brew builds
 # [tests.set.multi-package-test]
@@ -94,7 +100,12 @@ target = ""
 #     "leapp-repository-0.16.0-1.el8"
 # ]
 #
-# # Example: Full regression testing with COPR
+# [tests.set.multi-package-test.reportportal]
+# launch = "Multi-package Testing"
+# description = "Testing multiple leapp packages together"
+# mode = "default"
+
+# Example: Full regression testing with COPR
 # [tests.set.full-regression]
 # source = "9.7"
 # tiers = ["tier2", "tier3"]
@@ -109,7 +120,13 @@ target = ""
 # DEBUG_MODE = "true"
 # VERBOSE = "true"
 #
-# # Example: Compose-only testing (no artifacts)
+# [tests.set.full-regression.reportportal]
+# launch = "Full Regression Suite"
+# description = "Complete regression testing with COPR builds"
+# tags = "regression,copr,full-suite"
+# mode = "debug"
+
+# Example: Compose-only testing (no artifacts)
 # [tests.set.compose-baseline]
 # source = "9.7"
 # tiers = ["tier0"]
@@ -118,6 +135,38 @@ target = ""
 #
 # [tests.set.compose-baseline.environment]
 # BASELINE_TEST = "true"
+#
+# [tests.set.compose-baseline.reportportal]
+# launch = "Baseline Compose Testing"
+# description = "Testing baseline compose without artifacts"
+
+[reportportal]
+# ReportPortal configuration
+# Values here will be prefixed with TMT_PLUGIN_REPORT_REPORTPORTAL_ and added as environment variables
+# Example: endpoint = "https://my-reportportal.com" becomes TMT_PLUGIN_REPORT_REPORTPORTAL_ENDPOINT = "https://my-reportportal.com"
+
+# ReportPortal server endpoint (REQUIRED for 'enge rp' commands)
+endpoint = ""
+
+# API token for authentication (REQUIRED for 'enge rp' commands)
+token = ""
+
+# Project name in ReportPortal (REQUIRED for 'enge rp' commands)
+project = ""
+
+# Default launch name (can be overridden with --rp-launch)
+launch = ""
+
+# Default description (can be overridden with --rp-description)
+description = ""
+
+# Additional ReportPortal configuration parameters
+# Add any key-value pairs needed for ReportPortal integration
+# tags = "automated,enge"
+# mode = "default"
+
+# Note: Use 'enge rp --auto-attribute' to automatically add attributes to existing launches
+# based on their names. Expects launch names in format: event-tier-arch-source_release-target_release
 
 [common]
 archive_tasks_latest = "/tmp/enge_latest_jobs"

@@ -74,20 +74,42 @@ build_references = []
 
 
 [brew_api]
-# Brew/Koji session URL for API access
-# Example: "https://koji.fedoraproject.org/kojihub"
+# BREW build settings for package artifacts
 session_url = ""
-
-# URL pattern for task information
-# Example: "https://koji.fedoraproject.org/koji/taskinfo?taskID="
-taskid_url = ""
-
-# Package name (leave empty to use project.name)
-package = ""
 
 # Default build reference for artifact testing
 # Example: "1.2.3-4.el8" or task ID
 build_references = []
+
+
+[reportportal]
+# ReportPortal integration configuration
+# Values here will be prefixed with TMT_PLUGIN_REPORT_REPORTPORTAL_ and added as environment variables
+# Example: url = "https://my-reportportal.com" becomes TMT_PLUGIN_REPORT_REPORTPORTAL_URL = "https://my-reportportal.com"
+
+# ReportPortal server url (REQUIRED for 'enge rp' commands or when the launch uploades to ReportPortal)
+# url = "https://your-reportportal.company.com"
+
+# API token for authentication (REQUIRED for 'enge rp' commands)
+# token = "your-reportportal-api-token"
+
+# Project name in ReportPortal (REQUIRED for 'enge rp' commands)
+# project = "your-project-name"
+
+# Default launch name (can be overridden with --rp-launch)
+launch = ""
+
+# Default description (can be overridden with --rp-description)
+description = ""
+
+# Note: Test sets can override or add reportportal settings:
+# [tests.set.my-test-set.reportportal]
+# launch = "Custom Launch Name"
+# launch_description = "Set-specific description"
+# additional_param = "set-specific-value"
+
+# Use 'enge rp --auto-attribute' to automatically add attributes to existing launches
+# based on their names. Expects launch names in format: event-tier-arch-source_release-target_release
 
 
 [common]

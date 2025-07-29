@@ -326,9 +326,11 @@ class ParsedOpts:
             "git_branch",
             "parallel_limit",
             "tiers",
+            "plans",  # Add plans as a valid key
             "copr_api",
             "brew_api",
             "environment",
+            "reportportal",
         }
 
         # Check for unknown keys
@@ -346,8 +348,18 @@ class ParsedOpts:
                 logger.error(f"Test set '{set_name}': all tiers must be strings")
                 return False
 
+        # Validate plans if present
+        if "plans" in set_config:
+            plans = set_config["plans"]
+            if not isinstance(plans, list):
+                logger.error(f"Test set '{set_name}': 'plans' must be a list")
+                return False
+            if not all(isinstance(plan, str) for plan in plans):
+                logger.error(f"Test set '{set_name}': all plans must be strings")
+                return False
+
         # Validate nested dictionary structures
-        for dict_key in ["copr_api", "brew_api", "environment"]:
+        for dict_key in ["copr_api", "brew_api", "environment", "reportportal"]:
             if dict_key in set_config:
                 value = set_config[dict_key]
                 if not isinstance(value, dict):
@@ -595,7 +607,19 @@ class ParsedOpts:
 
             # Merge environment variables (CLI > Test Set > Automatic)
             self.environment_variables = merge_set_environment_variables(
-                auto_env_vars, set_env_vars, cli_env_vars
+                auto_env_vars,
+                set_env_vars,
+                cli_env_vars,
+                self.config,
+                self.cli_args,
+                effective_values.get("reportportal", {}),
+                None,
+                None,
+                None,
+                f"{self.source_spec['major']}.{self.source_spec['minor']}",
+                f"{self.target_spec['major']}.{self.target_spec['minor']}",
+                self.source_spec["compose_name"],
+                self.target_spec["compose_name"],
             )
 
             # Parse architectures with effective values
@@ -608,8 +632,17 @@ class ParsedOpts:
 
             self.architectures = parse_architectures(arch_input)
 
+            # Store effective tiers for use in dispatch and context generation
+            self.effective_tiers = effective_values.get("tiers")
+
             # Generate TMT context (architecture will be set per environment)
-            self.tmt_context = generate_tmt_context(self.source_spec, self.target_spec)
+            # Use first tier from effective_tiers if available
+            first_tier = None
+            if self.effective_tiers and len(self.effective_tiers) > 0:
+                first_tier = self.effective_tiers[0]
+            self.tmt_context = generate_tmt_context(
+                self.source_spec, self.target_spec, tier=first_tier
+            )
 
             # Handle CLI planfilter (tier-based filtering is handled in dispatch)
             cli_planfilter = getattr(self.cli_args, "planfilter", None)
@@ -620,9 +653,6 @@ class ParsedOpts:
                 logger.info(f"Using CLI plan filter: {self.plan_filter}")
             else:
                 self.plan_filter = None
-
-            # Store effective tiers for use in dispatch
-            self.effective_tiers = effective_values.get("tiers")
 
             # Store test set config for potential use in dispatch
             self.test_set_config = (

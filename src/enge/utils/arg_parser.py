@@ -87,7 +87,8 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         default=None,
         const=BrewRef(None),
         help="Test a brew build RC. "
-        "The version reference (0.1.2-3) or TaskID can be provided either in the config file or as an argument."
+        "Accepts either version reference (0.1.2-3) or TaskID. Both are validated via Brew API. "
+        "Task IDs are resolved to their NVR, and the NVR is used in the Testing Farm payload. "
         "If neither of copr/brew is specified, the compose build is tested.",
     )
 
@@ -95,21 +96,24 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     plan_filter_type = test.add_mutually_exclusive_group()
 
     plan_filter_type.add_argument(
-        "--plan",
-        action="append",
-        help="Plans to be executed. " "Multiple plans can be provided.",
-    )
-
-    plan_filter_type.add_argument(
         "--tier",
         action="append",
-        help="Test tier(s) to be executed. " "Multiple tiers can be provided.",
+        help="Test tier(s) to be executed. Multiple tiers can be provided. "
+        "Can be combined with --plan to override config plans with specific plans.",
     )
 
     plan_filter_type.add_argument(
         "--set",
         action="append",
-        help="Test set to be executed. " "Multiple sets can be provided.",
+        help="Test set to be executed. Multiple sets can be provided. "
+        "Can be combined with --plan to override set plans with specific plans.",
+    )
+
+    test.add_argument(
+        "--plan",
+        action="append",
+        help="Plans to be executed. Multiple plans can be provided. "
+        "When combined with --tier or --set, overrides any plans from config/set.",
     )
 
     test.add_argument(
@@ -157,6 +161,19 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         metavar="VAR=VAL",
         help="Additional environment variables to be set in the request. "
         "Can be provided multiple times: --environment VAR1=VAL1 --environment VAR2=VAL2",
+    )
+
+    # ReportPortal integration
+    test.add_argument(
+        "--rp-launch",
+        help="Override ReportPortal launch name from configuration. "
+        "Sets TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH environment variable.",
+    )
+
+    test.add_argument(
+        "--rp-description",
+        help="Override ReportPortal description from configuration. "
+        "Sets TMT_PLUGIN_REPORT_REPORTPORTAL_DESCRIPTION environment variable.",
     )
 
     # Execution control
