@@ -18,29 +18,65 @@ if TYPE_CHECKING:
 LOGGER = getLogger(__name__)
 
 
-def parse_compose_spec(spec: str) -> Dict[str, Any]:
+def parse_compose_spec(
+    spec: str, config: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Parse a compose specification into its components.
 
     Args:
         spec: Either a version string like "8.10" or full compose name like "RHEL-8.10.0-Nightly"
+        config: Configuration dictionary (optional, will be loaded if not provided)
 
     Returns:
         Dictionary containing parsed components:
         - major: Major version number
         - minor: Minor version number
-        - compose_name: Full compose name
+        - compose_name: Full compose name (translated via pin_compose if needed)
         - is_version_only: True if input was just version, False if full compose name
 
     Raises:
         ValueError: If the specification format is invalid
     """
+    # Load config if not provided
+    if config is None:
+        from enge.utils.config_parser import load_config
+        from enge.utils.opt_manager import DEFAULT_CONFIG_PATHS
+
+        config = load_config(paths=list(DEFAULT_CONFIG_PATHS))
+
     # Try parsing as version number first (e.g., "8.10")
     version_match = re.match(r"^(\d+)\.(\d+)$", spec.strip())
     if version_match:
         major = int(version_match.group(1))
         minor = int(version_match.group(2))
-        compose_name = f"RHEL-{major}.{minor}.0-Nightly"
+
+        # Use pin_compose to translate the compose with fallback logic
+        from enge.dispatch.pin_compose import _pin_compose_with_fallback
+
+        composes_prod_url = config.get("testing_farm", {}).get("composes_prod_url", "")
+
+        if composes_prod_url:
+            try:
+                translated_compose = _pin_compose_with_fallback(
+                    major, minor, composes_prod_url
+                )
+                LOGGER.debug(
+                    f"Translated compose for {major}.{minor} to {translated_compose}"
+                )
+                compose_name = translated_compose
+            except Exception as e:
+                LOGGER.warning(
+                    f"Failed to translate compose for {major}.{minor}: {e}. Using fallback."
+                )
+                # Fallback to standard format
+                compose_name = f"RHEL-{major}.{minor}.0-Nightly"
+        else:
+            LOGGER.debug(
+                "composes_prod_url not configured, using standard compose name"
+            )
+            compose_name = f"RHEL-{major}.{minor}.0-Nightly"
+
         return {
             "major": major,
             "minor": minor,
@@ -53,17 +89,35 @@ def parse_compose_spec(spec: str) -> Dict[str, Any]:
     if compose_match:
         major = int(compose_match.group(1))
         minor = int(compose_match.group(2))
-        # For compose names, we use the actual compose name as provided
+        # For compose names, validate them against COMPOSES_PROD_URL
+
+        from enge.dispatch.pin_compose import _pin_compose
+
+        compose_name = spec.strip()
+        composes_prod_url = config.get("testing_farm", {}).get("composes_prod_url", "")
+
+        if composes_prod_url:
+            try:
+                # Use _pin_compose for validation - it will exit if compose is not found
+                validated_compose = _pin_compose(compose_name, composes_prod_url)
+                LOGGER.debug(
+                    f"Validated compose {compose_name} against COMPOSES_PROD_URL"
+                )
+                compose_name = validated_compose
+            except Exception as e:
+                LOGGER.warning(
+                    f"Failed to validate compose {compose_name}: {e}. Using as provided."
+                )
+
         return {
             "major": major,
             "minor": minor,
-            "compose_name": spec.strip(),
+            "compose_name": compose_name,
             "is_version_only": False,
         }
 
-    raise ValueError(
-        f"Invalid compose specification: {spec}. Expected format: '8.10' or 'RHEL-8.10.0-Nightly'"
-    )
+    # If neither pattern matches, raise an error
+    raise ValueError(f"Invalid compose specification: {spec}")
 
 
 def derive_target_from_source(source_spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -317,7 +371,7 @@ def generate_tier_plan_filter(
 
 
 def parse_source_target_config(
-    source: str, target: Optional[str] = None
+    source: str, target: Optional[str] = None, config: Optional[Dict[str, Any]] = None
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Parse source and target configurations, deriving target if not provided.
@@ -325,6 +379,7 @@ def parse_source_target_config(
     Args:
         source: Source specification string
         target: Optional target specification string
+        config: Configuration dictionary (optional, will be loaded if not provided)
 
     Returns:
         Tuple of (source_spec, target_spec) dictionaries
@@ -337,11 +392,11 @@ def parse_source_target_config(
     )
 
     try:
-        source_spec = parse_compose_spec(source)
+        source_spec = parse_compose_spec(source, config)
         LOGGER.debug(f"Parsed source spec: {source_spec}")
 
         if target:
-            target_spec = parse_compose_spec(target)
+            target_spec = parse_compose_spec(target, config)
             LOGGER.debug(f"Parsed target spec: {target_spec}")
         else:
             target_spec = derive_target_from_source(source_spec)

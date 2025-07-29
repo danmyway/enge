@@ -12,6 +12,7 @@ api_key = ""
 cloud_resources_tag = ""
 api_endpoint_url = "" # REQUIRED: The Testing Farm API endpoint URL
 log_artifact_baseurl = "" # REQUIRED: The base URL for log artifacts
+composes_prod_url = "" # URL for compose translation service (used for pinning composes)
 
 [copr_api]
 owner = ""

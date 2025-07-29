@@ -582,7 +582,7 @@ class ParsedOpts:
         try:
             # Parse source and target specifications
             self.source_spec, self.target_spec = parse_source_target_config(
-                source_value, target_value
+                source_value, target_value, self.config
             )
 
             # Generate derived values
