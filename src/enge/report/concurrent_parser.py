@@ -47,6 +47,7 @@ class TaskResult:
     request_state: str
     request_datetime_created: str
     request_plan: str
+    request_plan_filter: str
     request_summary: str
     request_result_overall: str
     results_xml_url: str
@@ -191,6 +192,11 @@ class ConcurrentRequestParser:
                     request_datetime_created=task_data["created"],
                     request_plan=(
                         fmf_data.get("name", "") if isinstance(fmf_data, dict) else ""
+                    ),
+                    request_plan_filter=(
+                        fmf_data.get("plan_filter", "")
+                        if isinstance(fmf_data, dict)
+                        else ""
                     ),
                     request_summary=request_summary,
                     request_result_overall=request_result_overall,
@@ -541,6 +547,8 @@ class XMLParser:
                 "target_name": task_result.request_source_compose,
                 "target_release": task_result.request_target_release,
                 "upgrade_path": task_result.request_upgrade_path,
+                "plan": task_result.request_plan,
+                "plan_filter": task_result.request_plan_filter,
                 "testsuites": [],
                 "error": task_result.error_message or "No XML content",
             }
@@ -579,6 +587,8 @@ class XMLParser:
                         "target_name": task_result.request_source_compose,
                         "target_release": task_result.request_target_release,
                         "upgrade_path": task_result.request_upgrade_path,
+                        "plan": task_result.request_plan,
+                        "plan_filter": task_result.request_plan_filter,
                         "testsuites": [],
                         "error": "Pipeline error detected",
                     }
@@ -596,6 +606,8 @@ class XMLParser:
                     "target_name": task_result.request_source_compose,
                     "target_release": task_result.request_target_release,
                     "upgrade_path": task_result.request_upgrade_path,
+                    "plan": task_result.request_plan,
+                    "plan_filter": task_result.request_plan_filter,
                     "testsuites": [],
                     "skipped": "PASSED result skipped",
                 }
@@ -613,6 +625,8 @@ class XMLParser:
                 "target_name": task_result.request_source_compose,
                 "target_release": task_result.request_target_release,
                 "upgrade_path": task_result.request_upgrade_path,
+                "plan": task_result.request_plan,
+                "plan_filter": task_result.request_plan_filter,
                 "testsuites": [],
                 "overall_result": job_result_overall,
             }
@@ -634,6 +648,8 @@ class XMLParser:
                 "target_name": task_result.request_source_compose,
                 "target_release": task_result.request_target_release,
                 "upgrade_path": task_result.request_upgrade_path,
+                "plan": task_result.request_plan,
+                "plan_filter": task_result.request_plan_filter,
                 "testsuites": [],
                 "error": f"XML parsing error: {e}",
             }

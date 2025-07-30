@@ -14,10 +14,16 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SubmitTest:
-    def __init__(self, shared_archive_filename: Optional[str] = None):
+    def __init__(
+        self,
+        shared_archive_filename: Optional[str] = None,
+        launch_uuid: Optional[str] = None,
+    ):
         self.api_key: Optional[str] = None
         self.tests_git_url: Optional[str] = None
         self.tests_git_branch: Optional[str] = None
+        self.launch_uuid = launch_uuid
+        self.target_compose: Optional[str] = None
         self.plan: Optional[str] = None
         self.planfilter: Optional[str] = None
         self.testfilter: Optional[str] = None
@@ -63,6 +69,59 @@ class SubmitTest:
         self.auto_tag_enabled: bool = getattr(parsed_opts.cli_args, "auto_tag", False)
         self.auto_generated_tags: List[str] = []
 
+    def set_launch_uuid(self, launch_uuid: Optional[str]) -> None:
+        """Set the ReportPortal launch UUID after creation."""
+        self.launch_uuid = launch_uuid
+        LOGGER.debug(f"Updated SubmitTest launch_uuid to: {launch_uuid}")
+
+    def get_complete_tmt_context(self) -> Dict[str, Any]:
+        """Get the complete TMT context including artifact information."""
+        # Build the base TMT context (arch will be set per environment)
+        base_tmt_context = {
+            "distro": self.tmt_distro,
+        }
+
+        # Merge with additional TMT context if available
+        if self.set_tmt_context:
+            base_tmt_context.update(self.set_tmt_context)
+
+        # Add NVR information to TMT context if we have brew artifacts
+        if self.artifacts:
+            for artifact in self.artifacts:
+                if artifact.get("type") == "redhat-brew-build" and "id" in artifact:
+                    nvr = artifact[
+                        "id"
+                    ]  # This is now always the NVR thanks to our changes
+                    package_name = artifact.get("package", "")
+
+                    LOGGER.debug(
+                        f"Processing artifact for TMT context: NVR='{nvr}', package='{package_name}'"
+                    )
+
+                    # Extract version-release from NVR for clean package:version-release format
+                    # NVR format: package-version-release (e.g., leapp-0.16.0-1.el9)
+                    if nvr and package_name:
+                        nvr_parts = nvr.rsplit("-", 2)
+                        if len(nvr_parts) >= 3:
+                            version, release = nvr_parts[-2], nvr_parts[-1]
+                            version_release = f"{version}-{release}"
+
+                            # Only add if not already present or if value is different
+                            if package_name in base_tmt_context:
+                                if base_tmt_context[package_name] != version_release:
+                                    LOGGER.warning(
+                                        f"TMT context key '{package_name}' already exists with value '{base_tmt_context[package_name]}', overwriting with '{version_release}'"
+                                    )
+                                    base_tmt_context[package_name] = version_release
+                                # If same value, silently skip to avoid duplicate warnings
+                            else:
+                                # New key, add it
+                                base_tmt_context[package_name] = version_release
+                        else:
+                            LOGGER.warning(f"Could not parse NVR: {nvr}")
+
+        return base_tmt_context
+
     def add_artifact(
         self,
         artifact_id: str,
@@ -98,7 +157,7 @@ class SubmitTest:
         # Generate the most specific combined tag possible, avoiding duplicates
         if set_name and architecture and tier:
             # All three components - use combined tag only
-            auto_tags.append(f"{set_name}.{architecture}.{tier}")
+            auto_tags.append(f"{set_name}.{tier}.{architecture}")
         elif architecture and tier:
             # Two components - use combined tag only
             auto_tags.append(f"{architecture}.{tier}")
@@ -124,6 +183,18 @@ class SubmitTest:
         self.set_architectures = architectures
         self.set_environment_variables = environment_variables
         self.set_tmt_context = tmt_context
+
+        # Extract and set target compose from TARGET_COMPOSE_URL if available
+        if environment_variables and "TARGET_COMPOSE_URL" in environment_variables:
+            from enge.utils.source_target_parser import parse_target_compose_from_url
+
+            self.target_compose = parse_target_compose_from_url(
+                environment_variables["TARGET_COMPOSE_URL"]
+            )
+
+            # Add target compose to TMT context if successfully parsed
+            if self.target_compose and tmt_context is not None:
+                tmt_context["target_compose"] = self.target_compose
 
     def record_task_ids(self, task_id):
         self.latest_tasks_file = parsed_opts.archive_tasks_latest
@@ -253,9 +324,45 @@ class SubmitTest:
             # Build TMT configuration with context and environment
             tmt_config = {"context": arch_tmt_context}
 
-            # Add ReportPortal environment variables to TMT environment if any exist
-            if reportportal_env_vars:
-                tmt_config["environment"] = reportportal_env_vars
+            # Handle ReportPortal environment variables for TMT
+            if reportportal_env_vars or getattr(parsed_opts.cli_args, "rp", False):
+                # If --rp is used, exclude TMT ReportPortal launch variables as enge creates the launch directly
+                if getattr(parsed_opts.cli_args, "rp", False):
+                    filtered_rp_vars = {}
+                    for key, value in reportportal_env_vars.items():
+                        # Exclude launch and launch description variables when --rp is used
+                        # But keep UPLOAD_TO_LAUNCH as it tells TMT which launch to upload to
+                        if not (
+                            key.endswith("LAUNCH") or key.endswith("LAUNCH_DESCRIPTION")
+                        ) or key.endswith("UPLOAD_TO_LAUNCH"):
+                            filtered_rp_vars[key] = value
+
+                    # Add launch ID if available from ReportPortal launch creation
+                    # In dry run mode, show a placeholder UUID so users can see the complete payload structure
+                    if self.launch_uuid or getattr(
+                        parsed_opts.cli_args, "dryrun", False
+                    ):
+                        from enge.utils.globals import (
+                            TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX,
+                        )
+
+                        upload_to_launch_key = (
+                            f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
+                        )
+                        # Use actual UUID or placeholder for dry run
+                        launch_uuid_value = (
+                            self.launch_uuid or "placeholder-launch-uuid-for-dryrun"
+                        )
+                        filtered_rp_vars[upload_to_launch_key] = launch_uuid_value
+                        LOGGER.debug(
+                            f"Added {upload_to_launch_key}={launch_uuid_value} for {arch}"
+                        )
+
+                    if filtered_rp_vars:
+                        tmt_config["environment"] = filtered_rp_vars
+                else:
+                    if reportportal_env_vars:
+                        tmt_config["environment"] = reportportal_env_vars
 
             environment_config = {
                 "arch": arch,
@@ -378,9 +485,15 @@ class SubmitTest:
         else:
             arch_info = f"   Architectures:    {', '.join(architectures)}\n"
 
+        # Format target compose information
+        target_compose_info = ""
+        if self.target_compose:
+            target_compose_info = f"   Target compose:   {self.target_compose}\n"
+
         self.dispatch_summary = (
             FormatText.format_text(f"{summary_header}\n", bold=True)
             + f"   Source compose:   {self.compose}\n"
+            + target_compose_info
             + plan_info
             + arch_info
             + artifact_info
@@ -391,12 +504,12 @@ class SubmitTest:
         def _handle_dry_run(payload_raw=self.build_payload()):
             from pygments import highlight, lexers, formatters
 
-            print_payload_dryrun_msg = "\nDRY RUN  | Printing out requested payload:"
+            LOGGER.info("DRY RUN | Printing out requested payload:")
             payload_formatted = json.dumps(payload_raw, indent=4)
             colorful_json = highlight(
                 payload_formatted, lexers.JsonLexer(), formatters.TerminalFormatter()
             )
-            self.dispatch_summary = f"{print_payload_dryrun_msg}\n{colorful_json}"
+            self.dispatch_summary = colorful_json
             return self.dispatch_summary
 
         if getattr(parsed_opts.cli_args, "dryrun", False):

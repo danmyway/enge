@@ -327,6 +327,7 @@ class ParsedOpts:
             "parallel_limit",
             "tiers",
             "plans",  # Add plans as a valid key
+            "event",  # Add event as a valid key
             "copr_api",
             "brew_api",
             "environment",
@@ -674,10 +675,21 @@ class ParsedOpts:
 
             # Log target compose if TARGET_COMPOSE_URL is specified via --environment
             if "TARGET_COMPOSE_URL" in cli_env_vars:
-                logger.debug("Target compose URL specified.")
-                logger.info(
-                    f"Target compose: {os.path.basename(cli_env_vars['TARGET_COMPOSE_URL'].strip('/'))}"
+                from enge.utils.source_target_parser import (
+                    parse_target_compose_from_url,
                 )
+
+                logger.debug("Target compose URL specified.")
+                target_compose_url = cli_env_vars["TARGET_COMPOSE_URL"]
+                target_compose = parse_target_compose_from_url(target_compose_url)
+
+                if target_compose:
+                    logger.info(f"Target compose: {target_compose}")
+                else:
+                    # Fallback to basename if pattern not found
+                    logger.info(
+                        f"Target compose: {os.path.basename(target_compose_url.strip('/'))}"
+                    )
 
             # Log any overridden automatic variables
             for var_name, cli_value in cli_env_vars.items():

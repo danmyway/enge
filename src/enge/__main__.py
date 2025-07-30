@@ -32,6 +32,10 @@ def main():
         from enge.cancel.__main__ import main as cancel_main
 
         return cancel_main()
+    elif parsed_opts.cli_args.action == "reportportal":
+        from enge.reportportal.__main__ import main as reportportal_main
+
+        return reportportal_main()
     else:
         logging.error("No valid action specified")
         return 1

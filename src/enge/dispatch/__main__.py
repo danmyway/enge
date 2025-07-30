@@ -341,6 +341,121 @@ def validate_compose_targets(compose_name: str) -> None:
     LOGGER.debug(f"Using compose for upgrade: {compose_name}")
 
 
+def handle_reportportal_launch(
+    context: Optional[Dict[str, Any]] = None,
+    tmt_context: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    Handle ReportPortal launch creation if --rp option is specified.
+
+    Args:
+        context: Optional context for launch name generation (set_name, tier, architecture, etc.)
+        tmt_context: Optional TMT context to include as launch attributes
+
+    Returns:
+        Optional[str]: Launch UUID if created, None otherwise (None for dry run)
+    """
+    if not getattr(parsed_opts.cli_args, "rp", False):
+        return None
+
+    try:
+        # Get the launch name that would be set in TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH
+        from enge.utils.source_target_parser import (
+            generate_reportportal_environment_variables,
+        )
+
+        # Generate environment variables to get the launch name
+        rp_env_vars = generate_reportportal_environment_variables(
+            parsed_opts.config,
+            parsed_opts.cli_args,
+            context.get("set_name") if context else None,
+            context.get("architecture") if context else None,
+            context.get("tier") if context else None,
+            context.get("source_release") if context else None,
+            context.get("target_release") if context else None,
+            context.get("source_compose") if context else None,
+            target_compose=None,
+            event=context.get("event") if context else None,
+        )
+
+        # Extract the launch name from TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH
+        from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+
+        launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+        launch_name = rp_env_vars.get(launch_key)
+
+        # Check for dry run mode - don't create actual launch if dry run is enabled
+        if getattr(parsed_opts.cli_args, "dryrun", False):
+            from enge.reportportal.__main__ import ReportPortalLaunch
+
+            # Create a ReportPortalLaunch instance just for dry run payload generation
+            try:
+                rp_launch = ReportPortalLaunch()
+                dry_run_payload = rp_launch.generate_launch_payload(
+                    name=launch_name, context=context, tmt_context=tmt_context
+                )
+
+                # Pretty print the launch payload like the main dryrun does
+                import json
+
+                try:
+                    from pygments import highlight, lexers, formatters
+
+                    payload_formatted = json.dumps(dry_run_payload, indent=4)
+                    colorful_json = highlight(
+                        payload_formatted,
+                        lexers.JsonLexer(),
+                        formatters.TerminalFormatter(),
+                    )
+                    LOGGER.info(
+                        "DRY RUN | ReportPortal launch payload that would be sent:"
+                    )
+                    print(colorful_json)
+                except ImportError:
+                    # Fallback if pygments is not available
+                    payload_formatted = json.dumps(dry_run_payload, indent=4)
+                    LOGGER.info(
+                        "DRY RUN | ReportPortal launch payload that would be sent:"
+                    )
+                    print(payload_formatted)
+
+                LOGGER.info(
+                    "DRY RUN | ReportPortal launch creation skipped (--dryrun mode)"
+                )
+
+            except Exception as e:
+                LOGGER.info(
+                    "DRY RUN | Would create ReportPortal launch with name: %s",
+                    launch_name or "auto-generated",
+                )
+                LOGGER.info(
+                    "DRY RUN | Could not generate launch payload for preview: %s", e
+                )
+                LOGGER.info(
+                    "DRY RUN | ReportPortal launch creation skipped (--dryrun mode)"
+                )
+
+            return None
+
+        # Create actual ReportPortal launch
+        try:
+            from enge.reportportal.__main__ import ReportPortalLaunch
+
+            rp_launch = ReportPortalLaunch()
+            launch_uuid = rp_launch.create_launch(
+                name=launch_name, context=context, tmt_context=tmt_context
+            )
+            return launch_uuid
+
+        except Exception as e:
+            LOGGER.error(f"Failed to create ReportPortal launch: {e}")
+            return None
+
+    except Exception as e:
+        LOGGER.error(f"Error in ReportPortal launch handling: {e}")
+        return None
+
+
 def main() -> int:
     global artifact_type
     try:
@@ -357,6 +472,48 @@ def main() -> int:
 
         total_requests = 0
         successful_requests = 0
+
+        # Handle ReportPortal launch creation if requested (global context)
+        global_context = {
+            "source_release": (
+                f"{parsed_opts.source_spec['major']}.{parsed_opts.source_spec['minor']}"
+                if hasattr(parsed_opts, "source_spec")
+                else None
+            ),
+            "target_release": (
+                f"{parsed_opts.target_spec['major']}.{parsed_opts.target_spec['minor']}"
+                if hasattr(parsed_opts, "target_spec")
+                else None
+            ),
+            "source_compose": (
+                parsed_opts.source_spec.get("compose_name")
+                if hasattr(parsed_opts, "source_spec")
+                else None
+            ),
+        }
+
+        # Add event/set name and architecture for launch naming
+        # Get event from CLI args first, or from first test set if available
+        event_name = getattr(parsed_opts.cli_args, "event", None)
+        set_name = None
+        architecture = None
+
+        # If no CLI event, try to get from first test set
+        if (
+            not event_name
+            and hasattr(parsed_opts, "individual_test_sets")
+            and parsed_opts.individual_test_sets
+        ):
+            first_set = parsed_opts.individual_test_sets[0]
+            event_name = first_set["effective_values"].get("event")
+            set_name = first_set["name"]
+
+        # Get architecture from CLI args or config
+        architectures = getattr(
+            parsed_opts.cli_args, "architectures", None
+        ) or parsed_opts.tests.get("architectures", [])
+        if architectures:
+            architecture = architectures[0]  # Use first architecture for launch naming
 
         # Generate a single shared archive filename for all requests from this command
         from enge.utils import get_datetime
@@ -479,9 +636,25 @@ def main() -> int:
                         f"Processing request {idx}/{total_expected_requests}: {set_name} tier '{tier}' [{arch}]"
                     )
 
+                # Prepare ReportPortal launch context for later creation (after TMT context is built)
+                launch_uuid = None
+                shortened_uuid = None
+                if getattr(parsed_opts.cli_args, "rp", False):
+                    # Store context for later launch creation with complete TMT context
+                    request_context = {
+                        "event": event_name,
+                        "set_name": set_name,
+                        "tier": tier,
+                        "architecture": arch,
+                        "source_release": f"{source_spec['major']}.{source_spec['minor']}",
+                        "target_release": f"{target_spec['major']}.{target_spec['minor']}",
+                        "source_compose": source_spec.get("compose_name"),
+                    }
+
                 # Create a new SubmitTest instance for this request with shared archive filename
                 submit_test = SubmitTest(
-                    shared_archive_filename=shared_archive_filename
+                    shared_archive_filename=shared_archive_filename,
+                    launch_uuid=launch_uuid,
                 )
                 submit_test.api_key = parsed_opts.testing_farm.get("api_key")
                 submit_test.tests_git_url = (
@@ -577,6 +750,7 @@ def main() -> int:
                     "cli_args",
                     "copr_api",
                     "brew_api",
+                    "config",  # Required for ReportPortal class
                 ]:
                     if hasattr(parsed_opts, attr):
                         setattr(temp_opts, attr, getattr(parsed_opts, attr))
@@ -588,9 +762,13 @@ def main() -> int:
                 temp_opts.architectures = [arch]  # Only the current architecture
 
                 # Generate TMT context for this set
+                # Use explicit event configuration if available, otherwise fallback to set_name
+                event_name = effective_values.get("event") or set_name
                 temp_opts.tmt_context = generate_tmt_context(
-                    source_spec, target_spec, event=set_name, tier=tier
+                    source_spec, target_spec, event=event_name, tier=tier
                 )
+
+                # Shortened UUID will be added later when launch is created
 
                 # Handle artifacts from set config
                 set_copr_api = effective_values.get("copr_api", {})
@@ -635,10 +813,28 @@ def main() -> int:
                     target_spec["compose_name"],
                 )
 
-                # Set the set-specific data for this SubmitTest instance
+                # Add target compose to TMT context if TARGET_COMPOSE_URL is available
+                if "TARGET_COMPOSE_URL" in merged_env_vars:
+                    from enge.utils.source_target_parser import (
+                        parse_target_compose_from_url,
+                    )
+
+                    target_compose = parse_target_compose_from_url(
+                        merged_env_vars["TARGET_COMPOSE_URL"]
+                    )
+                    if target_compose:
+                        temp_opts.tmt_context["target_compose"] = target_compose
+
+                # Set the set-specific data for this SubmitTest instance (will be updated later if ReportPortal launch is created)
                 submit_test.set_specific_data(
                     [arch], merged_env_vars, temp_opts.tmt_context
                 )
+
+                # Store ReportPortal request context for later launch creation (after artifacts are processed)
+                launch_uuid = None
+                rp_request_context = None
+                if getattr(parsed_opts.cli_args, "rp", False):
+                    rp_request_context = request_context
 
                 # Initialize artifact references as empty for this set (don't inherit from global)
                 temp_opts.copr_references = []
@@ -715,6 +911,46 @@ def main() -> int:
                                 ),
                                 nvr=build.get("nvr"),
                             )
+
+                    # Create ReportPortal launch now that artifacts are processed and TMT context is complete
+                    if rp_request_context:
+                        try:
+                            # Get complete TMT context including artifact information
+                            complete_tmt_context = (
+                                submit_test.get_complete_tmt_context()
+                            )
+                            # Merge with original temp TMT context
+                            complete_tmt_context.update(temp_opts.tmt_context)
+
+                            launch_uuid = handle_reportportal_launch(
+                                rp_request_context, complete_tmt_context
+                            )
+                            if launch_uuid:
+                                # Create shortened UUID (first 12 chars excluding dashes)
+                                shortened_uuid = launch_uuid.replace("-", "")[:12]
+                                # Add hyphen after 8 characters: d51eba30-1956
+                                shortened_uuid = (
+                                    f"{shortened_uuid[:8]}-{shortened_uuid[8:]}"
+                                )
+                                # Add shortened UUID to complete TMT context
+                                complete_tmt_context["uniq_id"] = shortened_uuid
+                                LOGGER.info(
+                                    f"Created ReportPortal launch with complete TMT context: {launch_uuid}"
+                                )
+                                LOGGER.debug(
+                                    f"Complete TMT context fields: {list(complete_tmt_context.keys())}"
+                                )
+
+                                # Update the SubmitTest instance with the launch UUID and complete TMT context
+                                submit_test.set_launch_uuid(launch_uuid)
+                                submit_test.set_specific_data(
+                                    [arch], merged_env_vars, complete_tmt_context
+                                )
+                        except Exception as e:
+                            LOGGER.error(
+                                f"Failed to create ReportPortal launch for request {idx}: {e}"
+                            )
+                            # Continue processing without launch for this request
 
                     # Send single request with all artifacts
                     req_header, req_payload = submit_test.build_payload()
@@ -855,6 +1091,52 @@ def main() -> int:
                                             nvr=build.get("nvr"),
                                         )
 
+                                # Create ReportPortal launch now that artifacts are processed and TMT context is complete
+                                if rp_request_context:
+                                    try:
+                                        # Get complete TMT context including artifact information
+                                        complete_tmt_context = (
+                                            submit_test.get_complete_tmt_context()
+                                        )
+                                        # Merge with original temp TMT context
+                                        complete_tmt_context.update(
+                                            temp_opts.tmt_context
+                                        )
+
+                                        launch_uuid = handle_reportportal_launch(
+                                            rp_request_context, complete_tmt_context
+                                        )
+                                        if launch_uuid:
+                                            # Create shortened UUID (first 12 chars excluding dashes)
+                                            shortened_uuid = launch_uuid.replace(
+                                                "-", ""
+                                            )[:12]
+                                            # Add hyphen after 8 characters: d51eba30-1956
+                                            shortened_uuid = f"{shortened_uuid[:8]}-{shortened_uuid[8:]}"
+                                            # Add shortened UUID to complete TMT context
+                                            complete_tmt_context["uniq_id"] = (
+                                                shortened_uuid
+                                            )
+                                            LOGGER.info(
+                                                f"Created ReportPortal launch with complete TMT context: {launch_uuid}"
+                                            )
+                                            LOGGER.debug(
+                                                f"Complete TMT context fields: {list(complete_tmt_context.keys())}"
+                                            )
+
+                                            # Update the SubmitTest instance with the launch UUID and complete TMT context
+                                            submit_test.set_launch_uuid(launch_uuid)
+                                            submit_test.set_specific_data(
+                                                [arch],
+                                                merged_env_vars,
+                                                complete_tmt_context,
+                                            )
+                                    except Exception as e:
+                                        LOGGER.error(
+                                            f"Failed to create ReportPortal launch for request {request_counter}: {e}"
+                                        )
+                                        # Continue processing without launch for this request
+
                                 # Send single request with all artifacts
                                 req_header, req_payload = submit_test.build_payload()
                                 submit_test.send_request(req_payload, req_header)
@@ -959,6 +1241,50 @@ def main() -> int:
                                         nvr=build.get("nvr"),
                                     )
 
+                            # Create ReportPortal launch now that artifacts are processed and TMT context is complete
+                            if rp_request_context:
+                                try:
+                                    # Get complete TMT context including artifact information
+                                    complete_tmt_context = (
+                                        submit_test.get_complete_tmt_context()
+                                    )
+                                    # Merge with original temp TMT context
+                                    complete_tmt_context.update(temp_opts.tmt_context)
+
+                                    launch_uuid = handle_reportportal_launch(
+                                        rp_request_context, complete_tmt_context
+                                    )
+                                    if launch_uuid:
+                                        # Create shortened UUID (first 12 chars excluding dashes)
+                                        shortened_uuid = launch_uuid.replace("-", "")[
+                                            :12
+                                        ]
+                                        # Add hyphen after 8 characters: d51eba30-1956
+                                        shortened_uuid = (
+                                            f"{shortened_uuid[:8]}-{shortened_uuid[8:]}"
+                                        )
+                                        # Add shortened UUID to complete TMT context
+                                        complete_tmt_context["uniq_id"] = shortened_uuid
+                                        LOGGER.info(
+                                            f"Created ReportPortal launch with complete TMT context: {launch_uuid}"
+                                        )
+                                        LOGGER.debug(
+                                            f"Complete TMT context fields: {list(complete_tmt_context.keys())}"
+                                        )
+
+                                        # Update the SubmitTest instance with the launch UUID and complete TMT context
+                                        submit_test.set_launch_uuid(launch_uuid)
+                                        submit_test.set_specific_data(
+                                            [arch],
+                                            merged_env_vars,
+                                            complete_tmt_context,
+                                        )
+                                except Exception as e:
+                                    LOGGER.error(
+                                        f"Failed to create ReportPortal launch for request {request_counter}: {e}"
+                                    )
+                                    # Continue processing without launch for this request
+
                             # Send single request with all artifacts
                             req_header, req_payload = submit_test.build_payload()
                             submit_test.send_request(req_payload, req_header)
@@ -1034,6 +1360,46 @@ def main() -> int:
                                     ),
                                     nvr=build.get("nvr"),
                                 )
+
+                        # Create ReportPortal launch now that artifacts are processed and TMT context is complete
+                        if rp_request_context:
+                            try:
+                                # Get complete TMT context including artifact information
+                                complete_tmt_context = (
+                                    submit_test.get_complete_tmt_context()
+                                )
+                                # Merge with original temp TMT context
+                                complete_tmt_context.update(temp_opts.tmt_context)
+
+                                launch_uuid = handle_reportportal_launch(
+                                    rp_request_context, complete_tmt_context
+                                )
+                                if launch_uuid:
+                                    # Create shortened UUID (first 12 chars excluding dashes)
+                                    shortened_uuid = launch_uuid.replace("-", "")[:12]
+                                    # Add hyphen after 8 characters: d51eba30-1956
+                                    shortened_uuid = (
+                                        f"{shortened_uuid[:8]}-{shortened_uuid[8:]}"
+                                    )
+                                    # Add shortened UUID to complete TMT context
+                                    complete_tmt_context["uniq_id"] = shortened_uuid
+                                    LOGGER.info(
+                                        f"Created ReportPortal launch with complete TMT context: {launch_uuid}"
+                                    )
+                                    LOGGER.debug(
+                                        f"Complete TMT context fields: {list(complete_tmt_context.keys())}"
+                                    )
+
+                                    # Update the SubmitTest instance with the launch UUID and complete TMT context
+                                    submit_test.set_launch_uuid(launch_uuid)
+                                    submit_test.set_specific_data(
+                                        [arch], merged_env_vars, complete_tmt_context
+                                    )
+                            except Exception as e:
+                                LOGGER.error(
+                                    f"Failed to create ReportPortal launch for request {request_counter}: {e}"
+                                )
+                                # Continue processing without launch for this request
 
                         # Send single request with all artifacts
                         req_header, req_payload = submit_test.build_payload()

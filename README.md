@@ -13,9 +13,10 @@
           1. [Test](#test)
           2. [Test Sets](#test-sets)
           3. [TMT Context Integration](#tmt-context-integration)
-          4. [Report](#report)
-          5. [Rerun](#rerun)
-          6. [Task Archiving and Tagging](#task-archiving-and-tagging)
+          4. [ReportPortal Integration](#reportportal-integration)
+          5. [Report](#report)
+          6. [Rerun](#rerun)
+          7. [Task Archiving and Tagging](#task-archiving-and-tagging)
 
 
 ENGE
@@ -190,8 +191,10 @@ Enge automatically populates TMT context variables that are available to test sc
 - `arch`: Target architecture (e.g., "x86_64")
 
 **Conditional Context Fields:**
-- `event`: Test set name (only when using `--set`)
+- `event`: Event name (from `--event` CLI arg or test set `event` field) or test set name fallback (only when using `--set`)
 - `tier`: Test tier (when using `--tier` or test sets with tiers)
+- `uniq_id`: Shortened ReportPortal launch UUID (when using `--rp`), format: "d51eba30-1956"
+- `target_compose`: Target compose name (when `TARGET_COMPOSE_URL` environment variable is provided), format: "RHEL-10.0-19700101.0"
 
 **Brew Artifact Context:**
 When using `--brew`, package version information is automatically added in the format `package_name: version-release`:
@@ -203,22 +206,133 @@ When using `--brew`, package version information is automatically added in the f
 {
   "distro": "rhel-9.7",
   "target_distro": "rhel-10.1",
-  "source_compose": "RHEL-9.7.0-Nightly",
+  "source_compose": "RHEL-9.7.0-19700101.0",
   "upgrade_path": "9to10",
   "arch": "x86_64",
   "event": "pre-release-smoke",
   "tier": "tier0",
+  "uniq_id": "d51eba30-1956",
+  "target_compose": "RHEL-10.0-19700101.0",
   "leapp": "0.16.0-1.el9"
+  "leapp-repository": "0.16.0-2.el9"
 }
 ```
 
-**Usage in Tests:**
-```python
-# Access context in test scripts
-context = self.context
-leapp_version = context.get("leapp")  # "0.16.0-1.el9"
-upgrade_path = context.get("upgrade_path")  # "9to10"
+##### ReportPortal Integration
+
+Enge provides native ReportPortal integration that creates launches and manages test result uploads automatically. When using the `--rp` flag, enge creates ReportPortal launches directly via API and configures TMT to upload results to the appropriate launches.
+
+**Per-Request Launch Strategy:**
+
+When `--rp` is used, enge creates one ReportPortal launch per individual test request. This provides maximum granularity and isolation for test results:
+
+- **Launch 1**: `RELEASE-CANDIDATE~2025-07-30~tier0~x86_64` → Contains tier0 results for x86_64
+- **Launch 2**: `RELEASE-CANDIDATE~2025-07-30~tier1~x86_64` → Contains tier1 results for x86_64
+- **Launch 3**: `RELEASE-CANDIDATE~2025-07-30~tier0~s390x` → Contains tier0 results for s390x
+- **Launch 4**: `RELEASE-CANDIDATE~2025-07-30~tier1~s390x` → Contains tier1 results for s390x
+
+**Launch Naming Convention:**
+
+Launch names follow the format: `(EVENT_NAME|SET_NAME)~YYYY-MM-DD~tier~architecture`
+
+- **Event Priority**: If an `event` is defined (in test set config or CLI `--event`), it's used in uppercase
+- **Set Name Fallback**: If no event is specified, the test set name is used in uppercase
+- **Date Format**: Current date in YYYY-MM-DD format
+- **Tier**: Test tier (e.g., tier0, tier1, unknown if not specified)
+- **Architecture**: Target architecture (e.g., x86_64, s390x, aarch64)
+
+**Configuration:**
+
+ReportPortal integration requires configuration in your `enge.toml`:
+
+```toml
+[reportportal]
+url = "https://your-reportportal.company.com"
+token = "your-reportportal-api-token"
+project = "your-project-name"
+
+# Optional: Default launch configuration
+launch = "Custom Default Launch Name"
+description = "Default launch description"
 ```
+
+**Test Set Event Configuration:**
+
+Test sets can define custom event names for launch naming:
+
+```toml
+[tests.set.pre-release-smoke]
+source = "9.7"
+target = "10.1"
+event = "release-candidate"  # Used in launch names instead of set name
+tiers = ["tier0", "tier1"]
+architectures = ["x86_64", "s390x"]
+
+[tests.set.pre-release-smoke.reportportal]
+description = "Pre-release smoke testing with RC builds"
+```
+
+**Usage Examples:**
+
+```bash
+# Creates launches per request: SMOKE-TESTS~2025-07-30~tier0~x86_64, SMOKE-TESTS~2025-07-30~tier1~x86_64, etc.
+enge test --set smoke-tests --rp
+
+# Creates launches with event name: RELEASE-CANDIDATE~2025-07-30~tier0~x86_64, RELEASE-CANDIDATE~2025-07-30~tier1~x86_64, etc.
+enge test --set smoke-tests --event "release-candidate" --rp
+
+# Works with legacy approach too
+enge test --source 9.7 --tier tier0 --event "nightly-build" --rp
+
+# Rerun with ReportPortal integration
+enge rerun --get-tag regression --rp
+```
+
+**How It Works:**
+
+1. **Launch Creation Phase**: During request processing, enge creates one ReportPortal launch for each individual test request
+2. **UUID Distribution**: Each Testing Farm request receives `TMT_PLUGIN_REPORT_REPORTPORTAL_UPLOAD_TO_LAUNCH` with its unique launch UUID
+3. **TMT Context Enhancement**: Each request gets a `uniq_id` field in TMT context with a shortened version of the launch UUID (first 12 characters)
+4. **Result Upload**: TMT automatically uploads test results to the specific launch for that request
+5. **Maximum Isolation**: Each test scenario gets its own launch, providing complete isolation and detailed tracking
+
+**Testing Farm Payload Integration:**
+
+When `--rp` is used, enge automatically configures the Testing Farm payload with ReportPortal environment variables:
+
+```json
+{
+  "environments": [
+    {
+      "arch": "x86_64",
+      "tmt": {
+        "environment": {
+          "TMT_PLUGIN_REPORT_REPORTPORTAL_URL": "https://your-reportportal.com",
+          "TMT_PLUGIN_REPORT_REPORTPORTAL_TOKEN": "your-token",
+          "TMT_PLUGIN_REPORT_REPORTPORTAL_PROJECT": "your-project",
+          "TMT_PLUGIN_REPORT_REPORTPORTAL_UPLOAD_TO_LAUNCH": "4cc4dbff-bcf3-49a2-8369-8b1f7c14d6df" # Assigned automatically based on the respective launch created before the request dispatch
+        }
+      }
+    }
+  ]
+}
+```
+
+**Variable Filtering:**
+
+When `--rp` is used, enge automatically excludes conflicting variables to prevent TMT from creating its own launches:
+- ✅ **Included**: `TMT_PLUGIN_REPORT_REPORTPORTAL_URL`, `TMT_PLUGIN_REPORT_REPORTPORTAL_TOKEN`, `TMT_PLUGIN_REPORT_REPORTPORTAL_PROJECT`, `TMT_PLUGIN_REPORT_REPORTPORTAL_UPLOAD_TO_LAUNCH`
+- ❌ **Excluded**: `TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH`, `TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH_DESCRIPTION`
+
+**Benefits:**
+
+- **Maximum Granularity**: Each test request gets its own launch for complete isolation
+- **Detailed Tracking**: Easy to identify specific tier/architecture combinations
+- **Automated Management**: No manual launch creation or UUID management required
+- **Consistent Naming**: Standardized launch names including tier information
+- **Flexible Configuration**: Event names can be customized per test set or via CLI
+- **TMT Integration**: Shortened UUID available in TMT context as `uniq_id` for test scripts
+- **Test Set Focus**: Optimized for the modern test sets approach (legacy approach not supported)
 
 ##### Report
 With the report command you are able to get the results of the requested jobs straight to the command line.<br>
@@ -228,7 +342,7 @@ You can chain the report command with test command and use the `-w/--wait` argum
 `enge test` automatically stores the request IDs from the latest dispatched job - the primary location to store and read the data from is `/tmp/latest_enge_jobs` file. The file is also saved with a timestamp to the working directory just for a good measure.
 Default invocation `enge report` parses the tasks stored in the latest file at `/tmp/latest_enge_jobs`.<br>
 You can specify a different path to the file with `-f/--file` or pass the jobs to get report for straight to the commandline with `-i/--input`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
-You can also use `--get-tag` to query archived task files by tag (see [Task Archiving and Tagging](#task-archiving-and-tagging) section for details).<br>
+You can also use `--get-tag` to query archived task files by regex patterns (supports both simple tags and complex patterns - see [Task Archiving and Tagging](#task-archiving-and-tagging) section for details).<br>
 The tool is able to parse and report for multiple variants of values as long as they are separated by a new-line (in the files) or a `-i/--input` argument (on the commandline). Raw request_ids, artifact URLs (Testing Farm result page URLs) or request URLs are allowed.
 Use `--show-ids` to display only a list of UUIDs queried from the requested inputs, which is useful for extracting task IDs for further processing or scripting.<br>
 In case you want to get the log files stored locally, use `--download`. Log files for pytest runs will be stored in `/var/tmp/enge/logs/{request_id}_log/`. In case there are multiple plans in one pipeline, the logs should get divided in their respective plan directories.
@@ -267,7 +381,7 @@ The default way to show results is by showing each run details as a separate tab
 ##### Rerun
 Rerun tasks which report as FAILED or ERROR.<br>
 Only works for whole plans.<br>
-Reads the same input as the report module - `--file`, `--input` or `--get-tag`, which can be combined.<br>
+Reads the same input as the report module - `--file`, `--input` or `--get-tag` (with regex pattern support), which can be combined.<br>
 Use `--error` or `--fail` if you want to further specify which type of non-zero result you want to re-run, default is both results. If the whole task reports state error, the original plan filtering will be used, otherwise each of the failing/erroring plans will be passed to the plan name field connected by a pipe `|`, meaning all qualified plans from a single original request will be sent as one request for a re-run.<br>
 Use `--dryrun` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
 Use `--set-tag` to label the archived jobs file.
@@ -284,10 +398,14 @@ enge rerun -f my_archive_file --fail
 # Rerun qualified job from a commandline
 enge rerun -i 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b
 
-# Query the archive files by tag
+# Query the archive files by tag (simple match)
 enge rerun --get-tag rc --set-tag secondrun --set-tag rc
 # or
 enge rerun --get-tag rc --set-tag secondrun.rc
+
+# Query using regex patterns
+enge rerun --get-tag "rc.*" --set-tag rerun         # matches rc, rc.x86_64, rc.tier0, etc.
+enge rerun --get-tag "tier[01]" --set-tag tier01    # matches tier0 or tier1
 ```
 
 ##### Task Archiving and Tagging
@@ -312,9 +430,17 @@ The `--set-tag`, `--auto-tag`, and `--get-tag` options provide a powerful way to
 
 **Getting Tagged Results (`--get-tag`):**
 - Available in `report` and `rerun` commands
-- Query archived task files by tag
-- Works with OR logic: `--get-tag tag1 --get-tag tag2` finds files containing either tag
-- When looking for a file with a specific combination of tags query for a dot separated single string: `--get-tag tag1.tag2`
+- Query archived task files by regex patterns (supports both simple strings and complex patterns)
+- **Regex Pattern Support**: Each tag argument is treated as a regex pattern for flexible matching
+- **Backward Compatible**: Simple strings work as literal matches (e.g., `--get-tag xml` matches "xml")
+- **Pattern Matching**: Supports wildcards and complex patterns:
+  - `--get-tag "rhel.*"` matches rhel8, rhel9, rhel8.x86_64, etc.
+  - `--get-tag ".*\.xml$"` matches any XML files
+  - `--get-tag "test-\d+"` matches test-1, test-23, etc.
+  - `--get-tag "(rhel8|rhel9)"` matches either rhel8 or rhel9
+- **Dual Matching**: Patterns match against both file extensions and full filenames
+- **OR Logic**: `--get-tag pattern1 --get-tag pattern2` finds files matching either pattern
+- **Error Handling**: Invalid regex patterns are caught with clear error messages
 - Can be combined with `--file` and `--input` options
 
 **Archive Locations:**
@@ -356,14 +482,20 @@ enge report --get-tag regression
 # Get results by auto-generated tag (finds specific combination)
 enge report --get-tag x86_64
 
-# Get results for specific set and tier combination
+# Get results for specific set and tier combination (exact match)
 enge report --get-tag pre-release-smoke.x86_64.tier0
 
-# Report results for multiple tags (OR logic)
-enge report --get-tag regression --get-tag pr123
+# Get results using regex patterns
+enge report --get-tag "rhel.*"           # matches rhel8, rhel9, rhel8.x86_64, etc.
+enge report --get-tag ".*\.xml$"         # matches any XML files
+enge report --get-tag "test-\d+"         # matches test-1, test-23, etc.
+enge report --get-tag "(tier0|tier1)"    # matches either tier0 or tier1
 
-# Rerun failed jobs tagged with specific tag
-enge rerun --get-tag tier0 --fail --auto-tag
+# Report results for multiple patterns (OR logic)
+enge report --get-tag "regression.*" --get-tag "pr\d+"
+
+# Rerun failed jobs with pattern matching
+enge rerun --get-tag "tier[01]" --fail --auto-tag
 
 # Combine tag search with other inputs
 enge report --get-tag regression --file ~/my_jobs --input 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b

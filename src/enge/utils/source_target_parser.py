@@ -541,6 +541,9 @@ def resolve_effective_values(
     # Resolve tiers (CLI > Set)
     resolved["tiers"] = getattr(cli_args, "tier", None) or set_config.get("tiers")
 
+    # Resolve event (CLI > Set)
+    resolved["event"] = getattr(cli_args, "event", None) or set_config.get("event")
+
     # Resolve plans (CLI > Set > Config) - override, not combine
     cli_plans = getattr(cli_args, "plan", None)
     set_plans = set_config.get("plans", [])
@@ -627,6 +630,7 @@ def merge_set_environment_variables(
             target_release,
             source_compose,
             target_compose,
+            event=None,  # This call doesn't have event context available
         )
         merged_vars.update(reportportal_vars)
 
@@ -648,6 +652,7 @@ def generate_reportportal_environment_variables(
     target_release: Optional[str] = None,
     source_compose: Optional[str] = None,
     target_compose: Optional[str] = None,
+    event: Optional[str] = None,
 ) -> Dict[str, str]:
     """
     Generate ReportPortal environment variables from config and CLI overrides.
@@ -662,6 +667,7 @@ def generate_reportportal_environment_variables(
         target_release: Target release version (optional, for auto-generation)
         source_compose: Source compose name (optional, for auto-generation)
         target_compose: Target compose name (optional, for auto-generation)
+        event: Event name (optional, for auto-generation)
 
     Returns:
         Dictionary of ReportPortal environment variables with TMT_PLUGIN_REPORT_REPORTPORTAL_ prefix
@@ -677,7 +683,13 @@ def generate_reportportal_environment_variables(
         # If no config but we have context for auto-generation, generate launch name
         launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
         auto_launch = _generate_auto_launch_name(
-            set_name, architecture, tier, source_release, target_release, source_compose
+            set_name,
+            architecture,
+            tier,
+            source_release,
+            target_release,
+            source_compose,
+            event,
         )
         if auto_launch:
             reportportal_env_vars[launch_key] = auto_launch
@@ -707,7 +719,13 @@ def generate_reportportal_environment_variables(
     launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
     if launch_key not in reportportal_env_vars:
         auto_launch = _generate_auto_launch_name(
-            set_name, architecture, tier, source_release, target_release, source_compose
+            set_name,
+            architecture,
+            tier,
+            source_release,
+            target_release,
+            source_compose,
+            event,
         )
         if auto_launch:
             reportportal_env_vars[launch_key] = auto_launch
@@ -722,10 +740,10 @@ def _generate_auto_launch_name(
     source_release: Optional[str] = None,
     target_release: Optional[str] = None,
     source_compose: Optional[str] = None,
+    event: Optional[str] = None,
 ) -> Optional[str]:
     """
-    Generate automatic launch name based on set name, architecture, tier, release versions, and compose.
-    Similar to auto-tag logic but for launch names with hyphens and release versions.
+    Generate automatic launch name in format: (EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture
 
     Args:
         set_name: Name of the test set (optional)
@@ -734,40 +752,59 @@ def _generate_auto_launch_name(
         source_release: Source release version (optional)
         target_release: Target release version (optional)
         source_compose: Source compose name (optional)
+        event: Event name (optional, takes priority over set_name)
 
     Returns:
         Generated launch name or None if no components available
     """
-    components = []
+    from datetime import datetime
 
-    # Generate the most specific combined launch name possible, similar to auto-tag logic
-    if set_name and architecture and tier:
-        # All three components - use combined name
-        components = [set_name, tier, architecture]
-    elif architecture and tier:
-        # Two components - use combined name
-        components = [tier, architecture]
-    else:
-        # Individual components when we don't have enough for a meaningful combination
-        if set_name:
-            components.append(set_name)
-        if tier:
-            components.append(tier)
-        if architecture:
-            components.append(architecture)
+    # Get timestamp in YYYY-MM-DD format
+    timestamp = datetime.now().strftime("%Y-%m-%d")
 
-    # Add release versions if available
-    if source_release:
-        components.append(source_release)
-    if target_release:
-        components.append(target_release)
-
-    # Add source compose if available
-    if source_compose:
-        components.append(source_compose)
-
-    if not components:
+    # Determine the event/set name component (event takes priority)
+    name_component = event or set_name
+    if not name_component:
         return None
 
-    # Join components with hyphens and convert to appropriate case
-    return "~".join(str(comp).replace("-", "_") for comp in components)
+    # Use architecture or 'unknown' if not provided
+    arch_component = architecture or "unknown"
+
+    # Use tier or 'unknown' if not provided
+    tier_component = tier or "unknown"
+
+    # Generate the name in the format: (EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture
+    return f"{name_component.upper()}~{timestamp}~{tier_component}~{arch_component}"
+
+
+def parse_target_compose_from_url(target_compose_url: Optional[str]) -> Optional[str]:
+    r"""
+    Parse TARGET_COMPOSE_URL to extract RHEL compose name.
+
+    Looks for pattern: RHEL-\d+\.\d+(\.\d+)?-\d{8}\.\d+
+
+    Args:
+        target_compose_url: URL containing compose information
+
+    Returns:
+        Extracted compose name or None if not found
+
+    Examples:
+        >>> parse_target_compose_from_url("http://example.com/RHEL-10.1-20250730.0/compose")
+        "RHEL-10.1-20250730.0"
+        >>> parse_target_compose_from_url("http://example.com/RHEL-9.7.0-20250730.1/compose")
+        "RHEL-9.7.0-20250730.1"
+        >>> parse_target_compose_from_url("http://example.com/invalid/path")
+        None
+    """
+    if not target_compose_url:
+        return None
+
+    # Pattern to match RHEL-X.Y(.Z)?-YYYYMMDD.N
+    rhel_compose_pattern = r"RHEL-\d+\.\d+(?:\.\d+)?-\d{8}\.\d+"
+
+    match = re.search(rhel_compose_pattern, target_compose_url)
+    if match:
+        return match.group(0)
+
+    return None

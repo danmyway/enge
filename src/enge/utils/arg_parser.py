@@ -93,16 +93,14 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     # Test planning and filtering
-    plan_filter_type = test.add_mutually_exclusive_group()
-
-    plan_filter_type.add_argument(
+    test.add_argument(
         "--tier",
         action="append",
         help="Test tier(s) to be executed. Multiple tiers can be provided. "
         "Can be combined with --plan to override config plans with specific plans.",
     )
 
-    plan_filter_type.add_argument(
+    test.add_argument(
         "--set",
         action="append",
         help="Test set to be executed. Multiple sets can be provided. "
@@ -132,6 +130,13 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "--planfilter",
         help="Filter plans using FMF filter syntax. "
         "This overrides any automatically generated plan filters from --tier.",
+    )
+
+    test.add_argument(
+        "--event",
+        help="Event name for launch naming. "
+        "If specified, this will be used in the launch name instead of the set name. "
+        "Can also be configured in test set configuration.",
     )
 
     test.add_argument(
@@ -202,6 +207,16 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Automatically tag archived task files with set name, architecture, and tier information. "
         "Tags will be in the format: setname.arch.tier (e.g., pre-release.x86_64.tier0). "
         "Can be combined with --set-tag for additional custom tags.",
+    )
+
+    test.add_argument(
+        "--rp",
+        action="store_true",
+        help="Create ReportPortal launches before submitting test requests. "
+        "Creates one launch per architecture, with all tiers for that architecture uploading to the same launch. "
+        "The launch UUIDs are added as TMT_PLUGIN_REPORT_REPORTPORTAL_UPLOAD_TO_LAUNCH environment variables. "
+        "When used, TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH and TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH_DESCRIPTION "
+        "variables are excluded from the Testing Farm payload to avoid conflicts.",
     )
 
     # ==================== REPORT SUBCOMMAND ====================
@@ -367,6 +382,71 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "--fail",
         action="store_true",
         help="Rerun only jobs that reported FAILED state.",
+    )
+
+    rerun.add_argument(
+        "--rp",
+        action="store_true",
+        help="Create ReportPortal launches before submitting rerun requests. "
+        "Creates one launch per architecture, with all tiers for that architecture uploading to the same launch. "
+        "The launch UUIDs are added as TMT_PLUGIN_REPORT_REPORTPORTAL_UPLOAD_TO_LAUNCH environment variables. "
+        "When used, TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH and TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH_DESCRIPTION "
+        "variables are excluded from the Testing Farm payload to avoid conflicts.",
+    )
+
+    # ==================== REPORTPORTAL SUBCOMMAND ====================
+    reportportal = subparsers.add_parser(
+        "reportportal",
+        help="Manage ReportPortal launches.",
+        description="Create and manage ReportPortal launches through the ReportPortal API.",
+    )
+
+    # ReportPortal action type (mutually exclusive)
+    rp_action = reportportal.add_mutually_exclusive_group()
+
+    rp_action.add_argument(
+        "--finish",
+        action="store_true",
+        help="Finish a ReportPortal launch. Uses the report module to check task state and finish the launch if ready.",
+    )
+
+    rp_action.add_argument(
+        "--test",
+        action="store_true",
+        help="Test ReportPortal connection and show sample data for debugging.",
+    )
+
+    # Input sources (same as report and rerun) - for --finish action
+    reportportal.add_argument(
+        "-f",
+        "--file",
+        action="append",
+        metavar="FILE",
+        help="Filepath containing request IDs, artifact URLs, or request URLs. "
+        "Can be provided multiple times: -f file1 -f ~/file2",
+    )
+
+    reportportal.add_argument(
+        "-i",
+        "--input",
+        action="append",
+        metavar="ID_OR_URL",
+        help="Request ID, artifact URL, or request URL from command line. "
+        "Can be provided multiple times: -i id1 -i id2",
+    )
+
+    reportportal.add_argument(
+        "--get-tag",
+        action="append",
+        metavar="TAG",
+        help="Query for all task results under a given tag. Can be used multiple times.",
+    )
+
+    # ReportPortal control options
+    reportportal.add_argument(
+        "--dryrun",
+        action="store_true",
+        help="Show what would be sent to ReportPortal without actually finishing launches.",
     )
 
     # ==================== CANCEL SUBCOMMAND ====================

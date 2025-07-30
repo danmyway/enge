@@ -60,15 +60,27 @@ def parse_tasks():
             if not os.path.exists(default_path):
                 LOGGER.critical(f"The given path {default_path} does not exist!")
                 sys.exit(1)
-            source = [
-                file
-                for file in os.listdir(default_path)
+
+            # Compile regex patterns for efficiency
+            compiled_patterns = []
+            for tag in parsed_opts.cli_args.get_tag:
+                try:
+                    compiled_patterns.append(re.compile(tag))
+                except re.error as e:
+                    LOGGER.error(f"Invalid regex pattern '{tag}': {e}")
+                    sys.exit(1)
+
+            source = []
+            for file in os.listdir(default_path):
+                file_extension = file.split(".", 1)[-1] if "." in file else ""
+
+                # Check if any pattern matches the extension or full filename
                 if any(
-                    tag == file.split(".", 1)[-1]
-                    or tag in file.split(".", 1)[-1].split(".")
-                    for tag in parsed_opts.cli_args.get_tag
-                )
-            ]
+                    pattern.search(file_extension) or pattern.search(file)
+                    for pattern in compiled_patterns
+                ):
+                    source.append(file)
+
             for file in source:
                 file = os.path.join(default_path, file)
                 task_ids = open(file).readlines()
@@ -325,9 +337,11 @@ def build_table():
 
         # Store metadata for display
         metadata = {
-            "SourceCompose:": data["target_name"],
-            "TargetVersion:": data.get("target_release", "Unknown"),
-            "UpgradePath:": data.get("upgrade_path", "Unknown"),
+            "SourceCompose:": data.get("target_name", None),
+            "Plan:": data.get("plan", None),
+            "PlanFilter:": data.get("plan_filter", None),
+            "TargetVersion:": data.get("target_release", None),
+            "UpgradePath:": data.get("upgrade_path", None),
             "Architecture:": arch,
             "TaskUUID:": task_uuid,
             "ResultURL:": result_url,
@@ -395,6 +409,8 @@ def main(result_table=None):
             # Display metadata block before table
             if metadata:
                 for title, value in metadata.items():
+                    if value is None:
+                        continue
                     print(
                         FormatText.format_text(
                             f"{title:<20}{value}", text_col=FormatText.DIM

@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from typing import Optional, Dict, Any
 
 import requests
 from prettytable import PrettyTable
@@ -193,11 +194,127 @@ class RerunJobs:
         return self.rerun_payloads
 
 
+def handle_reportportal_launch(
+    context: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    Handle ReportPortal launch creation if --rp option is specified.
+
+    Args:
+        context: Optional context for launch name generation (set_name, tier, architecture, etc.)
+
+    Returns:
+        Optional[str]: Launch UUID if created, None otherwise (None for dry run)
+    """
+    if not getattr(parsed_opts.cli_args, "rp", False):
+        return None
+
+    try:
+        # Get the launch name that would be set in TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH
+        from enge.utils.source_target_parser import (
+            generate_reportportal_environment_variables,
+        )
+
+        # Generate environment variables to get the launch name
+        rp_env_vars = generate_reportportal_environment_variables(
+            parsed_opts.config,
+            parsed_opts.cli_args,
+            context.get("set_name") if context else None,
+            context.get("architecture") if context else None,
+            context.get("tier") if context else None,
+            context.get("source_release") if context else None,
+            context.get("target_release") if context else None,
+            context.get("source_compose") if context else None,
+            target_compose=None,
+            event=context.get("event") if context else None,
+        )
+
+        # Extract the launch name from TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH
+        from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+
+        launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+        launch_name = rp_env_vars.get(launch_key)
+
+        # Check for dry run mode - don't create actual launch if dry run is enabled
+        if getattr(parsed_opts.cli_args, "dryrun", False):
+            from enge.reportportal.__main__ import ReportPortalLaunch
+
+            # Create a ReportPortalLaunch instance just for dry run payload generation
+            try:
+                rp_launch = ReportPortalLaunch()
+                dry_run_payload = rp_launch.generate_launch_payload(
+                    name=launch_name, context=context
+                )
+
+                # Pretty print the launch payload like the main dryrun does
+                import json
+
+                try:
+                    from pygments import highlight, lexers, formatters
+
+                    payload_formatted = json.dumps(dry_run_payload, indent=4)
+                    colorful_json = highlight(
+                        payload_formatted,
+                        lexers.JsonLexer(),
+                        formatters.TerminalFormatter(),
+                    )
+                    logger.info(
+                        "DRY RUN | ReportPortal launch payload that would be sent:"
+                    )
+                    print(colorful_json)
+                except ImportError:
+                    # Fallback if pygments is not available
+                    payload_formatted = json.dumps(dry_run_payload, indent=4)
+                    logger.info(
+                        "DRY RUN | ReportPortal launch payload that would be sent:"
+                    )
+                    print(payload_formatted)
+
+                logger.info(
+                    "DRY RUN | ReportPortal launch creation skipped (--dryrun mode)"
+                )
+
+            except Exception as e:
+                logger.info(
+                    "DRY RUN | Would create ReportPortal launch with name: %s",
+                    launch_name or "auto-generated",
+                )
+                logger.info(
+                    "DRY RUN | Could not generate launch payload for preview: %s", e
+                )
+                logger.info(
+                    "DRY RUN | ReportPortal launch creation skipped (--dryrun mode)"
+                )
+
+            return None
+
+        from enge.reportportal.__main__ import ReportPortalLaunch
+
+        logger.info("Creating ReportPortal launch (--rp option specified)")
+        rp_launch = ReportPortalLaunch()
+
+        launch_uuid = rp_launch.create_launch(name=launch_name, context=context)
+        rp_launch.store_launch_uuid(launch_uuid)
+
+        return launch_uuid
+
+    except Exception as e:
+        logger.error(f"Failed to create ReportPortal launch: {e}")
+        logger.warning("Continuing with rerun execution without ReportPortal launch")
+        return None
+
+
 def main():
     """
     Main function to qualify tasks for re-run, build their re-run payloads,
     and submit the requests via the Testing Farm API.
     """
+    # Handle ReportPortal launch creation if requested (with minimal context for rerun)
+    rerun_context = {
+        "set_name": "rerun",  # Indicate this is a rerun operation
+    }
+    reportportal_launch_uuid = handle_reportportal_launch(rerun_context)
+
     jobs = RerunJobs()
     submit = SubmitTest()
 

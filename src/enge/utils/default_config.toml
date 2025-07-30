@@ -64,6 +64,11 @@ target = ""
 # Pre-configured test sets for common testing scenarios
 # Each set can define source, target, tiers, architectures, artifacts, and environment variables
 # CLI arguments will override set configurations when provided
+#
+# Launch naming format: (EVENT_NAME|SET_NAME)~datetime_stamp~architecture
+# - If 'event' is defined (in set config or CLI --event), it's used in launch names
+# - Otherwise, the set name is used
+# - Format: EVENT_NAME~YYYY-MM-DD~architecture (event/set name in uppercase)
 
 # Example: Pre-release testing with single brew RC
 # [tests.set.pre-release-smoke]
@@ -73,6 +78,7 @@ target = ""
 # plans = ["/plans/custom-smoke", "/plans/integration"]  # Optional: specific plans (overridden by CLI --plan)
 # architecture = "x86_64,aarch64"
 # git_branch = "main"
+# event = "pre-release"  # Optional: event name for launch naming (used instead of set name in launch names)
 #
 # [tests.set.pre-release-smoke.brew_api]
 # package = ""
