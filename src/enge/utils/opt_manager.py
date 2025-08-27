@@ -3,24 +3,29 @@ import logging
 import os
 import sys
 from typing import Dict, List, Any, Optional, Callable
+from contextlib import contextmanager
 
-from enge.utils.arg_parser import args
+from enge.utils.arg_parser import get_arguments
 from enge.utils.config_parser import (
     load_config,
 )
-from enge.utils.globals import DEFAULT_CONFIG_PATHS
+from enge.utils.globals import (
+    DEFAULT_USER_CONFIG_PATHS,
+    PARALLEL_LIMIT_DEFAULT,
+)
 from enge.utils.source_target_parser import (
     parse_source_target_config,
     generate_upgrade_path_alias,
     generate_environment_variables,
     generate_tmt_context,
     parse_environment_variables,
-    merge_environment_variables,
+    parse_tmt_context,
+    merge_tmt_context,
     parse_architectures,
-    parse_test_sets,
     resolve_effective_values,
     merge_set_environment_variables,
 )
+from enge.utils.errors import ConfigurationError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +42,15 @@ class TestingFarmEndpoint:
 
 class ParsedOpts:
     def __init__(self, cli_args=None):
-        self.cli_args = cli_args or args
+        # Avoid import-time parsing; default to parsing now if not provided
+        self.cli_args = cli_args if cli_args is not None else get_arguments()
         self._validation_hooks: Dict[str, Callable] = {}
 
         # Load configuration
         config_paths = (
             [self.cli_args.config]
             if self.cli_args.config
-            else list(DEFAULT_CONFIG_PATHS)
+            else list(DEFAULT_USER_CONFIG_PATHS)
         )
         self.config = load_config(paths=config_paths)
 
@@ -93,7 +99,7 @@ class ParsedOpts:
     def _validate_operational_defaults(self):
         """Validate operational defaults are present."""
         operational_defaults = {
-            "tests": ["architectures", "git_branch", "parallel_limit"],
+            "tests": ["architectures", "git_ref", "parallel_limit"],
             "common": [
                 "archive_tasks_latest",
                 "archive_tasks_default",
@@ -129,7 +135,7 @@ class ParsedOpts:
             logger.critical(
                 "This indicates a problem with the default configuration file."
             )
-            sys.exit(99)
+            raise ConfigurationError("Operational defaults validation failed")
 
     def _validate_required_config(self):
         """Validate required configuration for operations that need it."""
@@ -164,7 +170,7 @@ class ParsedOpts:
                 logger.critical("Required configuration validation failed:")
                 for error in errors:
                     logger.critical(f"  - {error}")
-                sys.exit(99)
+                raise ConfigurationError("Required configuration missing")
 
     def _validate_static_configuration(self):
         """Validate all static configuration rules."""
@@ -191,22 +197,51 @@ class ParsedOpts:
         if not tests_repo_url:
             errors.append("Tests repository URL not configured!")
 
-        # Validate architectures are configured (no empty defaults)
+        # Validate [tests].context type if present
+        tests_section = (
+            self.config.get("tests", {}) if hasattr(self.config, "get") else {}
+        )
+        if (
+            tests_section
+            and "context" in tests_section
+            and not isinstance(tests_section.get("context"), dict)
+        ):
+            errors.append("[tests].context must be a dictionary")
+
+        # Validate architectures when not using --set mode.
+        # In set mode, architectures can be defined per-set and will be validated later.
         architectures = self.tests.get("architectures")
-        if not architectures:
-            errors.append("No architectures configured in [tests] section!")
-        elif not isinstance(architectures, list):
-            errors.append("Architectures must be a list in [tests] section!")
-        elif not all(isinstance(arch, str) and arch.strip() for arch in architectures):
-            errors.append(
-                "All architectures must be non-empty strings in [tests] section!"
-            )
+        action = getattr(self.cli_args, "action", None)
+        using_sets = action == "test" and bool(getattr(self.cli_args, "set", None))
+        # Only require top-level architectures when running 'test' without --set
+        if action == "test" and not using_sets:
+            if not architectures:
+                errors.append("No architectures configured in [tests] section!")
+            elif not isinstance(architectures, list):
+                errors.append("Architectures must be a list in [tests] section!")
+            elif not all(
+                isinstance(arch, str) and arch.strip() for arch in architectures
+            ):
+                errors.append(
+                    "All architectures must be non-empty strings in [tests] section!"
+                )
+        else:
+            # If provided at top-level while using sets, validate the type but don't require presence
+            if architectures is not None:
+                if not isinstance(architectures, list):
+                    errors.append("Architectures must be a list in [tests] section!")
+                elif not all(
+                    isinstance(arch, str) and arch.strip() for arch in architectures
+                ):
+                    errors.append(
+                        "All architectures must be non-empty strings in [tests] section!"
+                    )
 
         if errors:
             logger.critical("Static configuration validation failed:")
             for error in errors:
                 logger.critical(f"  - {error}")
-            sys.exit(99)
+            raise ConfigurationError("Static configuration invalid")
 
     def _validate_cli_arguments(self):
         """Validate CLI argument combinations and requirements."""
@@ -214,16 +249,20 @@ class ParsedOpts:
 
         # CLI argument interdependency validation (from arg_parser.py)
         if getattr(self.cli_args, "action", None) == "test":
-            if not getattr(self.cli_args, "source", None) and not getattr(
-                self.cli_args, "set", None
-            ):
-                errors.append("--source is required unless --set is provided")
+            has_source_cli = bool(getattr(self.cli_args, "source", None))
+            has_sets = bool(getattr(self.cli_args, "set", None))
+            # Allow source to come from config when not using sets
+            has_source_cfg = bool(self.config.get("tests", {}).get("source"))
+            if not has_source_cli and not has_sets and not has_source_cfg:
+                errors.append(
+                    "--source is required unless provided via [tests].source or --set"
+                )
 
         if errors:
             logger.critical("CLI argument validation failed:")
             for error in errors:
                 logger.critical(f"  - {error}")
-            sys.exit(99)
+            raise ValidationError("CLI argument validation failed")
 
     def _validate_option_dependencies(self):
         """Validate interdependencies between options."""
@@ -240,7 +279,7 @@ class ParsedOpts:
             # Plan validation (from dispatch/__main__.py)
             cli_plans = getattr(self.cli_args, "plan", None)
             cli_tiers = getattr(self.cli_args, "tier", None)
-            config_plans = self.tests.get("plan", [])
+            config_plans = self.tests.get("plans", [])
 
             if not cli_plans and not cli_tiers and not cli_sets and not config_plans:
                 errors.append("No test plans specified in CLI or configuration!")
@@ -258,11 +297,56 @@ class ParsedOpts:
                                 f"Tier '{tier}' not found. Available: {available_tiers}"
                             )
 
+            # Warn on mismatches between CLI and config sources/targets
+            cli_source = getattr(self.cli_args, "source", None)
+            cli_target = getattr(self.cli_args, "target", None)
+
+            if not cli_sets:
+                cfg_source = self.tests.get("source")
+                cfg_target = self.tests.get("target")
+                if cli_source and cfg_source and cli_source != cfg_source:
+                    logger.warning(
+                        "CLI --source overrides [tests].source (values differ: %s != %s)",
+                        cli_source,
+                        cfg_source,
+                    )
+                if cli_target and cfg_target and cli_target != cfg_target:
+                    logger.warning(
+                        "CLI --target overrides [tests].target (values differ: %s != %s)",
+                        cli_target,
+                        cfg_target,
+                    )
+            else:
+                # For each test set, warn if CLI source/target overrides set values
+                try:
+                    test_sets_cfg = self.config["tests"]["set"]
+                    for set_name in cli_sets:
+                        set_cfg = test_sets_cfg.get(set_name, {})
+                        set_source = set_cfg.get("source")
+                        set_target = set_cfg.get("target")
+                        if cli_source and set_source and cli_source != set_source:
+                            logger.warning(
+                                "CLI --source overrides [tests.set.%s].source (values differ: %s != %s)",
+                                set_name,
+                                cli_source,
+                                set_source,
+                            )
+                        if cli_target and set_target and cli_target != set_target:
+                            logger.warning(
+                                "CLI --target overrides [tests.set.%s].target (values differ: %s != %s)",
+                                set_name,
+                                cli_target,
+                                set_target,
+                            )
+                except Exception:
+                    # If structure is missing, it's already reported above
+                    pass
+
         if errors:
             logger.critical("Option dependency validation failed:")
             for error in errors:
                 logger.critical(f"  - {error}")
-            sys.exit(99)
+            raise ValidationError("Option dependency validation failed")
 
     def _validate_test_sets_internal(self, set_names: List[str]) -> bool:
         """Validate that specified test sets exist and are properly configured."""
@@ -323,7 +407,8 @@ class ParsedOpts:
             "source",
             "target",
             "architectures",
-            "git_branch",
+            "git_url",
+            "git_ref",
             "parallel_limit",
             "tiers",
             "plans",  # Add plans as a valid key
@@ -332,6 +417,7 @@ class ParsedOpts:
             "brew_api",
             "environment",
             "reportportal",
+            "context",
         }
 
         # Check for unknown keys
@@ -360,7 +446,13 @@ class ParsedOpts:
                 return False
 
         # Validate nested dictionary structures
-        for dict_key in ["copr_api", "brew_api", "environment", "reportportal"]:
+        for dict_key in [
+            "copr_api",
+            "brew_api",
+            "environment",
+            "reportportal",
+            "context",
+        ]:
             if dict_key in set_config:
                 value = set_config[dict_key]
                 if not isinstance(value, dict):
@@ -412,9 +504,9 @@ class ParsedOpts:
     def _validate_git_repository_hook(self, url: str) -> bool:
         """Runtime validation hook for git repository accessibility."""
         try:
-            import requests
+            from enge.utils.http_client import http_get
 
-            response = requests.get(url, timeout=10)
+            response = http_get(url, timeout=10)
             if response.status_code == 404:
                 logger.critical(f"Git repository not found: {url}")
                 return False
@@ -456,6 +548,29 @@ class ParsedOpts:
                         self.cli_args, set_config, self.config
                     )
 
+                    # Warn if CLI architectures override set-defined architectures
+                    cli_arch = getattr(self.cli_args, "architectures", None)
+                    set_arch = set_config.get("architectures")
+                    if cli_arch and set_arch:
+                        try:
+                            # Normalize to sets of strings for comparison
+                            cli_arch_set = set([str(a).strip() for a in cli_arch if a])
+                            set_arch_set = set([str(a).strip() for a in set_arch if a])
+                            if (
+                                cli_arch_set
+                                and set_arch_set
+                                and cli_arch_set != set_arch_set
+                            ):
+                                logger.warning(
+                                    "CLI --architectures overrides [tests.set.%s].architectures (values differ: %s != %s)",
+                                    set_name,
+                                    sorted(list(set_arch_set)),
+                                    sorted(list(cli_arch_set)),
+                                )
+                        except Exception:
+                            # Be safe; do not break on malformed inputs
+                            pass
+
                     # Store the set with its effective values for dispatch
                     self.individual_test_sets.append(
                         {
@@ -468,7 +583,7 @@ class ParsedOpts:
                 logger.info(f"Loaded test sets: {', '.join(cli_sets)}")
             except ValueError as e:
                 logger.critical(f"Failed to load test sets: {e}")
-                sys.exit(99)
+                raise ConfigurationError("Failed to load test sets") from e
 
             # Use the first test set's values for backward compatibility with global attributes
             first_set_values = self.individual_test_sets[0]["effective_values"]
@@ -479,9 +594,29 @@ class ParsedOpts:
             # No test sets, use regular config resolution
             effective_values = resolve_effective_values(self.cli_args, {}, self.config)
 
-        # Set parallel limit from effective values
-        self.parallel_limit = effective_values.get("parallel_limit") or self.tests.get(
-            "parallel_limit"
+        # Warn if CLI architectures override [tests].architectures when not using sets
+        cli_arch = getattr(self.cli_args, "architectures", None)
+        if not cli_sets and cli_arch is not None:
+            cfg_arch = self.tests.get("architectures")
+            if cfg_arch:
+                try:
+                    cli_arch_set = set([str(a).strip() for a in cli_arch if a])
+                    cfg_arch_set = set([str(a).strip() for a in cfg_arch if a])
+                    if cli_arch_set and cfg_arch_set and cli_arch_set != cfg_arch_set:
+                        logger.warning(
+                            "CLI --architectures overrides [tests].architectures (values differ: %s != %s)",
+                            sorted(list(cfg_arch_set)),
+                            sorted(list(cli_arch_set)),
+                        )
+                except Exception:
+                    pass
+
+        # Set parallel limit with priority:
+        # CLI (--parallel-limit via effective_values) > merged config > hardcoded default
+        self.parallel_limit = (
+            effective_values.get("parallel_limit")
+            or self.tests.get("parallel_limit")
+            or PARALLEL_LIMIT_DEFAULT
         )
 
         # Handle artifact references with safe attribute access
@@ -556,19 +691,19 @@ class ParsedOpts:
         self.copr_reference = self.copr_references[0] if self.copr_references else None
         self.brew_reference = self.brew_references[0] if self.brew_references else None
 
-        # Handle git URL and branch with effective values
+        # Handle git URL and ref with effective values
         self.tests_git_url = (
             getattr(self.cli_args, "git_url", None)
             or self.tests.get("git_url")
             or self.project.get("repo_url")
         )
-        self.tests_git_branch = effective_values.get("git_branch") or self.tests.get(
-            "git_branch"
+        self.tests_git_ref = effective_values.get("git_ref") or self.tests.get(
+            "git_ref"
         )
 
         # Handle plans with proper fallback
         cli_plans = getattr(self.cli_args, "plan", None)
-        config_plans = self.tests.get("plan", [])
+        config_plans = self.tests.get("plans", [])
         self.plans = cli_plans or config_plans or []
 
         # Handle source/target configuration with effective values
@@ -578,7 +713,7 @@ class ParsedOpts:
         # Source validation - centralized from scattered checks
         if not source_value:
             logger.critical("Source compose specification is required!")
-            sys.exit(99)
+            raise ValidationError("Source compose specification is required")
 
         try:
             # Parse source and target specifications
@@ -629,7 +764,7 @@ class ParsedOpts:
             # Architecture validation - centralized from scattered checks
             if not arch_input:
                 logger.critical("No architectures specified in CLI or config!")
-                sys.exit(99)
+                raise ValidationError("No architectures specified in CLI or config")
 
             self.architectures = parse_architectures(arch_input)
 
@@ -644,6 +779,27 @@ class ParsedOpts:
             self.tmt_context = generate_tmt_context(
                 self.source_spec, self.target_spec, tier=first_tier
             )
+
+            # Merge context based on mode:
+            # - Non-set mode: apply config context then CLI overrides
+            # - Set mode: defer both config and CLI context to per-set handling in dispatch
+            if not cli_sets:
+                config_context = effective_values.get("context", {}) or {}
+                if config_context:
+                    self.tmt_context = merge_tmt_context(
+                        self.tmt_context, config_context
+                    )
+
+                try:
+                    cli_context_args = getattr(self.cli_args, "context", None)
+                    cli_context = parse_tmt_context(cli_context_args)
+                    if cli_context:
+                        self.tmt_context = merge_tmt_context(
+                            self.tmt_context, cli_context
+                        )
+                except ValueError as e:
+                    logger.critical(f"Failed to parse --context: {e}")
+                    raise ValidationError("Invalid --context format") from e
 
             # Handle CLI planfilter (tier-based filtering is handled in dispatch)
             cli_planfilter = getattr(self.cli_args, "planfilter", None)
@@ -694,7 +850,7 @@ class ParsedOpts:
             # Log any overridden automatic variables
             for var_name, cli_value in cli_env_vars.items():
                 if var_name in auto_env_vars and auto_env_vars[var_name] != cli_value:
-                    logger.info(
+                    logger.warning(
                         f"Environment variable {var_name} overridden: {auto_env_vars[var_name]} -> {cli_value}"
                     )
 
@@ -712,7 +868,7 @@ class ParsedOpts:
 
         except ValueError as e:
             logger.critical(f"Failed to parse source/target configuration: {e}")
-            sys.exit(99)
+            raise ValidationError("Failed to parse source/target configuration") from e
 
     # Public validation methods for external use
     def validate_opts(self) -> bool:
@@ -760,7 +916,7 @@ class ParsedOpts:
         if not hasattr(self.config, "keys"):
             # If config is not a proper dict (shouldn't happen with new loader)
             logger.critical("Invalid configuration format")
-            sys.exit(99)
+            raise ConfigurationError("Invalid configuration format")
 
         config_options = {
             section: (
@@ -792,4 +948,35 @@ class ParsedOpts:
         raise AttributeError(f"'ParsedOpts' object has no attribute '{item}'")
 
 
-parsed_opts = ParsedOpts(cli_args=args)
+class _LazyParsedOpts:
+    """Lazy accessor for a singleton ParsedOpts instance.
+
+    Creates the ParsedOpts only upon first attribute access, parsing CLI args
+    at that moment. This avoids side effects during module import and makes the
+    package more friendly to library usage.
+    """
+
+    _instance: Optional[ParsedOpts] = None
+
+    def _ensure(self) -> ParsedOpts:
+        if self._instance is None:
+            self._instance = ParsedOpts()
+        return self._instance
+
+    def __getattr__(self, item):
+        return getattr(self._ensure(), item)
+
+    def set(self, instance: "ParsedOpts") -> None:
+        self._instance = instance
+
+    @contextmanager
+    def use(self, instance: "ParsedOpts"):
+        previous = self._instance
+        self._instance = instance
+        try:
+            yield
+        finally:
+            self._instance = previous
+
+
+parsed_opts = _LazyParsedOpts()

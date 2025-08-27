@@ -8,9 +8,13 @@
    1. [Installation](#installation)
        1. [Install](#install)
        2. [Set up the configuration file](#set-up-the-configuration-file)
+          1. [Configuration locations and precedence](#configuration-locations-and-precedence)
+          2. [Default configuration and version check](#default-configuration-and-version-check)
+          3. [System-wide configuration (RPM installs)](#system-wide-configuration-rpm-installs)
    2. [Usage](#usage)
        1. [Commands](#sub-commands)
           1. [Test](#test)
+             1. [Compose resolution and target derivation](#compose-resolution-and-target-derivation)
           2. [Test Sets](#test-sets)
           3. [TMT Context Integration](#tmt-context-integration)
           4. [ReportPortal Integration](#reportportal-integration)
@@ -68,8 +72,41 @@ dnf install enge
 >__NOTE__:<br>Additionally the tool should be installable from the repository root with `pip install .`
 
 #### Set up the configuration file
-The template for the config file is available in the root of the repository. The default locations for the config file are `~/.config/enge.toml` or `~/.enge.toml`. A custom path to a config file can be specified through the commandline option -c.<br>
+The template for the config file is available in the root of the repository. The default locations for the config file are `~/.config/enge.toml`, `~/enge.toml`, or `/etc/enge/enge.toml`. A custom path to a config file can be specified through the commandline option `-c`.<br>
 In case of any question, please reach out to the project maintainer(s).
+
+##### Configuration locations and precedence
+When loading configuration, enge applies these rules:
+
+- **CLI-provided path**: If `-c/--config` is used, that file is tried first.
+- **User locations (searched in order)**:
+  - `~/.config/enge.toml`
+  - `~/enge.toml`
+  - `/etc/enge/enge.toml`
+- The first existing file in the search order above is used as the user configuration.
+- The user configuration is then **merged over defaults** (see below). Nested tables are merged recursively; user values take precedence.
+
+##### Default configuration and version check
+enge ships with a default configuration used as a base for all settings. Defaults are loaded from the first available location:
+
+- `/etc/enge/enge_default_config.toml` (system-wide, installed by the RPM)
+- Bundled example inside the package (`enge.utils/enge_default_config.toml`)
+
+>__NOTE__: Pre-configured default configuration file will be distributed in the leapp-tests repository.
+
+If both are present, enge compares their `version` fields (semantic-like `X.Y.Z`, e.g. `2025.08.27`), and **logs a warning** when the system default under `/etc/enge/enge_default_config.toml` appears older than the bundled example, suggesting an update.
+
+Key default paths from the bundled defaults (can be overridden in your `enge.toml`):
+
+- **Latest job IDs file**: `/tmp/enge_latest_jobs`
+- **Archive directory**: `~/.enge/jobs_archive/`
+- **Logs directory**: `/var/tmp/enge/logs/`
+
+##### System-wide configuration (RPM installs)
+When installed via RPM, the following files are provided under `/etc/enge/`:
+
+- `enge_default_config.toml` — system default configuration used as a base
+- `enge.toml` — an empty user configuration file (marked as `noreplace` so upgrades do not overwrite local changes)
 
 ### Usage
 
@@ -90,7 +127,7 @@ For brew builds you can provide either the NVR (e.g. leapp-0.16.0-1.el9) or the 
 Multiple `--plan` options can be specified and will be dispatched in separate jobs.
 `--tier` options allow you to run predefined test tiers from your configuration.
 `--set` options allow you to use pre-configured test sets (see Test Sets section below).
-**Plan Override Behavior:** When using `--plan` with `--tier` or `--set`, the CLI plans override any plans defined in configuration or test sets.
+**Plan Override Behavior:** When using `--plan` with `--tier` or `--set`, the CLI plans override any `plans` defined in configuration or test sets.
 When using `--planfilter` or `--test` to specify singular test it is disallowed to request multiple `--plan` options in one command.<br>
 Use `--wait` if waiting for a successful response from the endpoint is required.
 If for any reason you would need to verify the validity of the raw payload, use `--dryrun` to get it pretty-printed to the command line.
@@ -133,15 +170,30 @@ enge test --set pre-release-smoke --auto-tag --set-tag custom-run
 # Use Task ID - automatically resolved to NVR in payload
 enge test --brew 12345678 --tier tier0
 
-# Combine tier with specific plans (CLI plans override config plans)
+# Combine tier with specific plans (CLI plans override config `plans`)
 enge test --tier tier0 --plan /plans/custom-plan --source 9.7
 
-# Override test set plans with CLI plans
+# Override test set `plans` with CLI plans
 enge test --set pre-release-smoke --plan /plans/override-plan
 
 # Test multiple brew packages (each gets NVR in TMT context)
 enge test --brew leapp-0.16.0-1.el9 --brew leapp-repository-0.1-32.el9 --tier tier0
+
+# Provide additional TMT context values (CLI overrides config)
+enge test --source 9.7 --plan /plans/tier0 --context event=nightly --context custom_key=custom_value
+
+# Multiple architectures in non-set mode create one request per architecture
+enge test --source 9.7 --plan /plans/tier0 --arch s390x --arch x86_64
 ```
+
+###### Compose resolution and target derivation
+
+- You can specify composes as a simple version `MAJOR.MINOR` (e.g., `9.7`) or a full compose name (e.g., `RHEL-9.7.0-Nightly`).
+- When a simple version is provided, enge attempts to pin it to an actual compose name by consulting `testing_farm.composes_prod_url` from the configuration. It tries the following formats in order:
+  - `RHEL-MAJOR.MINOR.0-Nightly` (RHEL 8/9 style)
+  - `RHEL-MAJOR.MINOR-Nightly` (RHEL 10 style)
+  If the `composes_prod_url` is not configured or resolution fails, enge falls back to `RHEL-MAJOR.MINOR.0-Nightly`.
+- If `--target` is not provided, it is derived from the source version using the rule: `target_major = source_major + 1`, `target_minor = max(0, source_minor - 6)`. The target compose name is then formed as `RHEL-target_major.target_minor.0-Nightly`.
 
 ##### Test Sets
 
@@ -155,7 +207,7 @@ target = "10.1"  # Optional, will be auto-derived if not specified
 tiers = ["tier0", "tier1"]
 plans = ["/plans/custom-smoke", "/plans/integration"]  # Optional: specific plans (overridden by CLI --plan)
 architectures = ["x86_64", "aarch64"]
-git_branch = "main"
+git_ref = "main"
 parallel_limit = 20
 
 [tests.set.pre-release-smoke.brew_api]
@@ -177,7 +229,10 @@ When a test set defines multiple tiers and architectures, a separate payload is 
 - When using `--plan` with `--set`, CLI plans completely override any plans defined in the test set
 - The `--source` argument is not required when using `--set` (it's defined in the set configuration)
 
-**Priority Order:** CLI arguments > Test Set configuration > Main configuration
+**Priority Order:**
+- CLI arguments > Test Set configuration > Main configuration
+- For context: Derived base > [tests].context > [tests.set.<name>].context > CLI --context
+- For architectures: CLI `--architectures/--arch` overrides set or tests defaults (warning logged)
 
 ##### TMT Context Integration
 
@@ -200,6 +255,22 @@ Enge automatically populates TMT context variables that are available to test sc
 When using `--brew`, package version information is automatically added in the format `package_name: version-release`:
 - `leapp`: "0.16.0-1.el9"
 - `leapp-repository`: "0.1-32.el9"
+
+**Configurable Context Defaults:**
+You can define default context in config:
+```toml
+[tests.context]
+product = "rhel"
+team = "qe"
+
+[tests.set.myset.context]
+event = "override-newevent"
+```
+Merge order and overrides (warnings are logged on overrides):
+1) Derived base (distro, target_distro, upgrade_path, etc.)
+2) `[tests].context`
+3) `[tests.set.<name>].context` (when using sets)
+4) CLI `--context key=value`
 
 **Example TMT Context:**
 ```json
@@ -339,8 +410,8 @@ With the report command you are able to get the results of the requested jobs st
 It works by parsing the xunit field in the request response.<br>
 Results can be reported back in two levels - the default plan overview and `--show-tests` for a detailed tests overview.<br>
 You can chain the report command with test command and use the `-w/--wait` argument to get the results back whenever the requests state is complete (or error in which case the job results cannot be and won't be reported due to the non-existent xunit field).<br>
-`enge test` automatically stores the request IDs from the latest dispatched job - the primary location to store and read the data from is `/tmp/latest_enge_jobs` file. The file is also saved with a timestamp to the working directory just for a good measure.
-Default invocation `enge report` parses the tasks stored in the latest file at `/tmp/latest_enge_jobs`.<br>
+`enge test` automatically stores the request IDs from the latest dispatched job - the primary location to store and read the data from is `/tmp/enge_latest_jobs` file. The file is also saved with a timestamp to the working directory just for a good measure.
+Default invocation `enge report` parses the tasks stored in the latest file at `/tmp/enge_latest_jobs`.<br>
 You can specify a different path to the file with `-f/--file` or pass the jobs to get report for straight to the commandline with `-i/--input`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
 You can also use `--get-tag` to query archived task files by regex patterns (supports both simple tags and complex patterns - see [Task Archiving and Tagging](#task-archiving-and-tagging) section for details).<br>
 The tool is able to parse and report for multiple variants of values as long as they are separated by a new-line (in the files) or a `-i/--input` argument (on the commandline). Raw request_ids, artifact URLs (Testing Farm result page URLs) or request URLs are allowed.

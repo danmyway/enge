@@ -3,13 +3,16 @@ import os
 import sys
 from typing import Optional, Dict, Any
 
-import requests
+from enge.utils.http_client import http_get
 from prettytable import PrettyTable
 
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks, parse_request_xunit
 from enge.utils.opt_manager import parsed_opts
+from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT
 from enge.utils import FormatText
+from enge.utils.reportportal_helper import create_launch as rp_create_launch
+from enge.utils.globals import RP_COMPATIBLE_EVENT
 
 colorize = FormatText()
 
@@ -64,9 +67,11 @@ class RerunJobs:
             result_filter = ["SKIPPED"]  # We want to filter out skipped plans
 
             if parsed_opts.cli_args.error:
-                result_filter.extend("FAILED")
+                # Keep only ERROR results (exclude FAILED)
+                result_filter.append("FAILED")
             elif parsed_opts.cli_args.fail:
-                result_filter.extend("ERROR")
+                # Keep only FAILED results (exclude ERROR)
+                result_filter.append("ERROR")
 
             # Filter test suites based on the result filter
             filtered_suites = [
@@ -105,7 +110,7 @@ class RerunJobs:
             info_table.align = "l"
             print(info_table)
             if parsed_opts.cli_args.dryrun:
-                sys.exit(0)
+                return
         else:
             logger.info("None of the provided tasks qualify for a re-run.")
             logger.debug(
@@ -131,10 +136,11 @@ class RerunJobs:
 
         for request in uuids:
             # Fetch the task details from the API
-            response = requests.get(
+            response = http_get(
                 os.path.join(
                     str(parsed_opts.testing_farm_endpoint.api_endpoint_url), request
-                )
+                ),
+                timeout=REQUEST_TIMEOUT_DEFAULT,
             )
             request_details = response.json()
 
@@ -146,7 +152,9 @@ class RerunJobs:
                 logger.critical(
                     "Cowardly refusing to continue due to the inability to correctly assign environments to failed plans."
                 )
-                sys.exit(99)
+                from enge.utils.errors import ValidationError
+
+                raise ValidationError("Multiple environments in original task")
 
             # Determine the test plan to use for re-run based on the task state
             if request_details.get("state") == "error":
@@ -194,114 +202,20 @@ class RerunJobs:
         return self.rerun_payloads
 
 
-def handle_reportportal_launch(
-    context: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
-    """
-    Handle ReportPortal launch creation if --rp option is specified.
-
-    Args:
-        context: Optional context for launch name generation (set_name, tier, architecture, etc.)
-
-    Returns:
-        Optional[str]: Launch UUID if created, None otherwise (None for dry run)
-    """
-    if not getattr(parsed_opts.cli_args, "rp", False):
+def _maybe_create_rp_launch(context: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    event_name = getattr(parsed_opts.cli_args, "event", None)
+    if not event_name:
+        # Fall back to a generic rerun event label if not provided
+        event_name = "rerun"
+    if event_name not in RP_COMPATIBLE_EVENT:
         return None
-
-    try:
-        # Get the launch name that would be set in TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH
-        from enge.utils.source_target_parser import (
-            generate_reportportal_environment_variables,
-        )
-
-        # Generate environment variables to get the launch name
-        rp_env_vars = generate_reportportal_environment_variables(
-            parsed_opts.config,
-            parsed_opts.cli_args,
-            context.get("set_name") if context else None,
-            context.get("architecture") if context else None,
-            context.get("tier") if context else None,
-            context.get("source_release") if context else None,
-            context.get("target_release") if context else None,
-            context.get("source_compose") if context else None,
-            target_compose=None,
-            event=context.get("event") if context else None,
-        )
-
-        # Extract the launch name from TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH
-        from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
-
-        launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
-        launch_name = rp_env_vars.get(launch_key)
-
-        # Check for dry run mode - don't create actual launch if dry run is enabled
-        if getattr(parsed_opts.cli_args, "dryrun", False):
-            from enge.reportportal.__main__ import ReportPortalLaunch
-
-            # Create a ReportPortalLaunch instance just for dry run payload generation
-            try:
-                rp_launch = ReportPortalLaunch()
-                dry_run_payload = rp_launch.generate_launch_payload(
-                    name=launch_name, context=context
-                )
-
-                # Pretty print the launch payload like the main dryrun does
-                import json
-
-                try:
-                    from pygments import highlight, lexers, formatters
-
-                    payload_formatted = json.dumps(dry_run_payload, indent=4)
-                    colorful_json = highlight(
-                        payload_formatted,
-                        lexers.JsonLexer(),
-                        formatters.TerminalFormatter(),
-                    )
-                    logger.info(
-                        "DRY RUN | ReportPortal launch payload that would be sent:"
-                    )
-                    print(colorful_json)
-                except ImportError:
-                    # Fallback if pygments is not available
-                    payload_formatted = json.dumps(dry_run_payload, indent=4)
-                    logger.info(
-                        "DRY RUN | ReportPortal launch payload that would be sent:"
-                    )
-                    print(payload_formatted)
-
-                logger.info(
-                    "DRY RUN | ReportPortal launch creation skipped (--dryrun mode)"
-                )
-
-            except Exception as e:
-                logger.info(
-                    "DRY RUN | Would create ReportPortal launch with name: %s",
-                    launch_name or "auto-generated",
-                )
-                logger.info(
-                    "DRY RUN | Could not generate launch payload for preview: %s", e
-                )
-                logger.info(
-                    "DRY RUN | ReportPortal launch creation skipped (--dryrun mode)"
-                )
-
-            return None
-
-        from enge.reportportal.__main__ import ReportPortalLaunch
-
-        logger.info("Creating ReportPortal launch (--rp option specified)")
-        rp_launch = ReportPortalLaunch()
-
-        launch_uuid = rp_launch.create_launch(name=launch_name, context=context)
-        rp_launch.store_launch_uuid(launch_uuid)
-
-        return launch_uuid
-
-    except Exception as e:
-        logger.error(f"Failed to create ReportPortal launch: {e}")
-        logger.warning("Continuing with rerun execution without ReportPortal launch")
-        return None
+    return rp_create_launch(
+        context=context,
+        tmt_context=None,
+        config=parsed_opts.config,
+        cli_args=parsed_opts.cli_args,
+        dryrun=getattr(parsed_opts.cli_args, "dryrun", False),
+    )
 
 
 def main():
@@ -313,7 +227,7 @@ def main():
     rerun_context = {
         "set_name": "rerun",  # Indicate this is a rerun operation
     }
-    reportportal_launch_uuid = handle_reportportal_launch(rerun_context)
+    reportportal_launch_uuid = _maybe_create_rp_launch(rerun_context)
 
     jobs = RerunJobs()
     submit = SubmitTest()

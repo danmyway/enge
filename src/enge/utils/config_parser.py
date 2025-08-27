@@ -7,15 +7,36 @@ with proper error handling, validation, and default value merging.
 """
 
 import logging
-import os
-import sys
 import tomllib
 from typing import Dict, Any, List, Union, Optional
 from pathlib import Path
 
 from importlib.resources import files
+from enge.utils.errors import ConfigurationError
+from enge.utils.globals import DEFAULT_USER_CONFIG_PATHS
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _safe_load_toml(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        if path.exists():
+            with open(path, "rb") as f:
+                return tomllib.load(f)
+    except (FileNotFoundError, tomllib.TOMLDecodeError) as e:
+        LOGGER.warning(f"Skipping default config candidate {path}: {e}")
+    return None
+
+
+def _parse_version(version_val: Any) -> Optional[tuple[int, int, int]]:
+    try:
+        if isinstance(version_val, str):
+            parts = version_val.strip().split(".")
+            if len(parts) == 3:
+                return int(parts[0]), int(parts[1]), int(parts[2])
+    except Exception:
+        pass
+    return None
 
 
 def load_default_config() -> Dict[str, Any]:
@@ -28,21 +49,39 @@ def load_default_config() -> Dict[str, Any]:
     Raises:
         SystemExit: If default config cannot be loaded
     """
+    # Preferred external default at /etc/enge/enge_default_config.toml
+    external_path = Path("/etc/enge/enge_default_config.toml")
+    # Fallbacks to package-bundled example and dev path
+    bundled_path: Optional[Path] = None
     try:
-        # Try to load from package resources first (when installed)
         package_files = files("enge.utils")
-        default_config_file = package_files / "default_config.toml"
-        default_config_data = default_config_file.read_text(encoding="utf-8")
-        return tomllib.loads(default_config_data)
-    except (FileNotFoundError, ModuleNotFoundError, AttributeError):
-        # Fall back to relative path (during development)
-        try:
-            default_path = Path(__file__).parent / "default_config.toml"
-            with open(default_path, "rb") as f:
-                return tomllib.load(f)
-        except (FileNotFoundError, tomllib.TOMLDecodeError) as e:
-            LOGGER.critical(f"Cannot load default configuration: {e}")
-            sys.exit(99)
+        bundled_path = Path(package_files / "enge_default_config.toml")
+    except Exception:
+        bundled_path = Path(__file__).parent / "enge_default_config.toml"
+
+    external_cfg = _safe_load_toml(external_path)
+    bundled_cfg = _safe_load_toml(bundled_path) if bundled_path else None
+
+    # Version comparison warning: warn only if external exists and is older than bundled
+    if external_cfg and bundled_cfg:
+        ext_ver = _parse_version(external_cfg.get("version"))
+        bun_ver = _parse_version(bundled_cfg.get("version"))
+        if ext_ver and bun_ver and ext_ver < bun_ver:
+            LOGGER.warning(
+                "The external default config at /etc/enge/enge_default_config.toml "
+                "appears older than the bundled example. You may want to update it."
+            )
+
+    # Selection: prefer external when present
+    if external_cfg:
+        return external_cfg
+    if bundled_cfg:
+        return bundled_cfg
+
+    LOGGER.critical(
+        "Cannot load default configuration from external or bundled locations"
+    )
+    raise ConfigurationError("Cannot load default configuration")
 
 
 def merge_configs(default: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
@@ -94,12 +133,17 @@ def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
     """
     if not paths:
         LOGGER.critical("No configuration file paths provided")
-        sys.exit(99)
+        raise ConfigurationError("No configuration file paths provided")
 
     # Load default configuration
     default_config = load_default_config()
 
+    # Append system/user paths in priority order if not already present
     expanded_paths = [Path(path).expanduser() for path in paths]
+    for p in DEFAULT_USER_CONFIG_PATHS:
+        pp = Path(p).expanduser()
+        if pp not in expanded_paths:
+            expanded_paths.append(pp)
 
     # Try to find and load user configuration
     user_config = None
@@ -115,7 +159,7 @@ def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
 
             except tomllib.TOMLDecodeError as e:
                 LOGGER.critical(f"Error parsing TOML file {path}: {e}")
-                sys.exit(99)
+                raise ConfigurationError(f"Error parsing TOML file {path}") from e
             except PermissionError:
                 LOGGER.warning(f"Permission denied reading config file: {path}")
                 continue

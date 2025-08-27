@@ -5,10 +5,15 @@ import os
 import time
 from typing import Optional, Dict, Any, List
 
-import requests
+from enge.utils.http_client import http_get, http_post
 
 from enge.utils import FormatText, get_datetime
 from enge.utils.opt_manager import parsed_opts
+from enge.utils.globals import (
+    REQUEST_TIMEOUT_DEFAULT,
+    REQUEST_POLL_TIMEOUT,
+    RESPONSE_WATCHER_WAIT_SECONDS_DEFAULT,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -21,7 +26,7 @@ class SubmitTest:
     ):
         self.api_key: Optional[str] = None
         self.tests_git_url: Optional[str] = None
-        self.tests_git_branch: Optional[str] = None
+        self.tests_git_ref: Optional[str] = None
         self.launch_uuid = launch_uuid
         self.target_compose: Optional[str] = None
         self.plan: Optional[str] = None
@@ -74,53 +79,40 @@ class SubmitTest:
         self.launch_uuid = launch_uuid
         LOGGER.debug(f"Updated SubmitTest launch_uuid to: {launch_uuid}")
 
+    def _enrich_tmt_context_with_brew_nvrs(
+        self, context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Return a copy of context enriched with brew NVR info (package: version-release)."""
+        enriched = dict(context)
+        for artifact in self.artifacts or []:
+            if artifact.get("type") != "redhat-brew-build" or "id" not in artifact:
+                continue
+            nvr = artifact["id"]
+            package_name = artifact.get("package", "")
+            if not (nvr and package_name):
+                continue
+            nvr_parts = nvr.rsplit("-", 2)
+            if len(nvr_parts) >= 3:
+                version, release = nvr_parts[-2], nvr_parts[-1]
+                version_release = f"{version}-{release}"
+                if (
+                    package_name in enriched
+                    and enriched[package_name] != version_release
+                ):
+                    LOGGER.warning(
+                        f"TMT context key '{package_name}' already exists with value '{enriched[package_name]}', overwriting with '{version_release}'"
+                    )
+                enriched[package_name] = version_release
+            else:
+                LOGGER.warning(f"Could not parse NVR: {nvr}")
+        return enriched
+
     def get_complete_tmt_context(self) -> Dict[str, Any]:
         """Get the complete TMT context including artifact information."""
-        # Build the base TMT context (arch will be set per environment)
-        base_tmt_context = {
-            "distro": self.tmt_distro,
-        }
-
-        # Merge with additional TMT context if available
+        base_tmt_context = {"distro": self.tmt_distro}
         if self.set_tmt_context:
             base_tmt_context.update(self.set_tmt_context)
-
-        # Add NVR information to TMT context if we have brew artifacts
-        if self.artifacts:
-            for artifact in self.artifacts:
-                if artifact.get("type") == "redhat-brew-build" and "id" in artifact:
-                    nvr = artifact[
-                        "id"
-                    ]  # This is now always the NVR thanks to our changes
-                    package_name = artifact.get("package", "")
-
-                    LOGGER.debug(
-                        f"Processing artifact for TMT context: NVR='{nvr}', package='{package_name}'"
-                    )
-
-                    # Extract version-release from NVR for clean package:version-release format
-                    # NVR format: package-version-release (e.g., leapp-0.16.0-1.el9)
-                    if nvr and package_name:
-                        nvr_parts = nvr.rsplit("-", 2)
-                        if len(nvr_parts) >= 3:
-                            version, release = nvr_parts[-2], nvr_parts[-1]
-                            version_release = f"{version}-{release}"
-
-                            # Only add if not already present or if value is different
-                            if package_name in base_tmt_context:
-                                if base_tmt_context[package_name] != version_release:
-                                    LOGGER.warning(
-                                        f"TMT context key '{package_name}' already exists with value '{base_tmt_context[package_name]}', overwriting with '{version_release}'"
-                                    )
-                                    base_tmt_context[package_name] = version_release
-                                # If same value, silently skip to avoid duplicate warnings
-                            else:
-                                # New key, add it
-                                base_tmt_context[package_name] = version_release
-                        else:
-                            LOGGER.warning(f"Could not parse NVR: {nvr}")
-
-        return base_tmt_context
+        return self._enrich_tmt_context_with_brew_nvrs(base_tmt_context)
 
     def add_artifact(
         self,
@@ -267,45 +259,14 @@ class SubmitTest:
                 regular_env_vars[key] = value
 
         # Build the base TMT context (arch will be set per environment)
-        base_tmt_context = {
-            "distro": self.tmt_distro,
-        }
+        base_tmt_context = {"distro": self.tmt_distro}
 
         # Merge with additional TMT context if available
         if tmt_context:
             base_tmt_context.update(tmt_context)
 
-        # Add NVR information to TMT context if we have brew artifacts
-        if self.artifacts:
-            for artifact in self.artifacts:
-                if artifact.get("type") == "redhat-brew-build" and "id" in artifact:
-                    nvr = artifact[
-                        "id"
-                    ]  # This is now always the NVR thanks to our changes
-                    package_name = artifact.get("package", "")
-
-                    LOGGER.debug(
-                        f"Processing artifact: NVR='{nvr}', package='{package_name}'"
-                    )
-
-                    # Parse NVR into name (n) and version-release (vr)
-                    # NVR format: package-version-release (e.g., leapp-0.16.0-1.el9)
-                    if nvr and package_name:
-                        # Verify the NVR starts with the package name followed by a hyphen
-                        expected_prefix = package_name + "-"
-                        if nvr.startswith(expected_prefix):
-                            version_release = nvr[len(expected_prefix) :]
-
-                            # Avoid overwriting if key already exists
-                            if package_name in base_tmt_context:
-                                LOGGER.warning(
-                                    f"TMT context key '{package_name}' already exists with value '{base_tmt_context[package_name]}', overwriting with '{version_release}'"
-                                )
-
-                            base_tmt_context[package_name] = version_release
-                            LOGGER.debug(
-                                f"Added to TMT context: {package_name}: {version_release}"
-                            )
+        # Add NVR information to TMT context if we have brew artifacts via shared helper
+        base_tmt_context = self._enrich_tmt_context_with_brew_nvrs(base_tmt_context)
 
         # Get architectures - use set-specific data if available
         architectures = (
@@ -393,7 +354,7 @@ class SubmitTest:
             "test": {
                 "fmf": {
                     "url": self.tests_git_url,
-                    "ref": self.tests_git_branch,
+                    "ref": self.tests_git_ref,
                     "name": self.plan,
                     "test_name": self.test_name,
                     "plan_filter": self.planfilter,
@@ -408,10 +369,10 @@ class SubmitTest:
 
     def _response_watcher(self, log_artifact_url):
         # Hardcoded 20 second timeout for Testing Farm API response (as per README)
-        response_timeout = 20
+        response_timeout = RESPONSE_WATCHER_WAIT_SECONDS_DEFAULT
         clear_line = "\x1b[2K"
         while True:
-            response = requests.get(log_artifact_url)
+            response = http_get(log_artifact_url, timeout=REQUEST_POLL_TIMEOUT)
             response_status = response.status_code
             response_message = response.reason
             print(end=clear_line)
@@ -526,8 +487,11 @@ class SubmitTest:
             return
 
         try:
-            response = requests.post(
-                self.testing_farm_endpoint, json=payload_raw, headers=header
+            response = http_post(
+                self.testing_farm_endpoint,
+                json=payload_raw,
+                headers=header,
+                timeout=REQUEST_TIMEOUT_DEFAULT,
             )
             task_id = response.json()["id"]
             self.log_artifact_url = f"{self.log_artifact_base_url}/{task_id}"

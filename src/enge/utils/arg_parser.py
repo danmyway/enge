@@ -10,7 +10,19 @@ import argparse
 import pathlib
 from typing import Optional
 
-from .tf_artifact import CoprRef, BrewRef
+
+def _copr_ref_type(value):
+    """Lazy converter for --copr to avoid importing heavy deps at import time."""
+    from .tf_artifact import CoprRef
+
+    return CoprRef(value)
+
+
+def _brew_ref_type(value):
+    """Lazy converter for --brew to avoid importing heavy deps at import time."""
+    from .tf_artifact import BrewRef
+
+    return BrewRef(value)
 
 
 def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
@@ -24,19 +36,17 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     Returns:
         argparse.Namespace: Parsed command-line arguments
     """
+    # Global arguments
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-c", "--config", help="Custom path to the config file.")
+    common.add_argument(
+        "-d", "--debug", action="store_true", help="Print out additional information."
+    )
+
     parser = argparse.ArgumentParser(
         description="Send requests to and get results back from Testing Farm conveniently.",
         formatter_class=argparse.RawTextHelpFormatter,
-    )
-
-    # Global arguments
-    parser.add_argument("-c", "--config", help="Custom path to the config file.")
-
-    parser.add_argument(
-        "-d",
-        "--debug",
-        action="store_true",
-        help="Print out additional information for each request.",
+        parents=[common],
     )
 
     subparsers = parser.add_subparsers(dest="action", help="Available commands")
@@ -46,6 +56,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "test",
         help="Dispatch a job to the Testing Farm API endpoint.",
         description="Send requests to Testing Farm conveniently.",
+        parents=[common],
     )
 
     test.add_argument(
@@ -69,11 +80,11 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
 
     artifact_type.add_argument(
         "--copr",
-        type=CoprRef,
+        type=_copr_ref_type,
         action="append",
         nargs="?",
         default=None,
-        const=CoprRef(None),
+        const=None,
         help="Test a fedora-copr-build. "
         "The pull request reference (pr123) or BuildID can be provided either in the config file or as an argument."
         "If neither of copr/brew is specified, the compose build is tested.",
@@ -81,11 +92,11 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
 
     artifact_type.add_argument(
         "--brew",
-        type=BrewRef,
+        type=_brew_ref_type,
         action="append",
         nargs="?",
         default=None,
-        const=BrewRef(None),
+        const=None,
         help="Test a brew build RC. "
         "Accepts either version reference (0.1.2-3) or TaskID. Both are validated via Brew API. "
         "Task IDs are resolved to their NVR, and the NVR is used in the Testing Farm payload. "
@@ -110,8 +121,12 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     test.add_argument(
         "--plan",
         action="append",
-        help="Plans to be executed. Multiple plans can be provided. "
-        "When combined with --tier or --set, overrides any plans from config/set.",
+        help=(
+            "Plans to be executed. Multiple plans can be provided. "
+            "Can be used standalone (without --tier/--set). "
+            "When combined with --tier or --set, overrides any plans from config/set. "
+            "Requires source and architectures via CLI or [tests] config when used standalone."
+        ),
     )
 
     test.add_argument(
@@ -146,18 +161,25 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     test.add_argument(
-        "--git-branch",
-        help="Git branch to checkout the test suite from. "
+        "--git-ref",
+        help="Git ref (branch, tag, or commit) to checkout the test suite from. "
         "If not specified, uses the default one from the config file.",
     )
 
     test.add_argument(
         "--architectures",
         "--arch",
-        nargs="+",
+        action="append",
         help="Target architectures for testing. "
         "Specify multiple architectures as separate arguments (e.g., --architectures x86_64 aarch64). "
         "If not specified, uses the default ones from the config file.",
+    )
+
+    test.add_argument(
+        "--parallel-limit",
+        type=int,
+        metavar="N",
+        help="Maximum number of plans to run in parallel. Overrides configuration files and hardcoded default (20).",
     )
 
     test.add_argument(
@@ -166,6 +188,17 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         metavar="VAR=VAL",
         help="Additional environment variables to be set in the request. "
         "Can be provided multiple times: --environment VAR1=VAL1 --environment VAR2=VAL2",
+    )
+
+    test.add_argument(
+        "--context",
+        action="append",
+        metavar="KEY=VAL",
+        help=(
+            "Additional TMT context key-value pairs. "
+            "Merges into the generated context; warnings are shown on overrides (config, set, or duplicate CLI). "
+            "Can be provided multiple times: --context key1=val1 --context key2=val2"
+        ),
     )
 
     # ReportPortal integration
@@ -209,22 +242,13 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "Can be combined with --set-tag for additional custom tags.",
     )
 
-    test.add_argument(
-        "--rp",
-        action="store_true",
-        help="Create ReportPortal launches before submitting test requests. "
-        "Creates one launch per architecture, with all tiers for that architecture uploading to the same launch. "
-        "The launch UUIDs are added as TMT_PLUGIN_REPORT_REPORTPORTAL_UPLOAD_TO_LAUNCH environment variables. "
-        "When used, TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH and TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH_DESCRIPTION "
-        "variables are excluded from the Testing Farm payload to avoid conflicts.",
-    )
-
     # ==================== REPORT SUBCOMMAND ====================
     report = subparsers.add_parser(
         "report",
         help="Report results for requested tasks.",
         description="Parse task IDs, Testing Farm artifact URLs, "
         "or Testing Farm API request URLs from multiple sources.",
+        parents=[common],
     )
 
     # Input sources
@@ -322,6 +346,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "rerun",
         help="Parse given tasks and rerun specified jobs.",
         description="Rerun failed or errored tasks from previous runs.",
+        parents=[common],
     )
 
     # Input sources (same as report)
@@ -384,21 +409,12 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Rerun only jobs that reported FAILED state.",
     )
 
-    rerun.add_argument(
-        "--rp",
-        action="store_true",
-        help="Create ReportPortal launches before submitting rerun requests. "
-        "Creates one launch per architecture, with all tiers for that architecture uploading to the same launch. "
-        "The launch UUIDs are added as TMT_PLUGIN_REPORT_REPORTPORTAL_UPLOAD_TO_LAUNCH environment variables. "
-        "When used, TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH and TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH_DESCRIPTION "
-        "variables are excluded from the Testing Farm payload to avoid conflicts.",
-    )
-
     # ==================== REPORTPORTAL SUBCOMMAND ====================
     reportportal = subparsers.add_parser(
         "reportportal",
         help="Manage ReportPortal launches.",
         description="Create and manage ReportPortal launches through the ReportPortal API.",
+        parents=[common],
     )
 
     # ReportPortal action type (mutually exclusive)
@@ -454,6 +470,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "cancel",
         help="Cancel Testing Farm tasks.",
         description="Cancel running or queued Testing Farm tasks by sending DELETE requests.",
+        parents=[common],
     )
 
     # Input sources (same as report and rerun)
@@ -492,7 +509,3 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     parsed_args = parser.parse_args(args)
 
     return parsed_args
-
-
-# Parse arguments at module level
-args = get_arguments()

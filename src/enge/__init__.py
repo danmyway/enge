@@ -3,7 +3,6 @@
 import logging
 
 from enge.utils import FormatText
-from enge.utils.arg_parser import args
 
 
 class ColorizedFormatter(logging.Formatter):
@@ -28,25 +27,8 @@ class ColorizedFormatter(logging.Formatter):
         return log_message
 
 
-loglevel = logging.INFO
+# Library-safe: do not configure global logging here. CLI entrypoints handle setup.
 logformat = "%(levelname)-8s | %(message)s"
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("requests_gssapi").setLevel(logging.WARNING)
 logging.getLogger("koji").setLevel(logging.WARNING)
-
-
-if args.debug:
-    loglevel = logging.DEBUG
-
-logging.basicConfig(
-    level=loglevel,
-    format=logformat,
-)
-
-logger = logging.getLogger()
-
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(ColorizedFormatter(logformat))
-
-logger.handlers = []
-logger.addHandler(console_handler)

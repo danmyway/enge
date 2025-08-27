@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 import logging
-import os
 import sys
 from typing import List
 
 import requests
+from enge.utils.http_client import http_delete
 from prettytable import PrettyTable
 
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks
+from enge.utils.errors import ValidationError, UserAbort, EngeError
 from enge.utils.opt_manager import parsed_opts
+from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT
 from enge.utils import FormatText
 
 LOGGER = logging.getLogger(__name__)
@@ -55,7 +57,9 @@ class CancelJobs:
                 LOGGER.debug(f"Cancelling task: {task_id}")
 
                 # Send DELETE request to cancel the task
-                response = requests.delete(task_url, headers=req_header)
+                response = http_delete(
+                    task_url, headers=req_header, timeout=REQUEST_TIMEOUT_DEFAULT
+                )
 
                 result = {
                     "task_id": task_id,
@@ -195,7 +199,7 @@ def main():
                     f"{parsed_opts.testing_farm.get('log_artifact_baseurl')}/{task_id}"
                 )
                 print(f"  - {view_url}")
-            sys.exit(0)
+            return
 
         # Cancel the tasks
         results = cancel_handler.cancel_tasks()
@@ -206,16 +210,19 @@ def main():
         # Set exit code based on results
         failed_count = sum(1 for r in results if not r["success"])
         if failed_count > 0:
-            sys.exit(1)  # Some cancellations failed
+
+            raise ValidationError("Some cancellations failed")
         else:
-            sys.exit(0)  # All successful
+            return
 
     except KeyboardInterrupt:
         LOGGER.info("Cancellation interrupted by user")
-        sys.exit(130)  # Standard exit code for Ctrl+C
+
+        raise UserAbort("Cancellation interrupted by user")
     except Exception as e:
         LOGGER.error(f"Unexpected error in cancel operation: {e}")
-        sys.exit(1)
+
+        raise EngeError("Unexpected error in cancel operation") from e
 
 
 if __name__ == "__main__":

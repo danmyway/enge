@@ -6,6 +6,7 @@ import uuid
 
 from prettytable import PrettyTable
 
+from enge.utils.errors import ValidationError
 from enge.utils import FormatText
 from enge.utils.opt_manager import parsed_opts
 
@@ -24,7 +25,11 @@ ERROR_HERE = 3
 NO_RESULT = 4
 
 LOGGER = logging.getLogger(__name__)
-LATEST_TASKS_FILE = parsed_opts.archive_tasks_latest
+
+
+def _latest_tasks_file():
+    # Defer property resolution until used to avoid side effects at import time
+    return parsed_opts.archive_tasks_latest
 
 
 def update_retval(new_value):
@@ -47,19 +52,22 @@ def parse_tasks():
             source = parsed_opts.cli_args.file
             for file in source:
                 if os.path.exists(file):
-                    task_ids = open(file).readlines()
+                    with open(file) as fh:
+                        task_ids = fh.readlines()
                     source_data.extend(task_ids)
                 else:
                     LOGGER.critical(
                         f"Given path {parsed_opts.cli_args.file} does not exist!"
                     )
-                    sys.exit(1)
+
+                    raise ValidationError("Input file does not exist")
 
         if parsed_opts.cli_args.get_tag:
             default_path = parsed_opts.archive_tasks_default
             if not os.path.exists(default_path):
                 LOGGER.critical(f"The given path {default_path} does not exist!")
-                sys.exit(1)
+
+                raise ValidationError("Archive path does not exist")
 
             # Compile regex patterns for efficiency
             compiled_patterns = []
@@ -68,7 +76,8 @@ def parse_tasks():
                     compiled_patterns.append(re.compile(tag))
                 except re.error as e:
                     LOGGER.error(f"Invalid regex pattern '{tag}': {e}")
-                    sys.exit(1)
+
+                    raise ValidationError("Invalid regex in --get-tag")
 
             source = []
             for file in os.listdir(default_path):
@@ -83,7 +92,8 @@ def parse_tasks():
 
             for file in source:
                 file = os.path.join(default_path, file)
-                task_ids = open(file).readlines()
+                with open(file) as fh:
+                    task_ids = fh.readlines()
                 source_data.extend(task_ids)
 
         if not any(
@@ -93,17 +103,18 @@ def parse_tasks():
                 parsed_opts.cli_args.get_tag,
             )
         ):
-            if not os.path.exists(LATEST_TASKS_FILE):
-                LOGGER.critical(
-                    f"The latest job file {LATEST_TASKS_FILE} does not exist!"
-                )
+            latest = _latest_tasks_file()
+            if not os.path.exists(latest):
+                LOGGER.critical(f"The latest job file {latest} does not exist!")
                 LOGGER.critical(
                     "Use the --file option with path to a file containing the job IDs. "
                     "Or pass the job IDs through the --input argument."
                 )
-                sys.exit(1)
-            source = LATEST_TASKS_FILE
-            source_data = open(source).readlines()
+
+                raise ValidationError("Latest jobs file missing")
+            source = latest
+            with open(source) as fh:
+                source_data = fh.readlines()
 
         return source, source_data
 
@@ -187,13 +198,14 @@ def build_table_comparison():
     regroup_results_tests = {}
     unified_names_map = {}
     for plan_name in getattr(parsed_opts.cli_args, "unify", []) or []:
-        name1, name2 = plan_name.split("=", 2)
+        # Only split on the first '=' to support values containing '='
+        name1, name2 = plan_name.split("=", 1)
         unified_names_map[name1] = plan_name
         unified_names_map[name2] = plan_name
 
     def _get_plan_key(testsuite_data):
         plan_key = _split_name(testsuite_data["testsuite_name"], planname_split_index)
-        # check against unifed map to combine results
+        # check against unified map to combine results
         return unified_names_map.get(plan_key) or plan_key
 
     for task_uuid, data in parsed_dict.items():
@@ -244,7 +256,7 @@ def build_table_comparison():
             row_data = [plan_name]
             for uuid in uuids:
                 # Report just plans
-                if not uuid in plan_data:
+                if uuid not in plan_data:
                     # this plan has not been executed for this run
                     row_data.append("-")
                 else:
@@ -337,7 +349,7 @@ def build_table():
 
         # Store metadata for display
         metadata = {
-            "SourceCompose:": data.get("target_name", None),
+            "SourceCompose:": data.get("source_compose", None),
             "Plan:": data.get("plan", None),
             "PlanFilter:": data.get("plan_filter", None),
             "TargetVersion:": data.get("target_release", None),

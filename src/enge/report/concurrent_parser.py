@@ -1,17 +1,15 @@
 import logging
 import os
-import sys
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
-from pathlib import Path
 
 import lxml.etree  # type: ignore
 import requests
 import requests.adapters
-from requests.exceptions import ConnectionError, Timeout, RequestException
+from requests.exceptions import ConnectionError, RequestException
 
 from enge.utils import FormatText
 from enge.utils.opt_manager import parsed_opts
@@ -402,13 +400,17 @@ class ConcurrentRequestParser:
                 LOGGER.debug(f"[{uuid_short}] URL: {task_result.results_xml_url}")
 
         except ConnectionError as err:
-            LOGGER.critical(f"Connection Error")
+            LOGGER.critical("Connection Error")
             LOGGER.critical(
-                f"   There was an issue while attempting to create an API connection."
+                "   There was an issue while attempting to create an API connection."
             )
-            LOGGER.critical(f"   Please verify, that you're connected to the VPN")
+            LOGGER.critical("   Please verify, that you're connected to the VPN")
             LOGGER.debug(f"   Error details: {err}")
-            sys.exit(99)
+            from enge.utils.errors import NetworkError
+
+            raise NetworkError(
+                "Failed to fetch XML results due to connection error"
+            ) from err
         except RequestException as e:
             LOGGER.warning(f"[{task_result.request_uuid}] Failed to fetch XML")
             LOGGER.debug(f"[{uuid_short}]    URL: {task_result.results_xml_url}")
@@ -544,7 +546,7 @@ class XMLParser:
         if not task_result.xunit_content:
             return {
                 "request_uuid": task_result.request_uuid,
-                "target_name": task_result.request_source_compose,
+                "source_compose": task_result.request_source_compose,
                 "target_release": task_result.request_target_release,
                 "upgrade_path": task_result.request_upgrade_path,
                 "plan": task_result.request_plan,
@@ -584,7 +586,7 @@ class XMLParser:
                     LOGGER.critical(f"Result summary: {task_result.request_summary}")
                     return {
                         "request_uuid": task_result.request_uuid,
-                        "target_name": task_result.request_source_compose,
+                        "source_compose": task_result.request_source_compose,
                         "target_release": task_result.request_target_release,
                         "upgrade_path": task_result.request_upgrade_path,
                         "plan": task_result.request_plan,
@@ -603,7 +605,7 @@ class XMLParser:
                 LOGGER.debug(f"[{uuid_short}] Skipping as the overall result is pass")
                 return {
                     "request_uuid": task_result.request_uuid,
-                    "target_name": task_result.request_source_compose,
+                    "source_compose": task_result.request_source_compose,
                     "target_release": task_result.request_target_release,
                     "upgrade_path": task_result.request_upgrade_path,
                     "plan": task_result.request_plan,
@@ -622,7 +624,7 @@ class XMLParser:
 
             parsed_data = {
                 "request_uuid": task_result.request_uuid,
-                "target_name": task_result.request_source_compose,
+                "source_compose": task_result.request_source_compose,
                 "target_release": task_result.request_target_release,
                 "upgrade_path": task_result.request_upgrade_path,
                 "plan": task_result.request_plan,
@@ -645,7 +647,7 @@ class XMLParser:
             LOGGER.error(f"[{task_result.request_uuid}] Error parsing XML: {e}")
             return {
                 "request_uuid": task_result.request_uuid,
-                "target_name": task_result.request_source_compose,
+                "source_compose": task_result.request_source_compose,
                 "target_release": task_result.request_target_release,
                 "upgrade_path": task_result.request_upgrade_path,
                 "plan": task_result.request_plan,
@@ -745,7 +747,14 @@ class XMLParser:
             testcase_log_url = testcase_elem.xpath(
                 './logs/log[@name="testout.log"]/@href'
             )[0]
-            log_name = f"{task_result.request_source_compose}_{testcase_name.split('/')[-1]}.log"
+            # Sanitize log file name to avoid FS issues
+            raw_name = (
+                f"{task_result.request_source_compose}_{testcase_name.split('/')[-1]}"
+            )
+            safe_name = "".join(
+                ch for ch in raw_name if ch.isalnum() or ch in ("-", "_", ".")
+            )
+            log_name = f"{safe_name}.log"
             uuid_short = ConcurrentRequestParser._get_short_uuid(
                 task_result.request_uuid
             )
@@ -763,7 +772,7 @@ class XMLParser:
             testsuite_log_dir_path = os.path.join(log_dir_path, testsuite_log_dir)
             os.makedirs(testsuite_log_dir_path, exist_ok=True)
 
-            response = urllib.request.urlopen(testcase_log_url)
+            response = urllib.request.urlopen(testcase_log_url, timeout=30)
             log_data = response.read().decode("utf-8")
             log_file_path = os.path.join(testsuite_log_dir_path, log_name)
 

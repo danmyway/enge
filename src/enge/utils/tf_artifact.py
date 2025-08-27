@@ -11,6 +11,7 @@ from copr.v3 import BuildProxy, CoprNoResultException
 from copr.v3 import exceptions as coprexcept
 
 from . import FormatText
+from .errors import ConfigurationError, ValidationError, UserAbort
 
 LOGGER = getLogger(__name__)
 
@@ -103,7 +104,7 @@ class CoprRef:
                             "Please check, that the owner, owner_is_group and package options are set correctly."
                         )
                     LOGGER.debug(f"{type(no_copr).__name__}: {no_copr}")
-                    sys.exit(99)
+                    raise ValidationError("COPR configuration invalid")
 
                 for build_munch in query:
                     if isinstance(build_munch, list):
@@ -157,7 +158,7 @@ class CoprRef:
             except coprexcept.CoprNoResultException as no_copr:
                 LOGGER.critical(f"{type(no_copr).__name__}: {no_copr}")
                 LOGGER.critical("Cowardly refusing to continue.")
-                sys.exit(99)
+                raise ValidationError("COPR build not found")
 
             if isinstance(build_munch, list):
                 if build_munch:
@@ -178,7 +179,7 @@ class CoprRef:
                     f"The ID points to owner: {ownername}, project: {projectname}"
                 )
                 LOGGER.critical("Cowardly refusing to continue.")
-                sys.exit(99)
+                raise ValidationError("COPR build ID mismatch")
 
             elif hasattr(build_munch, "state") and build_munch.state == "failed":
                 LOGGER.critical(
@@ -200,7 +201,7 @@ class CoprRef:
                         "Exiting.", text_col=FormatText.RED, bold=True
                     )
                 )
-                sys.exit(99)
+                raise ValidationError("COPR build in failed state")
 
             else:
                 build = build_munch
@@ -251,18 +252,24 @@ class CoprRef:
             LOGGER.warning(
                 f"See the project's builds dashboard: {self.copr_build_baseurl}" + "s/"
             )
-            while True:
-                user_response = input(
-                    "Do you wish to continue with an older build? (y/n) "
+            # Avoid blocking in non-interactive environments
+            if not sys.stdin.isatty():
+                LOGGER.warning(
+                    "Non-interactive environment detected; proceeding with an older build automatically."
                 )
-                if user_response.lower() == "y":
-                    LOGGER.info("Moving on with an older build.")
-                    break
-                elif user_response.lower() == "n":
-                    LOGGER.info("Exiting.")
-                    sys.exit(0)
-                else:
-                    LOGGER.warning("Invalid response, please enter 'y' or 'n'. ")
+            else:
+                while True:
+                    user_response = input(
+                        "Do you wish to continue with an older build? (y/n) "
+                    )
+                    if user_response.lower() == "y":
+                        LOGGER.info("Moving on with an older build.")
+                        break
+                    elif user_response.lower() == "n":
+                        LOGGER.info("Exiting.")
+                        raise UserAbort("User aborted due to running COPR build")
+                    else:
+                        LOGGER.warning("Invalid response, please enter 'y' or 'n'. ")
 
         build_obj = get_first_non_list(build_obj)
         if build_obj is None:
@@ -452,7 +459,7 @@ class BrewRef:
                 f"Build volume mismatch: requested {reference} matches {volume_names[0]}, expected '{expected_volume}'."
             )
             LOGGER.critical("Build may not be compatible with target release. Exiting.")
-            sys.exit(99)
+            raise ValidationError("Build volume mismatch")
         else:
             # Compatible volumes found - log for debugging
             LOGGER.debug(f"Volume compatibility check passed: {compatible_volumes}")
@@ -476,7 +483,7 @@ class BrewRef:
             LOGGER.critical(
                 "Please provide either a task ID (integer) or full NVR (name-version-release)."
             )
-            sys.exit(99)
+            raise ValidationError("No build artifact reference provided")
 
         # Validate each reference format
         for ref in reference:
@@ -488,7 +495,7 @@ class BrewRef:
                 LOGGER.critical(
                     "Reference must be either a task ID (integer) or valid NVR (package-version-release)"
                 )
-                sys.exit(99)
+                raise ValidationError("Invalid build reference format")
             LOGGER.debug(f"Validated reference '{ref}' as {ref_type}")
 
         try:
@@ -514,7 +521,7 @@ class BrewRef:
                 LOGGER.critical(
                     "When using task IDs, you must provide the package name via configuration."
                 )
-                sys.exit(99)
+                raise ConfigurationError("Package name required when using task IDs")
 
         elif self.build_reference and len(self.build_reference) > 0:
             # For NVRs, parse the package name from the reference
@@ -523,15 +530,15 @@ class BrewRef:
             if not effective_package_name:
                 LOGGER.critical(f"Failed to parse package name from NVR '{first_ref}'!")
                 LOGGER.critical("NVR format should be: package-name-version-release")
-                sys.exit(99)
+                raise ValidationError("Invalid NVR format")
         else:
             LOGGER.critical("No valid build reference provided!")
-            sys.exit(99)
+            raise ValidationError("No valid build reference provided")
 
         # Final validation - ensure we have a valid package name
         if not effective_package_name or not effective_package_name.strip():
             LOGGER.critical("No valid package name could be determined!")
-            sys.exit(99)
+            raise ValidationError("No valid package name could be determined")
 
         LOGGER.debug(f"Using package name: {effective_package_name}")
 
@@ -650,14 +657,14 @@ class BrewRef:
             ]
         else:
             LOGGER.critical("No build artifact reference provided!")
-            sys.exit(99)
+            raise ValidationError("No build artifact reference provided")
 
         task_ids = list(set(tasks))
         if not task_ids:
             LOGGER.critical(
                 f"No suitable tasks found for reference {reference}. Please verify the reference is correct."
             )
-            sys.exit(99)
+            raise ValidationError("No suitable tasks found for reference")
 
         # Validate volume compatibility with source release
         expected_volume = self._get_expected_volume_name(options.source_spec)

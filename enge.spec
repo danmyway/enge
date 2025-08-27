@@ -26,8 +26,20 @@ enge
 %install
 %pyproject_install
 %pyproject_save_files enge
+# Install config directory and example/default configs
+install -d %{buildroot}%{_sysconfdir}/enge
+# Bundled example default (guidance only)
+install -m 0644 src/enge/utils/enge_default_config.toml %{buildroot}%{_sysconfdir}/enge/enge_default_config.toml
+# Create an empty user config if not present (left for admin to fill in)
+# Ship as noreplace so upgrades do not clobber local changes
+if [ ! -f %{buildroot}%{_sysconfdir}/enge/enge.toml ]; then
+  touch %{buildroot}%{_sysconfdir}/enge/enge.toml
+fi
+chmod 0644 %{buildroot}%{_sysconfdir}/enge/enge.toml
 
 %files -f %{pyproject_files}
 %{_bindir}/enge
+%config(noreplace) %{_sysconfdir}/enge/enge.toml
+%config(noreplace) %{_sysconfdir}/enge/enge_default_config.toml
 
 %changelog

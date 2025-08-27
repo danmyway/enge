@@ -1,5 +1,5 @@
-import sys
 import requests
+from enge.utils.http_client import http_get
 import logging
 import re
 
@@ -177,10 +177,14 @@ def fetch_data_from_url(url):
     - SystemExit: If the request fails.
     """
     try:
-        response = requests.get(url)
+        from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT
+
+        response = http_get(url, timeout=REQUEST_TIMEOUT_DEFAULT)
         response.raise_for_status()  # Raises HTTPError for bad responses
     except requests.exceptions.RequestException as e:
-        sys.exit(f"Error accessing {url}: {e}")
+        from enge.utils.errors import NetworkError
+
+        raise NetworkError(f"Error accessing {url}: {e}") from e
 
     return response.json()
 
@@ -236,18 +240,16 @@ def _pin_compose_with_fallback(major, minor, composes_prod_url):
 
     data = fetch_data_from_url(composes_prod_url)
 
-    # Try format with micro version first (RHEL 8/9 style)
+    # Format with micro version (RHEL 8/9 style)
     compose_with_micro = f"RHEL-{major}.{minor}.0-Nightly"
-    result = find_compose(compose_with_micro, data)
-    if result:
-        LOGGER.debug(f"Found compose with micro version: {result}")
-        return result
 
-    # Try format without micro version (RHEL 10 style)
+    # Format without micro version (RHEL 10 style)
     compose_without_micro = f"RHEL-{major}.{minor}-Nightly"
-    result = find_compose(compose_without_micro, data)
+    result = find_compose(compose_with_micro, data) or find_compose(
+        compose_without_micro, data
+    )
     if result:
-        LOGGER.debug(f"Found compose without micro version: {result}")
+        LOGGER.debug(f"Found compose with version: {result}")
         return result
 
     # If neither format is found, show error with both attempted formats
@@ -287,7 +289,9 @@ def _show_compose_not_found_error(attempted_composes, data, major=None, minor=No
         attempted_list = ", ".join(attempted_composes)
         LOGGER.error(f"Compose(s) {attempted_list} not found.")
         LOGGER.debug("Unable to show relevant alternatives - version parsing failed.")
-        sys.exit(99)
+        from enge.utils.errors import ValidationError
+
+        raise ValidationError("Compose not found and version parsing failed")
 
     # Safely get data with proper None handling
     symbolic_composes = data.get("SYMBOLIC_COMPOSES") or []
@@ -330,7 +334,9 @@ def _show_compose_not_found_error(attempted_composes, data, major=None, minor=No
         LOGGER.debug(
             f"No relevant composes found for RHEL {version_info['major']}.{version_info['minor']}."
         )
-    sys.exit(99)
+    from enge.utils.errors import ValidationError
+
+    raise ValidationError("Compose not found")
 
 
 def _pin_compose(compose_arg, composes_prod_url):
@@ -378,4 +384,4 @@ def _pin_compose(compose_arg, composes_prod_url):
         # Show error with attempted compose(s) and version info if available
         _show_compose_not_found_error(attempted_composes, data, major, minor)
 
-    return compose
+    return compose_arg if compose_arg in (data.get("COMPOSES") or []) else compose

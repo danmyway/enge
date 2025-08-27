@@ -7,13 +7,11 @@ and derive all necessary values for Testing Farm payloads.
 """
 
 import re
-from typing import Dict, Tuple, Optional, Any, List, TYPE_CHECKING
+from typing import Dict, Tuple, Optional, Any, List
 from logging import getLogger
 
 from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
-
-if TYPE_CHECKING:
-    from enge.utils.opt_manager import ParsedOpts
+from enge.utils.errors import ValidationError
 
 LOGGER = getLogger(__name__)
 
@@ -41,9 +39,9 @@ def parse_compose_spec(
     # Load config if not provided
     if config is None:
         from enge.utils.config_parser import load_config
-        from enge.utils.opt_manager import DEFAULT_CONFIG_PATHS
+        from enge.utils.globals import DEFAULT_USER_CONFIG_PATHS
 
-        config = load_config(paths=list(DEFAULT_CONFIG_PATHS))
+        config = load_config(paths=list(DEFAULT_USER_CONFIG_PATHS))
 
     # Try parsing as version number first (e.g., "8.10")
     version_match = re.match(r"^(\d+)\.(\d+)$", spec.strip())
@@ -271,6 +269,70 @@ def parse_environment_variables(env_args: Optional[list] = None) -> Dict[str, st
     return env_vars
 
 
+def parse_tmt_context(context_args: Optional[list] = None) -> Dict[str, Any]:
+    """
+    Parse TMT context key-value pairs from command line arguments.
+
+    Args:
+        context_args: List of strings in "KEY=VAL" format
+
+    Returns:
+        Dictionary of parsed context values
+
+    Raises:
+        ValueError: If any item is not in correct KEY=VAL format
+    """
+    context: Dict[str, Any] = {}
+
+    if not context_args:
+        return context
+
+    for item in context_args:
+        if "=" not in item:
+            raise ValueError(
+                f"Invalid context format: {item}. Expected KEY=VAL format."
+            )
+        key, value = item.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            raise ValueError(f"Empty context key in: {item}")
+        # Keep values as strings to align with Testing Farm/TMT expectations
+        if key in context and context[key] != value:
+            LOGGER.warning(
+                f"TMT context '{key}' overridden by CLI duplicate: {context[key]} -> {value}"
+            )
+        context[key] = value
+        LOGGER.debug(f"Parsed TMT context: {key}={value}")
+
+    return context
+
+
+def merge_tmt_context(
+    base_context: Dict[str, Any], cli_context: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Merge CLI-provided TMT context into the base context with warnings.
+
+    Args:
+        base_context: Generated base context (e.g., from source/target specs)
+        cli_context: Context provided via --context KEY=VAL flags
+
+    Returns:
+        Merged context dictionary (base modified copy)
+    """
+    merged = dict(base_context) if base_context else {}
+
+    for key, value in (cli_context or {}).items():
+        if key in merged and merged[key] != value:
+            LOGGER.warning(
+                f"TMT context '{key}' overridden by CLI: {merged[key]} -> {value}"
+            )
+        merged[key] = value
+
+    return merged
+
+
 def merge_environment_variables(
     auto_env_vars: Dict[str, str], cli_env_vars: Dict[str, str]
 ) -> Dict[str, str]:
@@ -330,6 +392,7 @@ def generate_tier_plan_filter(
 ) -> str:
     """
     Generate plan_filter from tier specifications.
+    If no tiers are provided, return the upgrade path filter and enabled:true.
 
     Args:
         tiers: List of tier names from CLI
@@ -344,10 +407,12 @@ def generate_tier_plan_filter(
 
     Examples:
         >>> generate_tier_plan_filter(["tier-smoke"], {"tier-smoke": "tag:smoke"}, "8to9")
-        'tag:8to9 & tag:smoke'
+        'tag:8to9 & tag:smoke & enabled:true'
+        >>> generate_tier_plan_filter([], None, "8to9")
+        'tag:8to9 & enabled:true'
     """
     if not tiers:
-        return f"tag:{upgrade_path}"
+        return f"tag:{upgrade_path} & enabled:true"
 
     # Look up tier mappings
     tier_filters = []
@@ -366,7 +431,6 @@ def generate_tier_plan_filter(
     all_filters = [f"tag:{upgrade_path}"] + tier_filters + ["enabled:true"]
     combined_filter = " & ".join(all_filters)
 
-    LOGGER.debug(f"Generated plan_filter: {combined_filter}")
     return combined_filter
 
 
@@ -519,11 +583,11 @@ def resolve_effective_values(
         or config.get("tests", {}).get("architectures")
     )
 
-    # Resolve git branch (CLI > Set > Config)
-    resolved["git_branch"] = (
-        getattr(cli_args, "git_branch", None)
-        or set_config.get("git_branch")
-        or config.get("tests", {}).get("git_branch")
+    # Resolve git ref (CLI > Set > Config)
+    resolved["git_ref"] = (
+        getattr(cli_args, "git_ref", None)
+        or set_config.get("git_ref")
+        or config.get("tests", {}).get("git_ref")
     )
 
     # Resolve git url (CLI > Set > Config)
@@ -533,10 +597,14 @@ def resolve_effective_values(
         or config.get("tests", {}).get("git_url")
     )
 
-    # Resolve parallel limit (Set > Config, no CLI option)
-    resolved["parallel_limit"] = set_config.get("parallel_limit") or config.get(
-        "tests", {}
-    ).get("parallel_limit")
+    # Resolve parallel limit (CLI > Set > Config)
+    cli_parallel = getattr(cli_args, "parallel_limit", None)
+    if cli_parallel is not None:
+        resolved["parallel_limit"] = cli_parallel
+    else:
+        resolved["parallel_limit"] = set_config.get("parallel_limit") or config.get(
+            "tests", {}
+        ).get("parallel_limit")
 
     # Resolve tiers (CLI > Set)
     resolved["tiers"] = getattr(cli_args, "tier", None) or set_config.get("tiers")
@@ -547,7 +615,7 @@ def resolve_effective_values(
     # Resolve plans (CLI > Set > Config) - override, not combine
     cli_plans = getattr(cli_args, "plan", None)
     set_plans = set_config.get("plans", [])
-    config_plans = config.get("tests", {}).get("plan", [])
+    config_plans = config.get("tests", {}).get("plans", [])
 
     # Priority override: CLI plans override set plans, set plans override config plans
     if cli_plans:
@@ -564,6 +632,18 @@ def resolve_effective_values(
     resolved["brew_api"] = set_config.get("brew_api", {})
     resolved["environment"] = set_config.get("environment", {})
     resolved["reportportal"] = set_config.get("reportportal", {})
+
+    # Resolve context (Config defaults > Set overrides)
+    # CLI overrides are handled later via --context in opt_manager
+    tests_section = config.get("tests", {}) if isinstance(config, dict) else {}
+    global_context = tests_section.get("context", {}) or {}
+    set_context = set_config.get("context", {}) or {}
+    merged_context: Dict[str, Any] = {}
+    if isinstance(global_context, dict):
+        merged_context.update(global_context)
+    if isinstance(set_context, dict):
+        merged_context.update(set_context)
+    resolved["context"] = merged_context
 
     return resolved
 
@@ -611,9 +691,26 @@ def merge_set_environment_variables(
     if config or set_reportportal_config:
         # Create a merged reportportal config with test set values taking precedence
         reportportal_config = {}
+        base_rp_config = {}
         if config and config.get("reportportal"):
             reportportal_config.update(config["reportportal"])
+            base_rp_config.update(config["reportportal"])
         if set_reportportal_config:
+            # Validate: do not allow empty-string overrides for sensitive keys
+            for key, value in set_reportportal_config.items():
+                if isinstance(value, str) and value == "" and base_rp_config.get(key):
+                    raise ValidationError(
+                        f"Invalid empty override for reportportal.{key}"
+                    )
+                # Warn on non-empty override changing an existing value
+                if (
+                    base_rp_config.get(key) is not None
+                    and value not in (None, "")
+                    and base_rp_config.get(key) != value
+                ):
+                    LOGGER.warning(
+                        f"ReportPortal '{key}' overridden by test set: {base_rp_config.get(key)} -> {value}"
+                    )
             reportportal_config.update(set_reportportal_config)
 
         # Create a temporary config dict with the merged reportportal config
@@ -632,12 +729,32 @@ def merge_set_environment_variables(
             target_compose,
             event=None,  # This call doesn't have event context available
         )
-        merged_vars.update(reportportal_vars)
+        # Merge with warnings and ignore empty overrides
+        for k, v in reportportal_vars.items():
+            if k in merged_vars and merged_vars[k] != v and v not in (None, ""):
+                LOGGER.warning(
+                    f"Environment variable {k} overridden by reportportal config: {merged_vars[k]} -> {v}"
+                )
+            if v not in (None, ""):
+                merged_vars[k] = v
 
-    merged_vars.update(
-        set_env_vars
-    )  # Set vars override automatic ones and reportportal
-    merged_vars.update(cli_env_vars)  # CLI vars override everything
+    # Apply test set environment overrides with warnings; ignore empty overrides
+    for k, v in (set_env_vars or {}).items():
+        if k in merged_vars and merged_vars[k] != v and v not in (None, ""):
+            LOGGER.warning(
+                f"Environment variable {k} overridden by test set: {merged_vars[k]} -> {v}"
+            )
+        if v not in (None, ""):
+            merged_vars[k] = v
+
+    # Apply CLI environment overrides with warnings; ignore empty overrides
+    for k, v in (cli_env_vars or {}).items():
+        if k in merged_vars and merged_vars[k] != v and v not in (None, ""):
+            LOGGER.warning(
+                f"Environment variable {k} overridden by CLI: {merged_vars[k]} -> {v}"
+            )
+        if v not in (None, ""):
+            merged_vars[k] = v
 
     return merged_vars
 
@@ -672,7 +789,6 @@ def generate_reportportal_environment_variables(
     Returns:
         Dictionary of ReportPortal environment variables with TMT_PLUGIN_REPORT_REPORTPORTAL_ prefix
     """
-    from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
 
     reportportal_env_vars = {}
 
@@ -698,22 +814,41 @@ def generate_reportportal_environment_variables(
     # Process all config values with the prefix
     for key, value in reportportal_config.items():
         if value:  # Only include non-empty values
-            env_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}{key.upper()}"
+            # Special-case mapping to align with TMT env var expectations
+            normalized_key = str(key).strip().lower()
+            if normalized_key == "description":
+                env_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH_DESCRIPTION"
+            elif normalized_key == "launch":
+                env_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+            else:
+                env_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}{key.upper()}"
             reportportal_env_vars[env_key] = str(value)
 
-    # Handle CLI overrides for specific keys
+    # Handle CLI overrides for specific keys (warn on override and ignore empty)
     if cli_args:
         rp_launch = getattr(cli_args, "rp_launch", None)
         if rp_launch:
-            reportportal_env_vars[f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"] = (
-                rp_launch
-            )
+            launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+            if (
+                launch_key in reportportal_env_vars
+                and reportportal_env_vars[launch_key] != rp_launch
+            ):
+                LOGGER.warning(
+                    f"ReportPortal 'launch' overridden by CLI: {reportportal_env_vars[launch_key]} -> {rp_launch}"
+                )
+            reportportal_env_vars[launch_key] = rp_launch
 
         rp_description = getattr(cli_args, "rp_description", None)
         if rp_description:
-            reportportal_env_vars[
-                f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH_DESCRIPTION"
-            ] = rp_description
+            desc_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH_DESCRIPTION"
+            if (
+                desc_key in reportportal_env_vars
+                and reportportal_env_vars[desc_key] != rp_description
+            ):
+                LOGGER.warning(
+                    f"ReportPortal 'description' overridden by CLI: {reportportal_env_vars[desc_key]} -> {rp_description}"
+                )
+            reportportal_env_vars[desc_key] = rp_description
 
     # Auto-generate launch name if not provided anywhere
     launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
@@ -790,10 +925,10 @@ def parse_target_compose_from_url(target_compose_url: Optional[str]) -> Optional
         Extracted compose name or None if not found
 
     Examples:
-        >>> parse_target_compose_from_url("http://example.com/RHEL-10.1-20250730.0/compose")
-        "RHEL-10.1-20250730.0"
-        >>> parse_target_compose_from_url("http://example.com/RHEL-9.7.0-20250730.1/compose")
-        "RHEL-9.7.0-20250730.1"
+        >>> parse_target_compose_from_url("http://example.com/RHEL-10.1-19700101.0/compose")
+        "RHEL-10.1-19700101.0"
+        >>> parse_target_compose_from_url("http://example.com/RHEL-9.7.0-19700101.1/compose")
+        "RHEL-9.7.0-19700101.1"
         >>> parse_target_compose_from_url("http://example.com/invalid/path")
         None
     """

@@ -9,17 +9,15 @@ test launches through the ReportPortal API.
 import logging
 import sys
 import json
-import uuid
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-import re
 
-import requests
+from enge.utils.http_client import http_get, http_post, http_put
 from requests.exceptions import RequestException
 import lxml.etree
 
 from enge.utils.opt_manager import parsed_opts
-from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+from enge.utils.errors import ConfigurationError, NetworkError, EngeError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -37,11 +35,15 @@ class ReportPortalLaunch:
         self.project = self.config.get("project", "")
 
         if not self.url:
-            raise ValueError("ReportPortal URL is required but not configured")
+            raise ConfigurationError("ReportPortal URL is required but not configured")
         if not self.token:
-            raise ValueError("ReportPortal API token is required but not configured")
+            raise ConfigurationError(
+                "ReportPortal API token is required but not configured"
+            )
         if not self.project:
-            raise ValueError("ReportPortal project is required but not configured")
+            raise ConfigurationError(
+                "ReportPortal project is required but not configured"
+            )
 
         self.api_base = f"{self.url}/api/v1/{self.project}"
         self.headers = {
@@ -153,7 +155,7 @@ class ReportPortalLaunch:
 
         try:
             LOGGER.info(f"Creating ReportPortal launch: {launch_data['name']}")
-            response = requests.post(
+            response = http_post(
                 f"{self.api_base}/launch",
                 headers=self.headers,
                 json=launch_data,
@@ -180,11 +182,11 @@ class ReportPortalLaunch:
             return launch_uuid
 
         except RequestException as e:
-            LOGGER.error(f"Failed to create ReportPortal launch: {e}")
-            raise
+            LOGGER.error(f"Failed to create ReportPortal launch.")
+            raise NetworkError("Failed to create ReportPortal launch") from e
         except Exception as e:
-            LOGGER.error(f"Unexpected error creating launch: {e}")
-            raise
+            LOGGER.error(f"Unexpected error creating launch.")
+            raise EngeError("Unexpected error creating ReportPortal launch") from e
 
     def list_launches(
         self,
@@ -229,7 +231,7 @@ class ReportPortalLaunch:
 
             LOGGER.debug(f"Launch list params: {params}")
 
-            response = requests.get(
+            response = http_get(
                 f"{self.api_base}/launch",
                 headers=self.headers,
                 params=params,
@@ -259,11 +261,11 @@ class ReportPortalLaunch:
             return launches
 
         except RequestException as e:
-            LOGGER.error(f"Failed to list ReportPortal launches: {e}")
-            raise
+            LOGGER.error(f"Failed to list ReportPortal launches")
+            raise NetworkError("Failed to list ReportPortal launches") from e
         except Exception as e:
-            LOGGER.error(f"Unexpected error listing launches: {e}")
-            raise
+            LOGGER.error(f"Unexpected error listing launches.")
+            raise EngeError("Unexpected error listing ReportPortal launches") from e
 
     def find_launch_by_uniq_id(
         self, uniq_id: str, tmt_context: Optional[Dict[str, str]] = None
@@ -435,7 +437,7 @@ class ReportPortalLaunch:
             LOGGER.info(f"Finishing ReportPortal launch: {launch_uuid}")
             LOGGER.debug(f"Finish data: {finish_data}")
 
-            response = requests.put(
+            response = http_put(
                 f"{self.api_base}/launch/{launch_uuid}/finish",
                 headers=self.headers,
                 json=finish_data,
@@ -453,11 +455,11 @@ class ReportPortalLaunch:
             return True
 
         except RequestException as e:
-            LOGGER.error(f"Failed to finish ReportPortal launch: {e}")
-            raise
+            LOGGER.error(f"Failed to finish ReportPortal launch.")
+            raise NetworkError("Failed to finish ReportPortal launch") from e
         except Exception as e:
-            LOGGER.error(f"Unexpected error finishing launch: {e}")
-            raise
+            LOGGER.error(f"Unexpected error finishing launch.")
+            raise EngeError("Unexpected error finishing ReportPortal launch") from e
 
     def extract_latest_timestamp_from_xml(self, xml_content: str) -> Optional[str]:
         """
@@ -765,7 +767,7 @@ class ReportPortalLaunch:
                     # Extract latest timestamp from XML
                     end_time = None
                     if task_result.xunit_content and task_result.xunit_content.strip():
-                        LOGGER.info(f"Extracting timestamp from XML content...")
+                        LOGGER.info("Extracting timestamp from XML content...")
                         end_time = self.extract_latest_timestamp_from_xml(
                             task_result.xunit_content
                         )
@@ -784,9 +786,8 @@ class ReportPortalLaunch:
 
                     # Extract artifacts URL for description
                     # Need to fetch full task data for this
-                    import requests
 
-                    response = requests.get(
+                    response = http_get(
                         task_url,
                         headers={
                             "Authorization": f"Bearer {parsed_opts.testing_farm.get('api_key')}"
@@ -931,7 +932,7 @@ class ReportPortalLaunch:
         print()
         print(f"{FormatText.BOLD}Request Headers:{FormatText.END}")
         print(f"  Authorization: Bearer {self.token[:10]}...")
-        print(f"  Content-Type: application/json")
+        print("  Content-Type: application/json")
         print()
         print(f"{FormatText.BOLD}Request Body:{FormatText.END}")
         print(json.dumps(finish_data, indent=2, ensure_ascii=False))
@@ -963,12 +964,11 @@ class ReportPortalLaunch:
         # For now, we'll need to get the TMT context from the Testing Farm API
         # This requires getting the full task data
         try:
-            import requests
 
             task_url = task_result.url
             LOGGER.debug(f"Fetching full task data from: {task_url}")
 
-            response = requests.get(
+            response = http_get(
                 task_url,
                 headers={
                     "Authorization": f"Bearer {parsed_opts.testing_farm.get('api_key')}"
@@ -1123,13 +1123,13 @@ def main() -> int:
 
             return 0
 
-    except ValueError as e:
+    except ConfigurationError as e:
         LOGGER.error(f"Configuration error: {e}")
         return 1
-    except RequestException as e:
-        LOGGER.error(f"ReportPortal API error: {e}")
+    except NetworkError as e:
+        LOGGER.error(f"ReportPortal API/network error: {e}")
         return 1
-    except Exception as e:
+    except EngeError as e:
         LOGGER.error(f"Unexpected error: {e}")
         return 1
 
