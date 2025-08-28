@@ -20,6 +20,7 @@
           4. [ReportPortal Integration](#reportportal-integration)
           5. [Report](#report)
           6. [Rerun](#rerun)
+   3. [Troubleshooting configuration and validation](#troubleshooting-configuration-and-validation)
           7. [Task Archiving and Tagging](#task-archiving-and-tagging)
 
 
@@ -434,6 +435,25 @@ enge report --show-tests --input 9f42645f-bcaa-4c73-87e2-6e1efef16635 --short
 # Display only UUIDs from the requested inputs
 enge report --show-ids --file ~/my_jobs_file
 ```
+
+## Troubleshooting configuration and validation
+
+#### Empty string overrides vs. inheriting defaults
+
+enge merges your user configuration over the defaults. If you set a key to an empty string (e.g., `[tests].git_ref = ''`), that explicit value overrides the default and is treated as missing by validators. This can trigger errors like:
+
+```
+CRITICAL | Operational defaults validation failed:
+CRITICAL |   - Missing operational default: [tests].git_ref
+CRITICAL | This indicates a problem with the default configuration file.
+CRITICAL | Configuration error: Operational defaults validation failed
+```
+
+To inherit the default value shipped in `enge_default_config.toml`, **omit the key entirely** in your user `enge.toml` (or comment it out). Only set a value when you want to intentionally override the default.
+
+Notes:
+- Set-level values (under `[tests.set.<name>]`) are evaluated when using `--set`. Top-level operational defaults such as `[tests].git_ref` are still validated; leaving them as empty strings will fail validation.
+- If you rely exclusively on set-level configuration, remove or comment out the top-level empty keys to avoid overriding defaults.
 
 Corresponding return code is set based on the results with following logic:
  * 0 - The results are complete for each request and all are pass

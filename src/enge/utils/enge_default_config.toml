@@ -67,6 +67,16 @@ taskid_url = '' # REQUIRED: URL for brew taskid URL builder
 
 
 # ============================================================================
+# REPORTPORTAL (Launch and upload configuration)
+# - REQUIRED:
+#   - url
+#   - project
+# ============================================================================
+[reportportal]
+url = '' # REQUIRED - for correct functioning of the 'enge rp' commands and launch generation
+project = '' # REQUIRED - for correct functioning of the 'enge rp' commands and launch generation
+
+# ============================================================================
 # TESTS (Test suite source and execution scope)
 # - Where tests live and how to fan out plans/architectures
 # - INFO: git_url/git_ref/parallel_limit are defaults; override in user enge.toml
@@ -78,7 +88,6 @@ taskid_url = '' # REQUIRED: URL for brew taskid URL builder
 [tests]
 git_url = '' # REQUIRED: URL to tests metadata repository
 git_ref = 'main' # REQUIRED: Git ref (branch/tag/commit) to checkout test suite from
-parallel_limit = ''
 
 
 # ---------------------------------------------------------------------------

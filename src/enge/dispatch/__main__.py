@@ -7,12 +7,12 @@ High-level flow:
 2) Two orchestration modes are supported:
    - Test sets mode: if CLI specifies --set, each set is expanded into
      individual RequestSpec items (via set_flow.expand_set_requests) and
-     processed independently (process_request_spec). This path fully supports
-     ReportPortal launch creation when --rp is used (handled inside set_flow).
+     processed independently (process_request_spec). This path supports
+     ReportPortal launch creation inside set_flow.
    - Legacy tiers/plans mode: when no --set is provided, tiers and/or plans
      are resolved, converted to RequestSpec items (plan_flow.build_tier_plan_specs),
      artifacts are resolved (ArtifactResolver), and requests are submitted via
-     SubmitTest. RP launch creation in the plan-only branch is currently disabled.
+     SubmitTest.
 
 Key responsibilities delegated to helpers:
  - Artifact resolution: dispatch.artifacts.ArtifactResolver

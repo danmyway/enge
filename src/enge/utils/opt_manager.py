@@ -91,15 +91,80 @@ class ParsedOpts:
         # Phase 3: Option dependency validation
         self._validate_option_dependencies()
 
-        # Phase 4: Register runtime validation hooks
+        # Phase 4: Validate effective configuration (after merge/priority resolution)
+        self._validate_effective_configuration()
+
+        # Phase 5: Register runtime validation hooks
         self._register_runtime_validation_hooks()
 
         logger.debug("Centralized validation completed successfully")
 
+    def _validate_effective_configuration(self):
+        """Validate required values after resolving effective configuration.
+
+        This mirrors validation at the end of the merge: CLI > Set > Config.
+        """
+        errors: List[str] = []
+
+        action = getattr(self.cli_args, "action", None)
+        if action == "test":
+            cli_sets = getattr(self.cli_args, "set", None)
+            if cli_sets:
+                try:
+                    sets_cfg = self.config.get("tests", {}).get("set", {})
+                except Exception:
+                    sets_cfg = {}
+
+                for set_name in cli_sets:
+                    set_cfg = (
+                        sets_cfg.get(set_name, {}) if isinstance(sets_cfg, dict) else {}
+                    )
+                    try:
+                        effective = resolve_effective_values(
+                            self.cli_args, set_cfg, self.config
+                        )
+                    except Exception:
+                        effective = {}
+                    if not effective.get("git_ref"):
+                        errors.append(
+                            f"Missing effective git_ref (CLI/Set/Config) for set '{set_name}'"
+                        )
+            else:
+                try:
+                    effective = resolve_effective_values(self.cli_args, {}, self.config)
+                except Exception:
+                    effective = {}
+                if not effective.get("git_ref"):
+                    errors.append("Missing effective git_ref (CLI/Config)")
+
+        if errors:
+            logger.critical("Effective configuration validation failed:")
+            for error in errors:
+                logger.critical(f"  - {error}")
+            raise ConfigurationError("Effective configuration invalid")
+
+    def _collect_set_value(self, key: str) -> Optional[Any]:
+        """Collect a value for a given key from all referenced sets; return the first non-empty.
+
+        This mirrors "validate at the end" by checking resolved sources beyond top-level config.
+        """
+        cli_sets = getattr(self.cli_args, "set", None)
+        if not cli_sets:
+            return None
+        try:
+            sets_cfg = self.config.get("tests", {}).get("set", {})
+            for set_name in cli_sets:
+                val = sets_cfg.get(set_name, {}).get(key)
+                if val:
+                    return val
+        except Exception:
+            return None
+        return None
+
     def _validate_operational_defaults(self):
         """Validate operational defaults are present."""
+        # Only core operational defaults here; other requirements are validated contextually
         operational_defaults = {
-            "tests": ["architectures", "git_ref", "parallel_limit"],
             "common": [
                 "archive_tasks_latest",
                 "archive_tasks_default",
@@ -122,6 +187,7 @@ class ParsedOpts:
                 continue
 
             for key in required_keys:
+                # Generic check for other operational defaults
                 value = section.get(key)
                 if value is None or value == "":  # Check for None or empty string
                     errors.append(
@@ -146,6 +212,7 @@ class ParsedOpts:
                     "cloud_resources_tag",
                     "api_endpoint_url",
                     "log_artifact_baseurl",
+                    "composes_prod_url",
                 ],
             }
 
@@ -166,11 +233,77 @@ class ParsedOpts:
                     if not value:  # Empty string, None, or empty list/dict
                         errors.append(f"Missing required value: [{section_name}].{key}")
 
+            # Conditional requirements based on artifact usage (brew)
+            try:
+                brew_used = False
+                cli_brew = getattr(self.cli_args, "brew", None)
+                if cli_brew:
+                    brew_used = True
+                else:
+                    cli_sets = getattr(self.cli_args, "set", None)
+                    if cli_sets:
+                        sets_cfg = self.config.get("tests", {}).get("set", {})
+                        for set_name in cli_sets:
+                            set_brew_refs = (
+                                sets_cfg.get(set_name, {})
+                                .get("brew_api", {})
+                                .get("build_references")
+                            )
+                            if set_brew_refs:
+                                brew_used = True
+                                break
+                    else:
+                        top_brew_refs = self.config.get("brew_api", {}).get(
+                            "build_references"
+                        )
+                        if top_brew_refs:
+                            brew_used = True
+
+                if brew_used:
+                    brew_section = self.config.get("brew_api", {})
+                    if not isinstance(brew_section, dict):
+                        errors.append("[brew_api] section must be a dictionary")
+                    else:
+                        for key in ["session_url", "taskid_url"]:
+                            if not brew_section.get(key):
+                                provided_by_set = False
+                                cli_sets = getattr(self.cli_args, "set", None)
+                                if cli_sets:
+                                    sets_cfg = self.config.get("tests", {}).get(
+                                        "set", {}
+                                    )
+                                    for set_name in cli_sets:
+                                        if (
+                                            sets_cfg.get(set_name, {})
+                                            .get("brew_api", {})
+                                            .get(key)
+                                        ):
+                                            provided_by_set = True
+                                            break
+                                if not provided_by_set:
+                                    errors.append(
+                                        f"Missing required value: [brew_api].{key} (required when using brew artifacts)"
+                                    )
+            except Exception:
+                # Do not block on detection failures
+                pass
+
             if errors:
                 logger.critical("Required configuration validation failed:")
                 for error in errors:
                     logger.critical(f"  - {error}")
                 raise ConfigurationError("Required configuration missing")
+
+        # ReportPortal configuration required for the 'reportportal' subcommand
+        # Only require token here; URL/project may be provided elsewhere and are optional overrides in config
+        if getattr(self.cli_args, "action", None) == "reportportal":
+            rp_cfg = self.config.get("reportportal", {})
+            if not isinstance(rp_cfg, dict):
+                logger.critical("[reportportal] section must be a dictionary")
+                raise ConfigurationError("ReportPortal configuration invalid")
+            if not rp_cfg.get("token"):
+                logger.critical("Missing required value: [reportportal].token")
+                raise ConfigurationError("ReportPortal configuration missing")
 
     def _validate_static_configuration(self):
         """Validate all static configuration rules."""
@@ -208,34 +341,46 @@ class ParsedOpts:
         ):
             errors.append("[tests].context must be a dictionary")
 
-        # Validate architectures when not using --set mode.
-        # In set mode, architectures can be defined per-set and will be validated later.
-        architectures = self.tests.get("architectures")
+        # Validate architectures with priority: CLI > Set > Config
+        # - When using sets, per-set architectures are validated later during resolution
+        # - When not using sets, require architectures from CLI or config
+        cfg_architectures = self.tests.get("architectures")
+        cli_architectures = getattr(self.cli_args, "architectures", None)
         action = getattr(self.cli_args, "action", None)
         using_sets = action == "test" and bool(getattr(self.cli_args, "set", None))
-        # Only require top-level architectures when running 'test' without --set
-        if action == "test" and not using_sets:
-            if not architectures:
-                errors.append("No architectures configured in [tests] section!")
-            elif not isinstance(architectures, list):
-                errors.append("Architectures must be a list in [tests] section!")
-            elif not all(
-                isinstance(arch, str) and arch.strip() for arch in architectures
-            ):
-                errors.append(
-                    "All architectures must be non-empty strings in [tests] section!"
-                )
-        else:
-            # If provided at top-level while using sets, validate the type but don't require presence
-            if architectures is not None:
-                if not isinstance(architectures, list):
-                    errors.append("Architectures must be a list in [tests] section!")
-                elif not all(
-                    isinstance(arch, str) and arch.strip() for arch in architectures
-                ):
+
+        if action == "test":
+            if using_sets:
+                # Do not require top-level architectures; sets will supply them.
+                # If top-level are provided, validate type/content.
+                if cfg_architectures is not None:
+                    if not isinstance(cfg_architectures, list):
+                        errors.append(
+                            "Architectures must be a list in [tests] section!"
+                        )
+                    elif not all(
+                        isinstance(arch, str) and arch.strip()
+                        for arch in cfg_architectures
+                    ):
+                        errors.append(
+                            "All architectures must be non-empty strings in [tests] section!"
+                        )
+            else:
+                effective_architectures = cli_architectures or cfg_architectures
+                if not effective_architectures:
                     errors.append(
-                        "All architectures must be non-empty strings in [tests] section!"
+                        "No architectures configured. Provide --arch/--architectures, set [tests].architectures, or use --set with per-set architectures."
                     )
+                else:
+                    if not isinstance(effective_architectures, list):
+                        errors.append(
+                            "Architectures must be a list when provided via config or CLI."
+                        )
+                    elif not all(
+                        isinstance(arch, str) and arch.strip()
+                        for arch in effective_architectures
+                    ):
+                        errors.append("All architectures must be non-empty strings.")
 
         if errors:
             logger.critical("Static configuration validation failed:")
@@ -777,7 +922,10 @@ class ParsedOpts:
             if self.effective_tiers and len(self.effective_tiers) > 0:
                 first_tier = self.effective_tiers[0]
             self.tmt_context = generate_tmt_context(
-                self.source_spec, self.target_spec, tier=first_tier
+                self.source_spec,
+                self.target_spec,
+                event=effective_values.get("event"),
+                tier=first_tier,
             )
 
             # Merge context based on mode:

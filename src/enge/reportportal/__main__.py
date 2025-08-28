@@ -117,10 +117,16 @@ class ReportPortalLaunch:
             attributes = []
             for key, value in tmt_context.items():
                 if value is not None:  # Only include non-None values
-                    # Convert value to string and escape special characters if needed
                     str_value = str(value)
-                    # ReportPortal attributes format: key:value
                     attributes.append({"key": key, "value": str_value})
+
+            # Ensure arch gets through even if not in tmt_context yet
+            if (
+                context
+                and context.get("architecture")
+                and not any(a.get("key") == "arch" for a in attributes)
+            ):
+                attributes.append({"key": "arch", "value": context.get("architecture")})
 
             if attributes:
                 launch_data["attributes"] = attributes
@@ -510,7 +516,6 @@ class ReportPortalLaunch:
                     ):
                         latest_datetime = parsed_time
                         latest_timestamp = timestamp_str
-                        LOGGER.info(f"New latest timestamp: {timestamp_str}")
                         LOGGER.debug(f"New latest timestamp: {timestamp_str}")
 
             # If no timestamps found in attributes, look for <timestamp> elements

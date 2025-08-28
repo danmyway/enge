@@ -286,20 +286,20 @@ class SubmitTest:
             tmt_config = {"context": arch_tmt_context}
 
             # Handle ReportPortal environment variables for TMT
-            if reportportal_env_vars or getattr(parsed_opts.cli_args, "rp", False):
-                # If --rp is used, exclude TMT ReportPortal launch variables as enge creates the launch directly
-                if getattr(parsed_opts.cli_args, "rp", False):
+            if reportportal_env_vars or self.launch_uuid:
+                # If we created a launch (self.launch_uuid), exclude LAUNCH vars and set UPLOAD_TO_LAUNCH
+                if self.launch_uuid:
                     filtered_rp_vars = {}
                     for key, value in reportportal_env_vars.items():
-                        # Exclude launch and launch description variables when --rp is used
-                        # But keep UPLOAD_TO_LAUNCH as it tells TMT which launch to upload to
+                        # Exclude launch and launch description variables when enge manages launches
+                        # Keep UPLOAD_TO_LAUNCH if provided
                         if not (
                             key.endswith("LAUNCH") or key.endswith("LAUNCH_DESCRIPTION")
                         ) or key.endswith("UPLOAD_TO_LAUNCH"):
                             filtered_rp_vars[key] = value
 
                     # Add launch ID if available from ReportPortal launch creation
-                    # In dry run mode, show a placeholder UUID so users can see the complete payload structure
+                    # In dry run mode, use a placeholder UUID so the structure matches real runs
                     if self.launch_uuid or getattr(
                         parsed_opts.cli_args, "dryrun", False
                     ):
@@ -310,9 +310,9 @@ class SubmitTest:
                         upload_to_launch_key = (
                             f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
                         )
-                        # Use actual UUID or placeholder for dry run
+                        # Use actual UUID or deterministic placeholder for dry run
                         launch_uuid_value = (
-                            self.launch_uuid or "placeholder-launch-uuid-for-dryrun"
+                            self.launch_uuid or "00000000-0000-0000-0000-000000000000"
                         )
                         filtered_rp_vars[upload_to_launch_key] = launch_uuid_value
                         LOGGER.debug(

@@ -326,6 +326,11 @@ def process_request_spec(
 
     # Merge set-specific context first, then CLI --context to allow CLI to override per-set
     set_context = effective_values.get("context", {}) or {}
+    # Ensure event is present in TMT context when provided (so it appears in launch attributes and tmt.context)
+    if per_set_event:
+        temp_opts.tmt_context = merge_tmt_context(
+            temp_opts.tmt_context, {"event": per_set_event}
+        )
     if set_context:
         temp_opts.tmt_context = merge_tmt_context(temp_opts.tmt_context, set_context)
 
@@ -373,6 +378,10 @@ def process_request_spec(
         try:
             complete_tmt_context = submit_test.get_complete_tmt_context()
             complete_tmt_context.update(temp_opts.tmt_context)
+            # Ensure architecture is part of launch attributes
+            if arch:
+                complete_tmt_context["arch"] = arch
+
             launch_uuid = rp_create_launch(
                 context=rp_request_context,
                 tmt_context=complete_tmt_context,
@@ -380,14 +389,35 @@ def process_request_spec(
                 cli_args=resolved_opts.cli_args,
                 dryrun=getattr(resolved_opts.cli_args, "dryrun", False),
             )
-            if launch_uuid:
-                shortened_uuid = launch_uuid.replace("-", "")[:12]
-                shortened_uuid = f"{shortened_uuid[:8]}-{shortened_uuid[8:]}"
-                complete_tmt_context["uniq_id"] = shortened_uuid
-                submit_test.set_launch_uuid(launch_uuid)
-                submit_test.set_specific_data(
-                    [arch], merged_env_vars, complete_tmt_context
-                )
+            if launch_uuid or getattr(resolved_opts.cli_args, "dryrun", False):
+                # For dryrun, add deterministic uniq_id so payload shows expected attributes
+                if getattr(resolved_opts.cli_args, "dryrun", False):
+                    placeholder_uuid = "00000000-0000-0000-0000-000000000000"
+                    complete_tmt_context["uniq_id"] = "-".join(
+                        placeholder_uuid.split("-")[:2]
+                    )
+                else:
+                    complete_tmt_context["uniq_id"] = "-".join(
+                        launch_uuid.split("-")[:2]
+                    )
+
+                launch_uuid_effective = launch_uuid or placeholder_uuid
+                submit_test.set_launch_uuid(launch_uuid_effective)
+                # Ensure RP env uses UPLOAD_TO_LAUNCH and omits LAUNCH variables
+                from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+
+                rp_env = {
+                    k: v
+                    for (k, v) in merged_env_vars.items()
+                    if not (
+                        k.startswith(TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX)
+                        and (k.endswith("LAUNCH") or k.endswith("LAUNCH_DESCRIPTION"))
+                    )
+                }
+                upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
+                rp_env[upload_key] = launch_uuid_effective
+
+                submit_test.set_specific_data([arch], rp_env, complete_tmt_context)
         except Exception as e:
             LOGGER.error(f"Failed to create ReportPortal launch for request {idx}: {e}")
 
