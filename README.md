@@ -128,6 +128,7 @@ For brew builds you can provide either the NVR (e.g. leapp-0.16.0-1.el9) or the 
 Multiple `--plan` options can be specified and will be dispatched in separate jobs.
 `--tier` options allow you to run predefined test tiers from your configuration.
 `--set` options allow you to use pre-configured test sets (see Test Sets section below).
+`--set-regex` allows selecting multiple test sets by Python regular expression (expanded to concrete set names before validation).
 **Plan Override Behavior:** When using `--plan` with `--tier` or `--set`, the CLI plans override any `plans` defined in configuration or test sets.
 When using `--planfilter` or `--test` to specify singular test it is disallowed to request multiple `--plan` options in one command.<br>
 Use `--wait` if waiting for a successful response from the endpoint is required.
@@ -158,6 +159,12 @@ enge test --copr pr123 --tier tier0 --tier tier1
 
 # Test using a predefined test set
 enge test --set pre-release-smoke
+
+# Select multiple sets by regex (names under [tests.set.<name>])
+enge test --set-regex '^pre-release-.*'
+
+# Combine exact and regex selection (deduplicated, order preserved)
+enge test --set pre-release-smoke --set-regex 'regression-[0-9]+'
 
 # Test with custom tags for archiving
 enge test --copr pr123 --tier tier0 --set-tag regression --set-tag pr123
@@ -225,10 +232,26 @@ When a test set defines multiple tiers and architectures, a separate payload is 
 **Usage:**
 - Use `--set <set-name>` to run a predefined test set
 - Multiple sets can be specified: `--set set1 --set set2`
+- Use `--set-regex <regex>` to select sets by name using Python regular expressions; can be specified multiple times
 - CLI arguments override test set configurations when provided
 - Test sets can define plans, artifacts, environment variables, and test selection criteria
 - When using `--plan` with `--set`, CLI plans completely override any plans defined in the test set
 - The `--source` argument is not required when using `--set` (it's defined in the set configuration)
+
+`--set-regex` behavior:
+- Matches against names defined under `[tests.set.<name>]` in configuration
+- Each regex expands to all matching set names; expansions are logged for visibility
+- Combined with `--set`, results are merged, order-preserved, and de-duplicated
+- Invalid patterns or patterns that match nothing cause a clear error listing available sets
+
+Examples:
+```bash
+# Run all regression sets like regression-1, regression-2, ...
+enge test --set-regex 'regression-[0-9]+$'
+
+# Combine with exact set
+enge test --set smoke --set-regex 'regression-.*'
+```
 
 **Priority Order:**
 - CLI arguments > Test Set configuration > Main configuration
