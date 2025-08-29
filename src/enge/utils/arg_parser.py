@@ -119,6 +119,17 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     test.add_argument(
+        "--set-regex",
+        action="append",
+        metavar="REGEX",
+        help=(
+            "Regular expression to select test sets by name. "
+            "Matches against names under [tests.set.<name>] (Python regex). "
+            "Can be specified multiple times; expands to concrete set names before validation."
+        ),
+    )
+
+    test.add_argument(
         "--plan",
         action="append",
         help=(

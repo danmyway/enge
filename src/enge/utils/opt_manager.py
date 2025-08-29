@@ -1,5 +1,6 @@
 # #!/usr/bin/env python3
 import logging
+import re
 import os
 import sys
 from typing import Dict, List, Any, Optional, Callable
@@ -54,6 +55,9 @@ class ParsedOpts:
         )
         self.config = load_config(paths=config_paths)
 
+        # Expand --set-regex into concrete set names before any validation
+        self._expand_set_regex_arguments()
+
         # Centralized validation - this replaces all scattered validation
         self._validate_all_options()
 
@@ -98,6 +102,87 @@ class ParsedOpts:
         self._register_runtime_validation_hooks()
 
         logger.debug("Centralized validation completed successfully")
+
+    def _expand_set_regex_arguments(self) -> None:
+        """Expand --set-regex patterns into concrete set names.
+
+        This runs after configuration load and before validation so that
+        existing validation and dispatch logic operates on resolved set names.
+        """
+        try:
+            action = getattr(self.cli_args, "action", None)
+            if action != "test":
+                return
+            patterns = getattr(self.cli_args, "set_regex", None)
+            if not patterns:
+                return
+
+            tests_section = (
+                self.config.get("tests", {}) if hasattr(self.config, "get") else {}
+            )
+            available_sets_dict = (
+                tests_section.get("set", {}) if isinstance(tests_section, dict) else {}
+            )
+            available_sets = (
+                list(available_sets_dict.keys())
+                if isinstance(available_sets_dict, dict)
+                else []
+            )
+
+            if not available_sets:
+                raise ValidationError(
+                    "No test sets configured; --set-regex cannot be used."
+                )
+
+            # Start with any explicitly provided --set values
+            resolved_sets = []
+            explicit_sets = getattr(self.cli_args, "set", None) or []
+            for name in explicit_sets:
+                if name not in resolved_sets:
+                    resolved_sets.append(name)
+
+            errors: List[str] = []
+
+            for pattern in patterns:
+                try:
+                    regex = re.compile(pattern)
+                except re.error as e:
+                    errors.append(f"Invalid --set-regex pattern '{pattern}': {e}")
+                    continue
+
+                matched = [name for name in available_sets if regex.search(name)]
+                if not matched:
+                    errors.append(
+                        f"--set-regex pattern '{pattern}' matched no sets. Available: {available_sets}"
+                    )
+                    continue
+
+                for name in matched:
+                    if name not in resolved_sets:
+                        resolved_sets.append(name)
+
+                logger.info(
+                    "--set-regex '%s' expanded to: %s",
+                    pattern,
+                    ", ".join(matched),
+                )
+
+            if errors:
+                for err in errors:
+                    logger.error(err)
+                raise ValidationError(
+                    "One or more --set-regex patterns were invalid or matched nothing"
+                )
+
+            # Replace CLI --set with expanded list
+            setattr(self.cli_args, "set", resolved_sets)
+
+        except Exception as e:
+            # Surface as validation error for consistent handling
+            if isinstance(e, (ValidationError, ConfigurationError)):
+                raise
+            logger.critical(f"Failed to process --set-regex: {e}")
+            raise ValidationError("Failed to process --set-regex")
 
     def _validate_effective_configuration(self):
         """Validate required values after resolving effective configuration.
