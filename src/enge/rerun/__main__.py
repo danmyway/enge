@@ -1,15 +1,18 @@
 import logging
 import os
 import sys
+from typing import Optional, Dict, Any
 
-import requests
+from enge.utils.http_client import http_get
 from prettytable import PrettyTable
 
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks, parse_request_xunit
-from enge.utils.globals import TESTING_FARM_ENDPOINT
 from enge.utils.opt_manager import parsed_opts
+from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT
 from enge.utils import FormatText
+from enge.utils.reportportal_helper import create_launch as rp_create_launch
+from enge.utils.globals import RP_COMPATIBLE_EVENT
 
 colorize = FormatText()
 
@@ -64,9 +67,11 @@ class RerunJobs:
             result_filter = ["SKIPPED"]  # We want to filter out skipped plans
 
             if parsed_opts.cli_args.error:
-                result_filter.extend("FAILED")
+                # Keep only ERROR results (exclude FAILED)
+                result_filter.append("FAILED")
             elif parsed_opts.cli_args.fail:
-                result_filter.extend("ERROR")
+                # Keep only FAILED results (exclude ERROR)
+                result_filter.append("ERROR")
 
             # Filter test suites based on the result filter
             filtered_suites = [
@@ -83,7 +88,6 @@ class RerunJobs:
 
         # Log and display qualifying plans for a re-run
         if self.processed_data:
-            print(self.processed_data)
             info_table = PrettyTable()
             info_table.field_names = [
                 "Original Request",
@@ -91,29 +95,28 @@ class RerunJobs:
                 "Arch",
                 "Re-run Plans",
             ]
-            if not parsed_opts.cli_args.showarch:
-                info_table.field_names.pop(2)
 
             logger.info("The following plans qualify for a re-run:")
             for req in self.processed_data.keys():
-                rerun_plans = "\n".join(self.processed_data.get(req)[0].split("|"))
-                rerun_target = self.processed_data.get(req)[1]
-                row = [req, rerun_target, rerun_plans]
-                if parsed_opts.cli_args.showarch:
-                    rerun_arch = "placeholder_arch"
-                    row = [req, rerun_target, rerun_arch, rerun_plans]
+                data = self.processed_data[
+                    req
+                ]  # Use direct access since we're iterating over keys
+                rerun_plans = "\n".join(data[0].split("|"))
+                rerun_target = data[1]
+                rerun_arch = "placeholder_arch"
+                row = [req, rerun_target, rerun_arch, rerun_plans]
 
                 info_table.add_row(row, divider=True)
             info_table.align = "l"
             print(info_table)
             if parsed_opts.cli_args.dryrun:
-                sys.exit(0)
+                return
         else:
             logger.info("None of the provided tasks qualify for a re-run.")
             logger.debug(
                 colorize.format_text(
                     "All the results seem to be PASSing, time to celebrate! \U0001f389",
-                    text_col=colorize.green,
+                    text_col=colorize.GREEN,
                     bold=True,
                 )
             )
@@ -133,7 +136,12 @@ class RerunJobs:
 
         for request in uuids:
             # Fetch the task details from the API
-            response = requests.get(os.path.join(TESTING_FARM_ENDPOINT, request))
+            response = http_get(
+                os.path.join(
+                    str(parsed_opts.testing_farm_endpoint.api_endpoint_url), request
+                ),
+                timeout=REQUEST_TIMEOUT_DEFAULT,
+            )
             request_details = response.json()
 
             match_uuid = request_details.get("id")
@@ -144,7 +152,9 @@ class RerunJobs:
                 logger.critical(
                     "Cowardly refusing to continue due to the inability to correctly assign environments to failed plans."
                 )
-                sys.exit(99)
+                from enge.utils.errors import ValidationError
+
+                raise ValidationError("Multiple environments in original task")
 
             # Determine the test plan to use for re-run based on the task state
             if request_details.get("state") == "error":
@@ -192,11 +202,33 @@ class RerunJobs:
         return self.rerun_payloads
 
 
+def _maybe_create_rp_launch(context: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    event_name = getattr(parsed_opts.cli_args, "event", None)
+    if not event_name:
+        # Fall back to a generic rerun event label if not provided
+        event_name = "rerun"
+    if event_name not in RP_COMPATIBLE_EVENT:
+        return None
+    return rp_create_launch(
+        context=context,
+        tmt_context=None,
+        config=parsed_opts.config,
+        cli_args=parsed_opts.cli_args,
+        dryrun=getattr(parsed_opts.cli_args, "dryrun", False),
+    )
+
+
 def main():
     """
     Main function to qualify tasks for re-run, build their re-run payloads,
     and submit the requests via the Testing Farm API.
     """
+    # Handle ReportPortal launch creation if requested (with minimal context for rerun)
+    rerun_context = {
+        "set_name": "rerun",  # Indicate this is a rerun operation
+    }
+    reportportal_launch_uuid = _maybe_create_rp_launch(rerun_context)
+
     jobs = RerunJobs()
     submit = SubmitTest()
 

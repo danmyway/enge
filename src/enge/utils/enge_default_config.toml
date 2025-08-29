@@ -1,0 +1,120 @@
+# ============================================================================
+# ENGE Default Configuration
+# ============================================================================
+# This file provides sensible defaults for all configuration options used by enge.
+# - User configuration files (enge.toml) override these defaults.
+# - Use this file as a reference for available keys and default values.
+# ============================================================================
+version = '2025.08.27'
+
+# ============================================================================
+# COMMON (Global paths and storage locations - defaults)
+# - Controls where enge stores job IDs, archives, and downloaded logs
+# - INFO: These values act as defaults and can be overridden in user enge.toml
+# ============================================================================
+[common]
+archive_tasks_latest = '/tmp/enge_latest_jobs'
+archive_tasks_default = '~/.enge/jobs_archive/'
+logs_directory = '/var/tmp/enge/logs/'
+post_install_script = '#!/bin/sh\\nsudo sed -i s/.*ssh-rsa/ssh-rsa/ /root/.ssh/authorized_keys'
+
+
+# ============================================================================
+# PROJECT (Repository metadata)
+# - Identifies the project under test; used as defaults across settings
+# - INFO: This section will be eventually deprecated and removed
+# ============================================================================
+[project]
+name = 'leapp'
+owner = 'oamg'
+repo_url = 'https://github.com/oamg/leapp'
+
+
+# ============================================================================
+# TESTING_FARM (Credentials, endpoints, and compose mapping)
+# - API credentials and endpoints required to submit and read jobs
+# - REQUIRED: cloud_resources_tag, api_endpoint_url, log_artifact_baseurl, composes_prod_url
+# - INFO: composes_prod_url is used for compose pinning/validation
+# ============================================================================
+[testing_farm]
+cloud_resources_tag = '' # REQUIRED
+api_endpoint_url = '' # REQUIRED: The Testing Farm API endpoint URL
+log_artifact_baseurl = '' # REQUIRED: The base URL for log artifacts
+composes_prod_url = '' # REQUIRED: URL for compose translation service (used for pinning composes)
+
+
+# ============================================================================
+# COPR_API (Copr build settings for artifacts)
+# - Owner/repo/package resolution and optional build references
+# - WARNING: Useless at this point, the copr rpm testing is broken, will be reconsidered in the future
+# ============================================================================
+[copr_api]
+owner = ''
+owner_is_group = true
+repository = ''
+package = ''
+build_references = []
+
+
+# ============================================================================
+# BREW_API (Brew build settings for artifacts)
+# - Endpoints for links/API
+# - REQUIRED: session_url, taskid_url
+# ============================================================================
+[brew_api]
+session_url = '' # REQUIRED: URL for brew session API
+taskid_url = '' # REQUIRED: URL for brew taskid URL builder
+
+
+# ============================================================================
+# REPORTPORTAL (Launch and upload configuration)
+# - REQUIRED:
+#   - url
+#   - project
+# ============================================================================
+[reportportal]
+url = '' # REQUIRED - for correct functioning of the 'enge rp' commands and launch generation
+project = '' # REQUIRED - for correct functioning of the 'enge rp' commands and launch generation
+
+# ============================================================================
+# TESTS (Test suite source and execution scope)
+# - Where tests live and how to fan out plans/architectures
+# - INFO: git_url/git_ref/parallel_limit are defaults; override in user enge.toml
+# - INFO: source/target to be defined in user enge.toml or --source/--target (if target not autoderivable)
+# - REQUIRED:
+#    - git_url
+#    - git_ref
+# ============================================================================
+[tests]
+git_url = '' # REQUIRED: URL to tests metadata repository
+git_ref = 'main' # REQUIRED: Git ref (branch/tag/commit) to checkout test suite from
+
+
+# ---------------------------------------------------------------------------
+# TESTS.TIER (Tier mapping for plan_filter generation)
+# - The filter defined here is combined with the derived upgrade path and the base 'enabled:true' filter
+# - Example: tier-smoke = 'tag:smoke' -> plan_filter: 'tag:8to9 & tag:smoke & enabled:true'
+# - REQUIRED: The full section is required for proper functionality
+# ---------------------------------------------------------------------------
+[tests.tier]
+tier0 = 'tag:tier[0]'
+tier1 = 'tag:tier[01]'
+tier2 = 'tag:tier[012]'
+tier3 = 'tag:tier[0123]'
+tier0only = 'tag:tier0'
+tier1only = 'tag:tier1'
+tier2only = 'tag:tier2'
+tier3only = 'tag:tier3'
+rhui-aws-tier0 = 'tag:rhui-aws-tier0'
+rhui-aws-sap-e4s-tier0 = 'tag:rhui-aws-sap-e4s-tier0'
+rhui-azure-tier0 = 'tag:rhui-azure-tier0'
+
+
+# ---------------------------------------------------------------------------
+# TESTS.SET (Pre-configured test sets)
+# - Define source/target/tiers/architectures/artifacts per set
+# - Specific CLI arguments override set configuration when provided
+# - Launch naming format: (EVENT_NAME|SET_NAME)~UPGRADE_PATH~YYYY-MM-DD~ARCH
+# - REQUIRED: The whole section is pre-defined batch of various lifecycle event sets
+# ---------------------------------------------------------------------------
+[tests.set]

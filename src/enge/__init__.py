@@ -3,7 +3,6 @@
 import logging
 
 from enge.utils import FormatText
-from enge.utils.arg_parser import args
 
 
 class ColorizedFormatter(logging.Formatter):
@@ -12,40 +11,24 @@ class ColorizedFormatter(logging.Formatter):
 
         if record.levelname == "WARNING":
             log_message = FormatText.format_text(
-                log_message, text_col=FormatText.yellow
+                log_message, text_col=FormatText.YELLOW
             )
         elif record.levelname == "ERROR":
             log_message = FormatText.format_text(
-                log_message, text_col=FormatText.red, bold=True
+                log_message, text_col=FormatText.RED, bold=True
             )
         elif record.levelname == "CRITICAL":
-            log_message = FormatText.format_text(log_message, text_col=FormatText.red)
+            log_message = FormatText.format_text(log_message, text_col=FormatText.RED)
         elif record.levelname == "DEBUG":
-            log_message = FormatText.format_text(log_message)
+            log_message = FormatText.format_text(log_message, text_col=FormatText.DIM)
         elif record.levelname == "INFO":
             log_message = FormatText.format_text(log_message)
 
         return log_message
 
 
-loglevel = logging.INFO
+# Library-safe: do not configure global logging here. CLI entrypoints handle setup.
 logformat = "%(levelname)-8s | %(message)s"
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("requests_gssapi").setLevel(logging.WARNING)
-
-
-if args.debug:
-    loglevel = logging.DEBUG
-
-logging.basicConfig(
-    level=loglevel,
-    format=logformat,
-)
-
-logger = logging.getLogger()
-
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(ColorizedFormatter(logformat))
-
-logger.handlers = []
-logger.addHandler(console_handler)
+logging.getLogger("koji").setLevel(logging.WARNING)

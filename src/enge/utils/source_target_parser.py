@@ -1,0 +1,945 @@
+#!/usr/bin/env python3
+"""
+Source and target parser utilities for enge.
+
+This module provides functions to parse source and target specifications
+and derive all necessary values for Testing Farm payloads.
+"""
+
+import re
+from typing import Dict, Tuple, Optional, Any, List
+from logging import getLogger
+
+from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+from enge.utils.errors import ValidationError
+
+LOGGER = getLogger(__name__)
+
+
+def parse_compose_spec(
+    spec: str, config: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Parse a compose specification into its components.
+
+    Args:
+        spec: Either a version string like "8.10" or full compose name like "RHEL-8.10.0-Nightly"
+        config: Configuration dictionary (optional, will be loaded if not provided)
+
+    Returns:
+        Dictionary containing parsed components:
+        - major: Major version number
+        - minor: Minor version number
+        - compose_name: Full compose name (translated via pin_compose if needed)
+        - is_version_only: True if input was just version, False if full compose name
+
+    Raises:
+        ValueError: If the specification format is invalid
+    """
+    # Load config if not provided
+    if config is None:
+        from enge.utils.config_parser import load_config
+        from enge.utils.globals import DEFAULT_USER_CONFIG_PATHS
+
+        config = load_config(paths=list(DEFAULT_USER_CONFIG_PATHS))
+
+    # Try parsing as version number first (e.g., "8.10")
+    version_match = re.match(r"^(\d+)\.(\d+)$", spec.strip())
+    if version_match:
+        major = int(version_match.group(1))
+        minor = int(version_match.group(2))
+
+        # Use pin_compose to translate the compose with fallback logic
+        from enge.dispatch.pin_compose import _pin_compose_with_fallback
+
+        composes_prod_url = config.get("testing_farm", {}).get("composes_prod_url", "")
+
+        if composes_prod_url:
+            try:
+                translated_compose = _pin_compose_with_fallback(
+                    major, minor, composes_prod_url
+                )
+                LOGGER.debug(
+                    f"Translated compose for {major}.{minor} to {translated_compose}"
+                )
+                compose_name = translated_compose
+            except Exception as e:
+                LOGGER.warning(
+                    f"Failed to translate compose for {major}.{minor}: {e}. Using fallback."
+                )
+                # Fallback to standard format
+                compose_name = f"RHEL-{major}.{minor}.0-Nightly"
+        else:
+            LOGGER.debug(
+                "composes_prod_url not configured, using standard compose name"
+            )
+            compose_name = f"RHEL-{major}.{minor}.0-Nightly"
+
+        return {
+            "major": major,
+            "minor": minor,
+            "compose_name": compose_name,
+            "is_version_only": True,
+        }
+
+    # Try parsing as full compose name (e.g., "RHEL-8.10.0-Nightly")
+    compose_match = re.match(r"^RHEL-(\d+)\.(\d+)\.(\d+)-(.+)$", spec.strip())
+    if compose_match:
+        major = int(compose_match.group(1))
+        minor = int(compose_match.group(2))
+        # For compose names, validate them against COMPOSES_PROD_URL
+
+        from enge.dispatch.pin_compose import _pin_compose
+
+        compose_name = spec.strip()
+        composes_prod_url = config.get("testing_farm", {}).get("composes_prod_url", "")
+
+        if composes_prod_url:
+            try:
+                # Use _pin_compose for validation - it will exit if compose is not found
+                validated_compose = _pin_compose(compose_name, composes_prod_url)
+                LOGGER.debug(
+                    f"Validated compose {compose_name} against COMPOSES_PROD_URL"
+                )
+                compose_name = validated_compose
+            except Exception as e:
+                LOGGER.warning(
+                    f"Failed to validate compose {compose_name}: {e}. Using as provided."
+                )
+
+        return {
+            "major": major,
+            "minor": minor,
+            "compose_name": compose_name,
+            "is_version_only": False,
+        }
+
+    # If neither pattern matches, raise an error
+    raise ValueError(f"Invalid compose specification: {spec}")
+
+
+def derive_target_from_source(source_spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Derive target specification from source specification.
+
+    Args:
+        source_spec: Source specification dictionary from parse_compose_spec
+
+    Returns:
+        Dictionary containing target specification:
+        - major: Target major version (source_major + 1)
+        - minor: Target minor version (source_minor - 6)
+        - compose_name: Target compose name
+        - is_version_only: True if derived from version, False if from compose name
+    """
+    target_major = source_spec["major"] + 1
+    target_minor = max(0, source_spec["minor"] - 6)  # Ensure non-negative
+
+    # Always create compose name for target
+    target_compose_name = f"RHEL-{target_major}.{target_minor}.0-Nightly"
+
+    return {
+        "major": target_major,
+        "minor": target_minor,
+        "compose_name": target_compose_name,
+        "is_version_only": source_spec["is_version_only"],
+    }
+
+
+def generate_upgrade_path_alias(
+    source_spec: Dict[str, Any], target_spec: Dict[str, Any]
+) -> str:
+    """
+    Generate upgrade path alias from source and target specifications.
+
+    Args:
+        source_spec: Source specification dictionary
+        target_spec: Target specification dictionary
+
+    Returns:
+        Upgrade path alias string (e.g., "8to9")
+    """
+    return f"{source_spec['major']}to{target_spec['major']}"
+
+
+def generate_environment_variables(
+    source_spec: Dict[str, Any],
+    target_spec: Dict[str, Any],
+    has_copr: bool = False,
+    has_brew: bool = False,
+) -> Dict[str, str]:
+    """
+    Generate environment variables for the Testing Farm payload.
+
+    Args:
+        source_spec: Source specification dictionary
+        target_spec: Target specification dictionary
+        has_copr: Whether --copr is specified
+        has_brew: Whether --brew is specified
+
+    Returns:
+        Dictionary of environment variables
+    """
+    env_vars = {
+        "SOURCE_RELEASE": f"{source_spec['major']}.{source_spec['minor']}",
+        "TARGET_RELEASE": f"{target_spec['major']}.{target_spec['minor']}",
+    }
+
+    # Add INSTALL_LEAPP_FROM_COMPOSE=yes only if neither --copr nor --brew is specified
+    if not has_copr and not has_brew:
+        env_vars["INSTALL_LEAPP_FROM_COMPOSE"] = "yes"
+    else:
+        env_vars["INSTALL_LEAPP_FROM_COMPOSE"] = "no"
+
+    return env_vars
+
+
+def generate_tmt_context(
+    source_spec: Dict[str, Any],
+    target_spec: Dict[str, Any],
+    event: Optional[str] = None,
+    tier: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Generate TMT context for the Testing Farm payload.
+
+    Args:
+        source_spec: Source specification dictionary
+        target_spec: Target specification dictionary
+        event: Event type (optional)
+        tier: Test tier (optional)
+
+    Returns:
+        Dictionary of TMT context variables (arch will be set per environment).
+        Note: Brew artifact NVRs are automatically added later during payload building
+        in the format package_name: version-release (e.g., leapp: 0.16.0-1.el9).
+    """
+    context = {
+        "distro": f"rhel-{source_spec['major']}.{source_spec['minor']}",
+        "target_distro": f"rhel-{target_spec['major']}.{target_spec['minor']}",
+        "source_compose": source_spec.get("compose_name", ""),
+        "upgrade_path": f"{source_spec['major']}to{target_spec['major']}",
+    }
+
+    # Add optional context fields if provided
+    if event:
+        context["event"] = event
+    if tier:
+        context["tier"] = tier
+
+    return context
+
+
+def parse_environment_variables(env_args: Optional[list] = None) -> Dict[str, str]:
+    """
+    Parse environment variables from command line arguments.
+
+    Args:
+        env_args: List of environment variable strings in "VAR=VAL" format
+
+    Returns:
+        Dictionary of parsed environment variables
+
+    Raises:
+        ValueError: If any environment variable is not in correct format
+    """
+    env_vars = {}
+
+    if not env_args:
+        return env_vars
+
+    for env_arg in env_args:
+        if "=" not in env_arg:
+            raise ValueError(
+                f"Invalid environment variable format: {env_arg}. Expected VAR=VAL format."
+            )
+
+        var_name, var_value = env_arg.split(
+            "=", 1
+        )  # Split only on first '=' to handle values with '='
+        var_name = var_name.strip()
+        var_value = var_value.strip()
+
+        if not var_name:
+            raise ValueError(f"Empty variable name in: {env_arg}")
+
+        env_vars[var_name] = var_value
+        LOGGER.debug(f"Parsed environment variable: {var_name}={var_value}")
+
+    return env_vars
+
+
+def parse_tmt_context(context_args: Optional[list] = None) -> Dict[str, Any]:
+    """
+    Parse TMT context key-value pairs from command line arguments.
+
+    Args:
+        context_args: List of strings in "KEY=VAL" format
+
+    Returns:
+        Dictionary of parsed context values
+
+    Raises:
+        ValueError: If any item is not in correct KEY=VAL format
+    """
+    context: Dict[str, Any] = {}
+
+    if not context_args:
+        return context
+
+    for item in context_args:
+        if "=" not in item:
+            raise ValueError(
+                f"Invalid context format: {item}. Expected KEY=VAL format."
+            )
+        key, value = item.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            raise ValueError(f"Empty context key in: {item}")
+        # Keep values as strings to align with Testing Farm/TMT expectations
+        if key in context and context[key] != value:
+            LOGGER.warning(
+                f"TMT context '{key}' overridden by CLI duplicate: {context[key]} -> {value}"
+            )
+        context[key] = value
+        LOGGER.debug(f"Parsed TMT context: {key}={value}")
+
+    return context
+
+
+def merge_tmt_context(
+    base_context: Dict[str, Any], cli_context: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Merge CLI-provided TMT context into the base context with warnings.
+
+    Args:
+        base_context: Generated base context (e.g., from source/target specs)
+        cli_context: Context provided via --context KEY=VAL flags
+
+    Returns:
+        Merged context dictionary (base modified copy)
+    """
+    merged = dict(base_context) if base_context else {}
+
+    for key, value in (cli_context or {}).items():
+        if key in merged and merged[key] != value:
+            LOGGER.warning(
+                f"TMT context '{key}' overridden by CLI: {merged[key]} -> {value}"
+            )
+        merged[key] = value
+
+    return merged
+
+
+def merge_environment_variables(
+    auto_env_vars: Dict[str, str], cli_env_vars: Dict[str, str]
+) -> Dict[str, str]:
+    """
+    Merge automatically generated environment variables with CLI-provided ones.
+    CLI variables take precedence over automatic ones.
+
+    Args:
+        auto_env_vars: Automatically generated environment variables
+        cli_env_vars: Environment variables from CLI --environment option
+
+    Returns:
+        Merged environment variables dictionary
+    """
+    merged_vars = auto_env_vars.copy()
+    merged_vars.update(cli_env_vars)  # CLI vars override automatic ones
+
+    return merged_vars
+
+
+def parse_architectures(arch_input: List[str]) -> List[str]:
+    """
+    Parse architecture specification from command line or config.
+
+    Args:
+        arch_input: Architecture specification (must be a list of strings)
+
+    Returns:
+        List of architectures
+
+    Raises:
+        ValueError: If arch_input is empty or invalid
+
+    Examples:
+        >>> parse_architectures(["x86_64"])
+        ['x86_64']
+        >>> parse_architectures(["x86_64", "aarch64"])
+        ['x86_64', 'aarch64']
+    """
+    if not arch_input:
+        raise ValueError("Architecture specification cannot be empty")
+
+    if not isinstance(arch_input, list):
+        raise ValueError("Architecture specification must be a list of strings")
+
+    architectures = [arch.strip() for arch in arch_input if arch and arch.strip()]
+
+    if not architectures:
+        raise ValueError("No valid architectures found in specification")
+
+    LOGGER.debug(f"Parsed architectures: {architectures}")
+    return architectures
+
+
+def generate_tier_plan_filter(
+    tiers: List[str], tier_config: Dict[str, str], upgrade_path: str
+) -> str:
+    """
+    Generate plan_filter from tier specifications.
+    If no tiers are provided, return the upgrade path filter and enabled:true.
+
+    Args:
+        tiers: List of tier names from CLI
+        tier_config: Tier configuration mapping from config
+        upgrade_path: Upgrade path alias (e.g., "8to9")
+
+    Returns:
+        Combined plan_filter string
+
+    Raises:
+        ValueError: If tier is not found in configuration
+
+    Examples:
+        >>> generate_tier_plan_filter(["tier-smoke"], {"tier-smoke": "tag:smoke"}, "8to9")
+        'tag:8to9 & tag:smoke & enabled:true'
+        >>> generate_tier_plan_filter([], None, "8to9")
+        'tag:8to9 & enabled:true'
+    """
+    if not tiers:
+        return f"tag:{upgrade_path} & enabled:true"
+
+    # Look up tier mappings
+    tier_filters = []
+    for tier in tiers:
+        if tier not in tier_config:
+            available_tiers = list(tier_config.keys())
+            raise ValueError(
+                f"Tier '{tier}' not found in configuration. Available tiers: {available_tiers}"
+            )
+
+        tier_filter = tier_config[tier]
+        tier_filters.append(tier_filter)
+        LOGGER.debug(f"Mapped tier '{tier}' to filter '{tier_filter}'")
+
+    # Combine upgrade path with tier filters using & operator
+    all_filters = [f"tag:{upgrade_path}"] + tier_filters + ["enabled:true"]
+    combined_filter = " & ".join(all_filters)
+
+    return combined_filter
+
+
+def parse_source_target_config(
+    source: str, target: Optional[str] = None, config: Optional[Dict[str, Any]] = None
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Parse source and target configurations, deriving target if not provided.
+
+    Args:
+        source: Source specification string
+        target: Optional target specification string
+        config: Configuration dictionary (optional, will be loaded if not provided)
+
+    Returns:
+        Tuple of (source_spec, target_spec) dictionaries
+
+    Raises:
+        ValueError: If source or target specifications are invalid
+    """
+    LOGGER.debug(
+        f"Parsing source: {source}, target: {target or 'the default will be derived'}"
+    )
+
+    try:
+        source_spec = parse_compose_spec(source, config)
+        LOGGER.debug(f"Parsed source spec: {source_spec}")
+
+        if target:
+            target_spec = parse_compose_spec(target, config)
+            LOGGER.debug(f"Parsed target spec: {target_spec}")
+        else:
+            target_spec = derive_target_from_source(source_spec)
+            LOGGER.debug(f"Derived target spec: {target_spec}")
+
+        return source_spec, target_spec
+
+    except ValueError as e:
+        LOGGER.error(f"Failed to parse source/target configuration: {e}")
+        raise
+
+
+def parse_test_sets(set_names: List[str], config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Parse and merge test set configurations.
+
+    Args:
+        set_names: List of test set names to load
+        config: Configuration dictionary containing test sets
+
+    Returns:
+        Merged configuration dictionary from all specified sets
+
+    Raises:
+        ValueError: If any test set is not found in configuration
+    """
+    if not set_names:
+        return {}
+
+    # Get test sets from config
+    test_sets = config.get("tests", {}).get("set", {})
+
+    merged_config = {}
+
+    for set_name in set_names:
+        if set_name not in test_sets:
+            available_sets = list(test_sets.keys())
+            raise ValueError(
+                f"Test set '{set_name}' not found in configuration. Available sets: {available_sets}"
+            )
+
+        set_config = test_sets[set_name]
+        LOGGER.debug(f"Loading test set '{set_name}': {set_config}")
+
+        # Merge this set's configuration
+        merged_config = merge_test_set_config(merged_config, set_config)
+
+    LOGGER.debug(f"Merged test set configuration: {merged_config}")
+    return merged_config
+
+
+def merge_test_set_config(
+    base_config: Dict[str, Any], set_config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Merge test set configuration with base configuration.
+
+    Args:
+        base_config: Base configuration dictionary
+        set_config: Test set configuration to merge
+
+    Returns:
+        Merged configuration dictionary
+    """
+    merged = base_config.copy()
+
+    for key, value in set_config.items():
+        if key in ["copr_api", "brew_api", "environment", "reportportal"]:
+            # These are nested dictionaries that should be merged
+            if key not in merged:
+                merged[key] = {}
+            merged[key].update(value)
+        elif key == "tiers":
+            # Tiers should be combined (not replaced)
+            if "tiers" not in merged:
+                merged["tiers"] = []
+            merged["tiers"].extend(value)
+        else:
+            # Other keys are replaced (last set wins)
+            merged[key] = value
+
+    return merged
+
+
+def resolve_effective_values(
+    cli_args: Any, set_config: Dict[str, Any], config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Resolve effective values from CLI args, test sets, and config.
+    Priority: CLI > Test Set > Config
+
+    Args:
+        cli_args: CLI arguments object
+        set_config: Test set configuration
+        config: Main configuration
+
+    Returns:
+        Dictionary of resolved values
+    """
+    resolved = {}
+
+    # Resolve source (CLI > Set > Config)
+    resolved["source"] = (
+        getattr(cli_args, "source", None)
+        or set_config.get("source")
+        or config.get("tests", {}).get("source")
+    )
+
+    # Resolve target (CLI > Set > Config)
+    resolved["target"] = (
+        getattr(cli_args, "target", None)
+        or set_config.get("target")
+        or config.get("tests", {}).get("target")
+    )
+
+    # Resolve architectures (CLI > Set > Config)
+    resolved["architectures"] = (
+        getattr(cli_args, "architectures", None)
+        or set_config.get("architectures")
+        or config.get("tests", {}).get("architectures")
+    )
+
+    # Resolve git ref (CLI > Set > Config)
+    resolved["git_ref"] = (
+        getattr(cli_args, "git_ref", None)
+        or set_config.get("git_ref")
+        or config.get("tests", {}).get("git_ref")
+    )
+
+    # Resolve git url (CLI > Set > Config)
+    resolved["git_url"] = (
+        getattr(cli_args, "git_url", None)
+        or set_config.get("git_url")
+        or config.get("tests", {}).get("git_url")
+    )
+
+    # Resolve parallel limit (CLI > Set > Config)
+    cli_parallel = getattr(cli_args, "parallel_limit", None)
+    if cli_parallel is not None:
+        resolved["parallel_limit"] = cli_parallel
+    else:
+        resolved["parallel_limit"] = set_config.get("parallel_limit") or config.get(
+            "tests", {}
+        ).get("parallel_limit")
+
+    # Resolve tiers (CLI > Set)
+    resolved["tiers"] = getattr(cli_args, "tier", None) or set_config.get("tiers")
+
+    # Resolve event (CLI > Set)
+    resolved["event"] = getattr(cli_args, "event", None) or set_config.get("event")
+
+    # Resolve plans (CLI > Set > Config) - override, not combine
+    cli_plans = getattr(cli_args, "plan", None)
+    set_plans = set_config.get("plans", [])
+    config_plans = config.get("tests", {}).get("plans", [])
+
+    # Priority override: CLI plans override set plans, set plans override config plans
+    if cli_plans:
+        resolved["plans"] = cli_plans
+    elif set_plans:
+        resolved["plans"] = set_plans
+    elif config_plans:
+        resolved["plans"] = config_plans
+    else:
+        resolved["plans"] = []
+
+    # Resolve artifact configurations
+    resolved["copr_api"] = set_config.get("copr_api", {})
+    resolved["brew_api"] = set_config.get("brew_api", {})
+    resolved["environment"] = set_config.get("environment", {})
+    resolved["reportportal"] = set_config.get("reportportal", {})
+
+    # Resolve context (Config defaults > Set overrides)
+    # CLI overrides are handled later via --context in opt_manager
+    tests_section = config.get("tests", {}) if isinstance(config, dict) else {}
+    global_context = tests_section.get("context", {}) or {}
+    set_context = set_config.get("context", {}) or {}
+    merged_context: Dict[str, Any] = {}
+    if isinstance(global_context, dict):
+        merged_context.update(global_context)
+    if isinstance(set_context, dict):
+        merged_context.update(set_context)
+    resolved["context"] = merged_context
+
+    return resolved
+
+
+def merge_set_environment_variables(
+    auto_env_vars: Dict[str, str],
+    set_env_vars: Dict[str, str],
+    cli_env_vars: Dict[str, str],
+    config: Optional[Dict[str, Any]] = None,
+    cli_args: Any = None,
+    set_reportportal_config: Optional[Dict[str, Any]] = None,
+    set_name: Optional[str] = None,
+    architecture: Optional[str] = None,
+    tier: Optional[str] = None,
+    source_release: Optional[str] = None,
+    target_release: Optional[str] = None,
+    source_compose: Optional[str] = None,
+    target_compose: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Merge environment variables from automatic generation, test sets, CLI, and ReportPortal config.
+    Priority: CLI > Test Set > Automatic > ReportPortal config
+
+    Args:
+        auto_env_vars: Automatically generated environment variables
+        set_env_vars: Environment variables from test sets
+        cli_env_vars: Environment variables from CLI --environment option
+        config: Full configuration dictionary (for ReportPortal config)
+        cli_args: CLI arguments object (for ReportPortal overrides)
+        set_reportportal_config: ReportPortal config from test set (overrides main config)
+        set_name: Name of the test set (for auto-generation)
+        architecture: Target architecture (for auto-generation)
+        tier: Test tier (for auto-generation)
+        source_release: Source release version (for auto-generation)
+        target_release: Target release version (for auto-generation)
+        source_compose: Source compose name (for auto-generation)
+        target_compose: Target compose name (for auto-generation)
+
+    Returns:
+        Merged environment variables dictionary
+    """
+    merged_vars = auto_env_vars.copy()
+
+    # Add ReportPortal environment variables first (lowest priority)
+    if config or set_reportportal_config:
+        # Create a merged reportportal config with test set values taking precedence
+        reportportal_config = {}
+        base_rp_config = {}
+        if config and config.get("reportportal"):
+            reportportal_config.update(config["reportportal"])
+            base_rp_config.update(config["reportportal"])
+        if set_reportportal_config:
+            # Validate: do not allow empty-string overrides for sensitive keys
+            for key, value in set_reportportal_config.items():
+                if isinstance(value, str) and value == "" and base_rp_config.get(key):
+                    raise ValidationError(
+                        f"Invalid empty override for reportportal.{key}"
+                    )
+                # Warn on non-empty override changing an existing value
+                if (
+                    base_rp_config.get(key) is not None
+                    and value not in (None, "")
+                    and base_rp_config.get(key) != value
+                ):
+                    LOGGER.warning(
+                        f"ReportPortal '{key}' overridden by test set: {base_rp_config.get(key)} -> {value}"
+                    )
+            reportportal_config.update(set_reportportal_config)
+
+        # Create a temporary config dict with the merged reportportal config
+        temp_config = (
+            {"reportportal": reportportal_config} if reportportal_config else {}
+        )
+        reportportal_vars = generate_reportportal_environment_variables(
+            temp_config,
+            cli_args,
+            set_name,
+            architecture,
+            tier,
+            source_release,
+            target_release,
+            source_compose,
+            target_compose,
+            event=None,  # This call doesn't have event context available
+        )
+        # Merge with warnings and ignore empty overrides
+        for k, v in reportportal_vars.items():
+            if k in merged_vars and merged_vars[k] != v and v not in (None, ""):
+                LOGGER.warning(
+                    f"Environment variable {k} overridden by reportportal config: {merged_vars[k]} -> {v}"
+                )
+            if v not in (None, ""):
+                merged_vars[k] = v
+
+    # Apply test set environment overrides with warnings; ignore empty overrides
+    for k, v in (set_env_vars or {}).items():
+        if k in merged_vars and merged_vars[k] != v and v not in (None, ""):
+            LOGGER.warning(
+                f"Environment variable {k} overridden by test set: {merged_vars[k]} -> {v}"
+            )
+        if v not in (None, ""):
+            merged_vars[k] = v
+
+    # Apply CLI environment overrides with warnings; ignore empty overrides
+    for k, v in (cli_env_vars or {}).items():
+        if k in merged_vars and merged_vars[k] != v and v not in (None, ""):
+            LOGGER.warning(
+                f"Environment variable {k} overridden by CLI: {merged_vars[k]} -> {v}"
+            )
+        if v not in (None, ""):
+            merged_vars[k] = v
+
+    return merged_vars
+
+
+def generate_reportportal_environment_variables(
+    config: Dict[str, Any],
+    cli_args: Any = None,
+    set_name: Optional[str] = None,
+    architecture: Optional[str] = None,
+    tier: Optional[str] = None,
+    source_release: Optional[str] = None,
+    target_release: Optional[str] = None,
+    source_compose: Optional[str] = None,
+    target_compose: Optional[str] = None,
+    event: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Generate ReportPortal environment variables from config and CLI overrides.
+
+    Args:
+        config: Full configuration dictionary
+        cli_args: CLI arguments object (optional)
+        set_name: Name of the test set (optional, for auto-generation)
+        architecture: Target architecture (optional, for auto-generation)
+        tier: Test tier (optional, for auto-generation)
+        source_release: Source release version (optional, for auto-generation)
+        target_release: Target release version (optional, for auto-generation)
+        source_compose: Source compose name (optional, for auto-generation)
+        target_compose: Target compose name (optional, for auto-generation)
+        event: Event name (optional, for auto-generation)
+
+    Returns:
+        Dictionary of ReportPortal environment variables with TMT_PLUGIN_REPORT_REPORTPORTAL_ prefix
+    """
+
+    reportportal_env_vars = {}
+
+    # Get reportportal section from config
+    reportportal_config = config.get("reportportal", {})
+
+    if not reportportal_config:
+        # If no config but we have context for auto-generation, generate launch name
+        launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+        auto_launch = _generate_auto_launch_name(
+            set_name,
+            architecture,
+            tier,
+            source_release,
+            target_release,
+            source_compose,
+            event,
+        )
+        if auto_launch:
+            reportportal_env_vars[launch_key] = auto_launch
+        return reportportal_env_vars
+
+    # Process all config values with the prefix
+    for key, value in reportportal_config.items():
+        if value:  # Only include non-empty values
+            # Special-case mapping to align with TMT env var expectations
+            normalized_key = str(key).strip().lower()
+            if normalized_key == "description":
+                env_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH_DESCRIPTION"
+            elif normalized_key == "launch":
+                env_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+            else:
+                env_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}{key.upper()}"
+            reportportal_env_vars[env_key] = str(value)
+
+    # Handle CLI overrides for specific keys (warn on override and ignore empty)
+    if cli_args:
+        rp_launch = getattr(cli_args, "rp_launch", None)
+        if rp_launch:
+            launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+            if (
+                launch_key in reportportal_env_vars
+                and reportportal_env_vars[launch_key] != rp_launch
+            ):
+                LOGGER.warning(
+                    f"ReportPortal 'launch' overridden by CLI: {reportportal_env_vars[launch_key]} -> {rp_launch}"
+                )
+            reportportal_env_vars[launch_key] = rp_launch
+
+        rp_description = getattr(cli_args, "rp_description", None)
+        if rp_description:
+            desc_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH_DESCRIPTION"
+            if (
+                desc_key in reportportal_env_vars
+                and reportportal_env_vars[desc_key] != rp_description
+            ):
+                LOGGER.warning(
+                    f"ReportPortal 'description' overridden by CLI: {reportportal_env_vars[desc_key]} -> {rp_description}"
+                )
+            reportportal_env_vars[desc_key] = rp_description
+
+    # Auto-generate launch name if not provided anywhere
+    launch_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}LAUNCH"
+    if launch_key not in reportportal_env_vars:
+        auto_launch = _generate_auto_launch_name(
+            set_name,
+            architecture,
+            tier,
+            source_release,
+            target_release,
+            source_compose,
+            event,
+        )
+        if auto_launch:
+            reportportal_env_vars[launch_key] = auto_launch
+
+    return reportportal_env_vars
+
+
+def _generate_auto_launch_name(
+    set_name: Optional[str] = None,
+    architecture: Optional[str] = None,
+    tier: Optional[str] = None,
+    source_release: Optional[str] = None,
+    target_release: Optional[str] = None,
+    source_compose: Optional[str] = None,
+    event: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Generate automatic launch name in format: (EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture
+
+    Args:
+        set_name: Name of the test set (optional)
+        architecture: Target architecture (optional)
+        tier: Test tier (optional)
+        source_release: Source release version (optional)
+        target_release: Target release version (optional)
+        source_compose: Source compose name (optional)
+        event: Event name (optional, takes priority over set_name)
+
+    Returns:
+        Generated launch name or None if no components available
+    """
+    from datetime import datetime
+
+    # Get timestamp in YYYY-MM-DD format
+    timestamp = datetime.now().strftime("%Y-%m-%d")
+
+    # Determine the event/set name component (event takes priority)
+    name_component = event or set_name
+    if not name_component:
+        return None
+
+    # Use architecture or 'unknown' if not provided
+    arch_component = architecture or "unknown"
+
+    # Use tier or 'unknown' if not provided
+    tier_component = tier or "unknown"
+
+    # Generate the name in the format: (EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture
+    return f"{name_component.upper()}~{timestamp}~{tier_component}~{arch_component}"
+
+
+def parse_target_compose_from_url(target_compose_url: Optional[str]) -> Optional[str]:
+    r"""
+    Parse TARGET_COMPOSE_URL to extract RHEL compose name.
+
+    Looks for pattern: RHEL-\d+\.\d+(\.\d+)?-\d{8}\.\d+
+
+    Args:
+        target_compose_url: URL containing compose information
+
+    Returns:
+        Extracted compose name or None if not found
+
+    Examples:
+        >>> parse_target_compose_from_url("http://example.com/RHEL-10.1-19700101.0/compose")
+        "RHEL-10.1-19700101.0"
+        >>> parse_target_compose_from_url("http://example.com/RHEL-9.7.0-19700101.1/compose")
+        "RHEL-9.7.0-19700101.1"
+        >>> parse_target_compose_from_url("http://example.com/invalid/path")
+        None
+    """
+    if not target_compose_url:
+        return None
+
+    # Pattern to match RHEL-X.Y(.Z)?-YYYYMMDD.N
+    rhel_compose_pattern = r"RHEL-\d+\.\d+(?:\.\d+)?-\d{8}\.\d+"
+
+    match = re.search(rhel_compose_pattern, target_compose_url)
+    if match:
+        return match.group(0)
+
+    return None
