@@ -23,6 +23,9 @@ jobs:
     targets:
       - fedora-stable
     actions:
+        # bump spec so we get higher release than all the PR builds
+      post-upstream-clone:
+      - rpmdev-bumpspec --comment='latest devel build' ./enge.spec
       # Get the version from the spec file
       get-current-version:
       - echo devel
