@@ -11,6 +11,7 @@ from typing import Dict, Tuple, Optional, Any, List
 from logging import getLogger
 
 from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+from enge.utils.globals import RP_COMPATIBLE_EVENT
 from enge.utils.errors import ValidationError
 
 LOGGER = getLogger(__name__)
@@ -662,6 +663,7 @@ def merge_set_environment_variables(
     target_release: Optional[str] = None,
     source_compose: Optional[str] = None,
     target_compose: Optional[str] = None,
+    event: Optional[str] = None,
 ) -> Dict[str, str]:
     """
     Merge environment variables from automatic generation, test sets, CLI, and ReportPortal config.
@@ -688,7 +690,11 @@ def merge_set_environment_variables(
     merged_vars = auto_env_vars.copy()
 
     # Add ReportPortal environment variables first (lowest priority)
-    if config or set_reportportal_config:
+    # Only when event is present and compatible
+    effective_event = event or (getattr(cli_args, "event", None) if cli_args else None)
+    rp_enabled = bool(effective_event) and effective_event in RP_COMPATIBLE_EVENT
+
+    if rp_enabled and (config or set_reportportal_config):
         # Create a merged reportportal config with test set values taking precedence
         reportportal_config = {}
         base_rp_config = {}
@@ -727,7 +733,7 @@ def merge_set_environment_variables(
             target_release,
             source_compose,
             target_compose,
-            event=None,  # This call doesn't have event context available
+            event=effective_event,
         )
         # Merge with warnings and ignore empty overrides
         for k, v in reportportal_vars.items():

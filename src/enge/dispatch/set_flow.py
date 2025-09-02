@@ -224,9 +224,15 @@ def process_request_spec(
     submit_test.business_unit_tag = resolved_opts.testing_farm.get(
         "cloud_resources_tag"
     )
-    submit_test.parallel_limit = effective_values.get(
-        "parallel_limit"
-    ) or resolved_opts.tests.get("parallel_limit")
+    # Parallel limit precedence for both set and non-set flows:
+    # 1) per-request effective (CLI > set > config when available)
+    # 2) globally resolved parsed_opts.parallel_limit (handles non-set flow)
+    # 3) fallback to top-level [tests].parallel_limit
+    submit_test.parallel_limit = (
+        effective_values.get("parallel_limit")
+        or getattr(resolved_opts, "parallel_limit", None)
+        or resolved_opts.tests.get("parallel_limit")
+    )
     submit_test.print_header = idx == 1
 
     # Auto tags if enabled
@@ -316,6 +322,7 @@ def process_request_spec(
         f"{target_spec['major']}.{target_spec['minor']}",
         source_spec["compose_name"],
         target_spec["compose_name"],
+        event=per_set_event,
     )
     # Enrich TMT context with target compose if URL provided
     if "TARGET_COMPOSE_URL" in merged_env_vars:

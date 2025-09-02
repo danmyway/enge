@@ -986,6 +986,7 @@ class ParsedOpts:
                 f"{self.target_spec['major']}.{self.target_spec['minor']}",
                 self.source_spec["compose_name"],
                 self.target_spec["compose_name"],
+                event=effective_values.get("event"),
             )
 
             # Parse architectures with effective values
