@@ -208,13 +208,16 @@ def process_request_spec(
     )
     submit_test.api_key = resolved_opts.testing_farm.get("api_key")
     submit_test.tests_git_url = (
-        effective_values.get("git_url")
+        getattr(resolved_opts.cli_args, "git_url", None)
+        or effective_values.get("git_url")
         or resolved_opts.tests.get("git_url")
         or resolved_opts.project.get("repo_url")
     )
-    submit_test.tests_git_ref = effective_values.get(
-        "git_ref"
-    ) or resolved_opts.tests.get("git_ref")
+    submit_test.tests_git_ref = (
+        getattr(resolved_opts.cli_args, "git_ref", None)
+        or effective_values.get("git_ref")
+        or resolved_opts.tests.get("git_ref")
+    )
     submit_test.testfilter = getattr(resolved_opts.cli_args, "testfilter", None)
     submit_test.test_name = getattr(resolved_opts.cli_args, "test", None)
     submit_test.plan = specific_plan.rstrip("/") if specific_plan else None
