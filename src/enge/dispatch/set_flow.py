@@ -430,6 +430,7 @@ def process_request_spec(
                 submit_test.set_specific_data([arch], rp_env, complete_tmt_context)
         except Exception as e:
             LOGGER.error(f"Failed to create ReportPortal launch for request {idx}: {e}")
+            return False
 
     # Send request
     req_header, req_payload = submit_test.build_payload()
