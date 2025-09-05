@@ -13,6 +13,7 @@ from enge.utils.config_parser import (
 from enge.utils.globals import (
     DEFAULT_USER_CONFIG_PATHS,
     PARALLEL_LIMIT_DEFAULT,
+    RP_COMPATIBLE_EVENT,
 )
 from enge.utils.source_target_parser import (
     parse_source_target_config,
@@ -371,6 +372,41 @@ class ParsedOpts:
                                     )
             except Exception:
                 # Do not block on detection failures
+                pass
+
+            # Fail fast: if an RP-compatible event is declared (via CLI or test sets),
+            # require complete ReportPortal credentials (token, url, project).
+            try:
+                rp_event_required = False
+                event_name = getattr(self.cli_args, "event", None)
+                if event_name and event_name in RP_COMPATIBLE_EVENT:
+                    rp_event_required = True
+                else:
+                    cli_sets = getattr(self.cli_args, "set", None)
+                    if cli_sets:
+                        sets_cfg = self.config.get("tests", {}).get("set", {})
+                        for set_name in cli_sets:
+                            set_event = (
+                                sets_cfg.get(set_name, {}).get("event")
+                                if isinstance(sets_cfg, dict)
+                                else None
+                            )
+                            if set_event and set_event in RP_COMPATIBLE_EVENT:
+                                rp_event_required = True
+                                break
+
+                if rp_event_required:
+                    rp_cfg = self.config.get("reportportal", {})
+                    if not isinstance(rp_cfg, dict):
+                        errors.append("[reportportal] section must be a dictionary")
+                    else:
+                        for key in ["token", "url", "project"]:
+                            if not rp_cfg.get(key):
+                                errors.append(
+                                    f"Missing required value: [reportportal].{key} (required when event is set for ReportPortal)"
+                                )
+            except Exception:
+                # Do not block on detection failures here; other validation will catch structural issues
                 pass
 
             if errors:

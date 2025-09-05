@@ -20,9 +20,9 @@ ARTIFACT_MAPPING: Dict[str, str] = {
 # ==================== DEFAULT CONFIG SEARCH PATHS ====================
 
 DEFAULT_USER_CONFIG_PATHS: Tuple[str, ...] = (
-    "~/.config/enge.toml",
-    "~/enge.toml",
-    "/etc/enge/enge.toml",
+    "~/.config/enge_user_config.toml",
+    "~/enge_user_config.toml",
+    "/etc/enge/enge_user_config.toml",
 )
 """Default paths to search for configuration files, in order of preference."""
 
