@@ -551,6 +551,7 @@ class XMLParser:
                 "upgrade_path": task_result.request_upgrade_path,
                 "plan": task_result.request_plan,
                 "plan_filter": task_result.request_plan_filter,
+                "created": task_result.request_datetime_created,
                 "testsuites": [],
                 "error": task_result.error_message or "No XML content",
             }
@@ -591,6 +592,7 @@ class XMLParser:
                         "upgrade_path": task_result.request_upgrade_path,
                         "plan": task_result.request_plan,
                         "plan_filter": task_result.request_plan_filter,
+                        "created": task_result.request_datetime_created,
                         "testsuites": [],
                         "error": "Pipeline error detected",
                     }
@@ -610,6 +612,7 @@ class XMLParser:
                     "upgrade_path": task_result.request_upgrade_path,
                     "plan": task_result.request_plan,
                     "plan_filter": task_result.request_plan_filter,
+                    "created": task_result.request_datetime_created,
                     "testsuites": [],
                     "skipped": "PASSED result skipped",
                 }
@@ -629,6 +632,7 @@ class XMLParser:
                 "upgrade_path": task_result.request_upgrade_path,
                 "plan": task_result.request_plan,
                 "plan_filter": task_result.request_plan_filter,
+                "created": task_result.request_datetime_created,
                 "testsuites": [],
                 "overall_result": job_result_overall,
             }
@@ -652,6 +656,7 @@ class XMLParser:
                 "upgrade_path": task_result.request_upgrade_path,
                 "plan": task_result.request_plan,
                 "plan_filter": task_result.request_plan_filter,
+                "created": task_result.request_datetime_created,
                 "testsuites": [],
                 "error": f"XML parsing error: {e}",
             }

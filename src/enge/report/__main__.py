@@ -181,6 +181,9 @@ def build_table_comparison():
     test2   -               PASS
     test3   PASS            PASS
     """
+
+    tables_list = []
+
     planname_split_index = 0
     testname_split_index = 0
     if parsed_opts.cli_args.short:
@@ -189,8 +192,32 @@ def build_table_comparison():
 
     parsed_dict = parse_request_xunit(skip_pass=parsed_opts.cli_args.skip_pass)
     result_table = PrettyTable()
-    uuids = list(parsed_dict.keys())
-    fields = ["Test Plan"] + uuids
+
+    # Sort UUIDs by architecture first, then by creation date within each architecture
+    def get_arch_and_timestamp(uuid):
+        data = parsed_dict[uuid]
+        arch = data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
+        created = data.get("created", "")
+        return (arch, created)
+
+    uuids = sorted(parsed_dict.keys(), key=get_arch_and_timestamp)
+
+    # Create headers with architecture and index, store mapping for later display
+    headers = []
+    uuid_mapping = {}
+
+    for i, uuid in enumerate(uuids, 1):
+        data = parsed_dict[uuid]
+        # Get architecture from first testsuite or default to Unknown
+        arch = data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
+        # Use format: "arch (index)" for cleaner headers
+        header = f"{arch} ({i})"
+        headers.append(header)
+        # Store mapping for display below table
+        result_url = f"{parsed_opts.testing_farm_endpoint.log_artifact_baseurl}/{uuid}"
+        uuid_mapping[i] = {"uuid": uuid, "url": result_url, "arch": arch}
+
+    fields = ["Test Plan"] + headers
     result_table.field_names = fields
     # plan_name -> uuid run result for particular plan
     regroup_results_plans = {}
@@ -264,7 +291,9 @@ def build_table_comparison():
             result_table.add_row(row_data)
     result_table.align = "l"
 
-    return result_table
+    tables_list.append((result_table, uuid_mapping))
+
+    return tables_list
 
 
 def build_table():
@@ -402,9 +431,8 @@ def main(result_table=None):
 
     if result_table is None:
         if parsed_opts.cli_args.compare:
-            # For comparison mode, wrap in tuple format for consistency
-            comparison_table = build_table_comparison()
-            result_table = [(comparison_table, None)]  # No metadata for comparison mode
+            # For comparison mode, get table and uuid mapping
+            result_table = build_table_comparison()
         else:
             result_table = build_table()
 
@@ -418,8 +446,9 @@ def main(result_table=None):
                     "~~~ REQUEST METADATA ~~~~~~~~~~~~~~", text_col=FormatText.DIM
                 )
             )
-            # Display metadata block before table
-            if metadata:
+
+            # Display metadata block before table (only for non-comparison mode)
+            if not parsed_opts.cli_args.compare:
                 for title, value in metadata.items():
                     if value is None:
                         continue
@@ -428,12 +457,29 @@ def main(result_table=None):
                             f"{title:<20}{value}", text_col=FormatText.DIM
                         )
                     )
+
             if parsed_opts.cli_args.jira:
                 print("{noformat}")
                 print(table)
                 print("{noformat}")
             else:
                 print(table)
+
+            # Display UUID mapping for comparison mode
+            if parsed_opts.cli_args.compare:
+                print()
+                print(
+                    FormatText.format_text(
+                        "~~~ TASK REFERENCE ~~~~~~~~~~~~~~~~", text_col=FormatText.DIM
+                    )
+                )
+                for index, info in metadata.items():
+                    if isinstance(info, dict) and 'uuid' in info:
+                        print(
+                            FormatText.format_text(
+                                f"({index}) {info['arch']}: {info['url']}", text_col=FormatText.DIM
+                            )
+                        )
 
             has_content = True
 
