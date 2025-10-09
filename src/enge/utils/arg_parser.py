@@ -159,6 +159,21 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     test.add_argument(
+        "--rhsm-only",
+        action="store_true",
+        help="Add tag:rhsm to the combined plan filter. "
+        "This filters tests to only those tagged with 'rhsm'.",
+    )
+
+    test.add_argument(
+        "--rhsm-stage-cdn",
+        action="store_true",
+        help="Add tag:rhsm to the combined plan filter, "
+        "set product_phase=rc in TMT context, and set RHSM_MODE=stage in environment variables. "
+        "This is used for testing RHSM stage environment.",
+    )
+
+    test.add_argument(
         "--event",
         help="Event name for launch naming. "
         "If specified, this will be used in the launch name instead of the set name. "

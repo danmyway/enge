@@ -1071,6 +1071,19 @@ class ParsedOpts:
                     logger.critical(f"Failed to parse --context: {e}")
                     raise ValidationError("Invalid --context format") from e
 
+            # Handle RHSM-related flags
+            rhsm_stage_cdn = getattr(self.cli_args, "rhsm_stage_cdn", False)
+            if rhsm_stage_cdn:
+                # Add RHSM_MODE=stage to environment variables
+                self.environment_variables["RHSM_MODE"] = "stage"
+                logger.info(
+                    "Added RHSM_MODE=stage to environment variables (--rhsm-stage-cdn)"
+                )
+
+                # Add product_phase=rc to TMT context
+                self.tmt_context["product_phase"] = "rc"
+                logger.info("Added product_phase=rc to TMT context (--rhsm-stage-cdn)")
+
             # Handle CLI planfilter (tier-based filtering is handled in dispatch)
             cli_planfilter = getattr(self.cli_args, "planfilter", None)
 
