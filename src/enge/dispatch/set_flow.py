@@ -242,11 +242,20 @@ def process_request_spec(
     try:
         # Build additional filters based on RHSM flags
         additional_filters = []
-        rhsm_only = getattr(resolved_opts.cli_args, "rhsm_only", False)
-        rhsm_stage_cdn = getattr(resolved_opts.cli_args, "rhsm_stage_cdn", False)
-        if rhsm_only or rhsm_stage_cdn:
+        only_rhsm_mock_cdn = getattr(
+            resolved_opts.cli_args, "only_rhsm_mock_cdn", False
+        )
+        no_rhsm = getattr(resolved_opts.cli_args, "no_rhsm", False)
+        only_rhsm_stage_cdn = getattr(
+            resolved_opts.cli_args, "only_rhsm_stage_cdn", False
+        )
+        if only_rhsm_mock_cdn or only_rhsm_stage_cdn:
             additional_filters.append("tag:rhsm")
             LOGGER.debug("Adding tag:rhsm to plan filter")
+        elif no_rhsm:
+            additional_filters.append("tag:-rhsm")
+            LOGGER.info("Excluding RHSM-tagged tests from execution")
+            LOGGER.debug("Adding tag:-rhsm to plan filter")
 
         tier_plan_filter = None
         base_plan_filter = None
@@ -374,8 +383,8 @@ def process_request_spec(
         LOGGER.error(f"Failed to parse --context: {e}")
 
     # Apply RHSM-specific settings if flags are set
-    rhsm_stage_cdn = getattr(resolved_opts.cli_args, "rhsm_stage_cdn", False)
-    if rhsm_stage_cdn:
+    only_rhsm_stage_cdn = getattr(resolved_opts.cli_args, "only_rhsm_stage_cdn", False)
+    if only_rhsm_stage_cdn:
         merged_env_vars["RHSM_MODE"] = "stage"
         temp_opts.tmt_context["product_phase"] = "rc"
         LOGGER.debug("Applied RHSM stage settings: RHSM_MODE=stage, product_phase=rc")

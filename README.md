@@ -195,23 +195,32 @@ enge test --source 9.7 --plan /plans/tier0 --context event=nightly --context cus
 enge test --source 9.7 --plan /plans/tier0 --arch s390x --arch x86_64
 
 # Filter to only RHSM-tagged tests
-enge test --source 9.7 --tier tier0 --rhsm-only
+enge test --source 9.7 --tier tier0 --only-rhsm-mock-cdn
+
+# Exclude RHSM-tagged tests
+enge test --source 9.7 --tier tier0 --no-rhsm
 
 # Filter to RHSM tests with stage environment configuration
-enge test --source 9.7 --tier tier0 --rhsm-stage-cdn
+enge test --source 9.7 --tier tier0 --only-rhsm-stage-cdn
 ```
 
 ###### RHSM-Specific Filtering
 
 Enge provides specialized options for testing Red Hat Subscription Manager (RHSM) functionality:
 
-**`--rhsm-only`**
+**`--only-rhsm-mock-cdn`**
 - Adds `tag:rhsm` to the combined plan filter
 - Filters test execution to only tests tagged with 'rhsm' in test metadata
 - Can be combined with tiers, test sets, or standalone
 
-**`--rhsm-stage-cdn`**
-- Adds `tag:rhsm` to the combined plan filter (same as `--rhsm-only`)
+**`--no-rhsm`**
+- Adds `tag:-rhsm` to the combined plan filter
+- Excludes tests tagged with 'rhsm' from execution
+- Useful for running all tests except RHSM-specific ones
+- Can be combined with tiers, test sets, or standalone
+
+**`--only-rhsm-stage-cdn`**
+- Adds `tag:rhsm` to the combined plan filter (same as `--only-rhsm-mock-cdn`)
 - Additionally configures the stage environment:
   - Sets `RHSM_MODE=stage` in environment variables
   - Sets `product_phase=rc` in TMT context
@@ -220,23 +229,31 @@ Enge provides specialized options for testing Red Hat Subscription Manager (RHSM
 **Examples:**
 ```bash
 # Run tier0 tests that are RHSM-tagged only
-enge test --source 9.7 --tier tier0 --rhsm-only
+enge test --source 9.7 --tier tier0 --only-rhsm-mock-cdn
+
+# Run tier0 tests excluding RHSM-tagged tests
+enge test --source 9.7 --tier tier0 --no-rhsm
 
 # Run RHSM tests with stage environment configuration
-enge test --source 9.7 --tier tier0 --rhsm-stage-cdn
+enge test --source 9.7 --tier tier0 --only-rhsm-stage-cdn
 
 # Combine with test sets
-enge test --set pre-release-smoke --rhsm-only
+enge test --set pre-release-smoke --only-rhsm-mock-cdn
+
+# Exclude RHSM tests from a test set
+enge test --set pre-release-smoke --no-rhsm
 
 # Use with specific plans
-enge test --source 9.7 --plan /plans/subscription --rhsm-stage-cdn
+enge test --source 9.7 --plan /plans/subscription --only-rhsm-stage-cdn
 ```
 
 **Filter Behavior:**
 - Without RHSM flags: `tag:8to9 & enabled:true`
-- With `--rhsm-only`: `tag:8to9 & tag:rhsm & enabled:true`
-- With `--rhsm-stage-cdn`: `tag:8to9 & tag:rhsm & enabled:true` (plus environment variables)
+- With `--only-rhsm-mock-cdn`: `tag:8to9 & tag:rhsm & enabled:true`
+- With `--no-rhsm`: `tag:8to9 & tag:-rhsm & enabled:true`
+- With `--only-rhsm-stage-cdn`: `tag:8to9 & tag:rhsm & enabled:true` (plus environment variables)
 - With tier: `tag:8to9 & tag:tier[0] & tag:rhsm & enabled:true`
+- With tier and `--no-rhsm`: `tag:8to9 & tag:tier[0] & tag:-rhsm & enabled:true`
 
 ###### Compose resolution and target derivation
 
