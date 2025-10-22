@@ -324,11 +324,20 @@ def process_request_spec(
     temp_opts.upgrade_path_alias = upgrade_path
     temp_opts.architectures = [arch]
 
+    # Check CLI args directly, not just test set config
+    copr_artifact = getattr(resolved_opts.cli_args, "copr", None)
+    brew_artifact = getattr(resolved_opts.cli_args, "brew", None)
     auto_env_vars = generate_environment_variables(
         source_spec,
         target_spec,
-        has_copr=bool(effective_values.get("copr_api", {}).get("build_references")),
-        has_brew=bool(effective_values.get("brew_api", {}).get("build_references")),
+        has_copr=bool(
+            copr_artifact
+            or effective_values.get("copr_api", {}).get("build_references")
+        ),
+        has_brew=bool(
+            brew_artifact
+            or effective_values.get("brew_api", {}).get("build_references")
+        ),
     )
     cli_env_args = getattr(resolved_opts.cli_args, "environment", None)
     cli_env_vars = parse_environment_variables(cli_env_args)
@@ -411,7 +420,7 @@ def process_request_spec(
                 submit_test.add_artifact(
                     artifact_id=str(build["build_id"]),
                     artifact_type=artifact_type,
-                    package=build.get("package", temp_opts.project.get("name", "")),
+                    packages=build["packages"],
                     nvr=build.get("nvr"),
                 )
 

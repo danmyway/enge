@@ -124,8 +124,21 @@ Enge provides several commands for comprehensive test workflow management:<br>
 The goal of enge is to make requesting test jobs as easy as possible.<br>
 A default artifact to install (if not specified otherwise) is the one available in the compose.<br>
 The `--brew` and `--copr` options denote which type of a build artifact is to be requested for testing.<br>
-Instead of looking for build IDs to pass to the payload, all you need to know is a reference for a pull request number (e.g. pr123) which triggered the build you need to test. In case you have the Build ID handy, you can use that instead of the reference.<br>
-For brew builds you can provide either the NVR (e.g. leapp-0.16.0-1.el9) or the TaskID. Both are validated via the Brew API, and Task IDs are automatically resolved to their corresponding NVR. The NVR is always used in the Testing Farm payload for consistency.<br>
+
+**COPR Builds:**
+- **Reference Format**: `alias:reference` (e.g., `lp:pr123`) or direct Build ID (integer, e.g., `12345`)
+- **Package Aliases**:
+  - `lp` → leapp
+  - `lpr` → leapp-repository
+- **Automatic Package Resolution**: All packages from the build are fetched from COPR API and included as full NVRAs (name-version-release.arch)
+- **Chroot Derivation**: Automatically derived from source version (e.g., source 8.10 → epel-8-x86_64)
+- **Multi-Package Builds**: When a COPR build produces multiple packages (e.g., leapp-repository builds produce leapp-upgrade-el8toel9, leapp-upgrade-el8toel9-deps, etc.), all non-source packages are automatically included in the Testing Farm payload
+
+**Brew Builds:**
+- Provide either the NVR (e.g., leapp-0.16.0-1.el9) or the TaskID
+- Both are validated via the Brew API
+- Task IDs are automatically resolved to their corresponding NVR
+- The NVR is always used in the Testing Farm payload for consistency<br>
 Multiple `--plan` options can be specified and will be dispatched in separate jobs.
 `--tier` options allow you to run predefined test tiers from your configuration.
 `--set` options allow you to use pre-configured test sets (see Test Sets section below).
@@ -140,14 +153,14 @@ Use `--auto-tag` to automatically tag archived task files with contextual inform
 The `--source` argument is required unless using `--set` (which defines source in the configuration).
 
 ```
-# Test latest build from main (most of the arguments set through the config file)
-enge test --copr
+# Test copr build by Build ID
+enge test --copr 12345 --source 8.10 --plan /plans/tier0
 
-# Test copr build for PR#123 with plan named basic_sanity_check on all targets
-enge test --copr pr123 --plan /plans/tier0/basic_sanity_checks
+# Test leapp PR#123 with plan named basic_sanity_check
+enge test --copr lp:pr123 --source 9.7 --plan /plans/tier0/basic_sanity_checks
 
-# Specify which composes you want to run test plan (in this case tier0 on RHEL9)
-enge test --copr pr123 --plan /plans/tier0 --target rhel9
+# Test leapp-repository PR#456 on RHEL 8 to 9
+enge test --copr lpr:pr456 --source 8.10 --plan /plans/tier0
 
 # Run every test plan for brew build 0.12-3 on all composes
 enge test --brew 0.12-3 --plan /plans
@@ -155,8 +168,8 @@ enge test --brew 0.12-3 --plan /plans
 # Specify more individual test plans
 enge test --brew 0.12-3 --plan /plans/tier0/basic_sanity_checks --plan /plans/tier1/whatever_else
 
-# Test using predefined tiers
-enge test --copr pr123 --tier tier0 --tier tier1
+# Test using predefined tiers with leapp PR
+enge test --copr lp:pr123 --source 9.7 --tier tier0 --tier tier1
 
 # Test using a predefined test set
 enge test --set pre-release-smoke
@@ -168,7 +181,7 @@ enge test --set-regex '^pre-release-.*'
 enge test --set pre-release-smoke --set-regex 'regression-[0-9]+'
 
 # Test with custom tags for archiving
-enge test --copr pr123 --tier tier0 --set-tag regression --set-tag pr123
+enge test --copr lp:pr123 --source 9.7 --tier tier0 --set-tag regression --set-tag pr123
 
 # Test with automatic tagging based on context
 enge test --set pre-release-smoke --auto-tag
@@ -193,6 +206,10 @@ enge test --source 9.7 --plan /plans/tier0 --context event=nightly --context cus
 
 # Multiple architectures in non-set mode create one request per architecture
 enge test --source 9.7 --plan /plans/tier0 --arch s390x --arch x86_64
+
+# Test both leapp and leapp-repository PRs
+enge test --copr lp:pr123 --copr lpr:321 --source 9.7 --tier tier0
+# (All packages from the build are automatically included)
 
 # Filter to only RHSM-tagged tests
 enge test --source 9.7 --tier tier0 --only-rhsm-mock-cdn
@@ -279,6 +296,13 @@ architectures = ["x86_64", "aarch64"]
 git_ref = "main"
 parallel_limit = 20
 
+# For COPR builds - use alias:reference format
+[tests.set.pre-release-smoke.copr_api]
+# No package specification needed - all packages from build are included automatically
+# Reference format: "alias:ref" where alias is lp (leapp) or lpr (leapp-repository)
+build_references = ["lp:pr123"]
+
+# For Brew builds
 [tests.set.pre-release-smoke.brew_api]
 package = "leapp"
 build_reference = "leapp-0.1.2-3.el9"
@@ -336,10 +360,12 @@ Enge automatically populates TMT context variables that are available to test sc
 - `uniq_id`: Shortened ReportPortal launch UUID (when using `--rp`), format: "d51eba30-1956"
 - `target_compose`: Target compose name (when `TARGET_COMPOSE_URL` environment variable is provided), format: "RHEL-10.0-19700101.0"
 
-**Brew Artifact Context:**
+**Build Artifact Context:**
 When using `--brew`, package version information is automatically added in the format `package_name: version-release`:
 - `leapp`: "0.16.0-1.el9"
 - `leapp-repository`: "0.1-32.el9"
+
+When using `--copr`, all packages built in the COPR build are automatically included in the Testing Farm payload as full NVRAs (name-version-release.arch), ensuring all related packages are tested together.
 
 **Configurable Context Defaults:**
 You can define default context in config:
@@ -638,10 +664,10 @@ Each file contains exactly one task ID for its specific combination, enabling pr
 **Examples:**
 ```bash
 # Test with custom tags (creates one shared file)
-enge test --copr pr123 --tier tier0 --set-tag regression --set-tag pr123
+enge test --copr lp:pr123 --source 9.7 --tier tier0 --set-tag regression --set-tag pr123
 
 # Test with automatic tagging (creates separate file: enge_jobs_archive_timestamp.x86_64.tier0)
-enge test --copr pr123 --tier tier0 --auto-tag
+enge test --copr lp:pr123 --source 9.7 --tier tier0 --auto-tag
 
 # Test set with automatic tagging (creates separate files for each tier/arch combination)
 # Example files: enge_jobs_archive_timestamp.pre-release-smoke.x86_64.tier0

@@ -993,11 +993,14 @@ class ParsedOpts:
             )
 
             # Generate automatic environment variables
+            # Check CLI args directly, not just references list (which could be empty)
+            copr_artifact = getattr(self.cli_args, "copr", None)
+            brew_artifact = getattr(self.cli_args, "brew", None)
             auto_env_vars = generate_environment_variables(
                 self.source_spec,
                 self.target_spec,
-                has_copr=bool(self.copr_references),
-                has_brew=bool(self.brew_references),
+                has_copr=bool(copr_artifact or self.copr_references),
+                has_brew=bool(brew_artifact or self.brew_references),
             )
 
             # Parse CLI environment variables
