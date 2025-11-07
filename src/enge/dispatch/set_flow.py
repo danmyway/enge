@@ -324,6 +324,16 @@ def process_request_spec(
     temp_opts.upgrade_path_alias = upgrade_path
     temp_opts.architectures = [arch]
 
+    # Regenerate TMT context with per-set source/target specs
+    from enge.utils.source_target_parser import generate_tmt_context
+
+    temp_opts.tmt_context = generate_tmt_context(
+        source_spec,
+        target_spec,
+        event=per_set_event,
+        tier=tier,
+    )
+
     # Check CLI args directly, not just test set config
     copr_artifact = getattr(resolved_opts.cli_args, "copr", None)
     brew_artifact = getattr(resolved_opts.cli_args, "brew", None)
@@ -412,7 +422,12 @@ def process_request_spec(
             return False
         # Populate artifacts
         first_build = info[0]
-        submit_test.compose = first_build["compose"]
+        # For CentOS Stream, use the compose name directly from source_spec
+        # Otherwise, use the compose from artifact resolution
+        if source_spec.get("is_centos_stream", False):
+            submit_test.compose = source_spec["compose_name"]
+        else:
+            submit_test.compose = first_build["compose"]
         submit_test.tmt_distro = first_build["distro"]
         submit_test.artifacts.clear()
         for build in info:

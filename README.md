@@ -219,6 +219,12 @@ enge test --source 9.7 --tier tier0 --no-rhsm
 
 # Filter to RHSM tests with stage environment configuration
 enge test --source 9.7 --tier tier0 --only-rhsm-stage-cdn
+
+# Test with CentOS Stream as source (various alias formats supported)
+enge test --source CentOS-Stream-9 --plan /plans/tier0
+enge test --source stream-9 --plan /plans/tier0
+enge test --source cs-9 --plan /plans/tier0
+enge test --source stream9 --plan /plans/tier0
 ```
 
 ###### RHSM-Specific Filtering
@@ -274,7 +280,12 @@ enge test --source 9.7 --plan /plans/subscription --only-rhsm-stage-cdn
 
 ###### Compose resolution and target derivation
 
-- You can specify composes as a simple version `MAJOR.MINOR` (e.g., `9.7`) or a full compose name (e.g., `RHEL-9.7.0-Nightly`).
+- You can specify composes as a simple version `MAJOR.MINOR` (e.g., `9.7`), a full compose name (e.g., `RHEL-9.7.0-Nightly`), or CentOS Stream format.
+- **CentOS Stream sources** are supported with the following aliases (all case-insensitive):
+  - `CentOS-Stream-9`, `centos-stream-9` (full format)
+  - `stream-9`, `cs-9` (short format with hyphen)
+  - `stream9`, `cs9` (short format without hyphen)
+  - When CentOS Stream is used as source, the compose name in the request body is set to `CentOS-Stream-<major>` and the TMT context `distro` is set to `stream-<major>` (e.g., `stream-9`).
 - When a simple version is provided, enge attempts to pin it to an actual compose name by consulting `testing_farm.composes_prod_url` from the configuration. It tries the following formats in order:
   - `RHEL-MAJOR.MINOR.0-Nightly` (RHEL 8/9 style)
   - `RHEL-MAJOR.MINOR-Nightly` (RHEL 10 style)
@@ -348,9 +359,9 @@ enge test --set smoke --set-regex 'regression-.*'
 Enge automatically populates TMT context variables that are available to test scripts and TMT plugins (including ReportPortal integration). The context includes:
 
 **Standard Context Fields:**
-- `distro`: Source release (e.g., "rhel-9.7")
+- `distro`: Source release (e.g., "rhel-9.7" for RHEL, "stream-9" for CentOS Stream)
 - `target_distro`: Target release (e.g., "rhel-10.1")
-- `source_compose`: Source compose name (e.g., "RHEL-9.7.0-Nightly")
+- `source_compose`: Source compose name (e.g., "RHEL-9.7.0-Nightly" for RHEL, "CentOS-Stream-9" for CentOS Stream)
 - `upgrade_path`: Generated upgrade path (e.g., "9to10")
 - `arch`: Target architecture (e.g., "x86_64")
 
@@ -383,7 +394,7 @@ Merge order and overrides (warnings are logged on overrides):
 3) `[tests.set.<name>].context` (when using sets)
 4) CLI `--context key=value`
 
-**Example TMT Context:**
+**Example TMT Context (RHEL source):**
 ```json
 {
   "distro": "rhel-9.7",
@@ -395,8 +406,21 @@ Merge order and overrides (warnings are logged on overrides):
   "tier": "tier0",
   "uniq_id": "d51eba30-1956",
   "target_compose": "RHEL-10.0-19700101.0",
-  "leapp": "0.16.0-1.el9"
+  "leapp": "0.16.0-1.el9",
   "leapp-repository": "0.16.0-2.el9"
+}
+```
+
+**Example TMT Context (CentOS Stream source):**
+```json
+{
+  "distro": "stream-9",
+  "target_distro": "rhel-10.1",
+  "source_compose": "CentOS-Stream-9",
+  "upgrade_path": "9to10",
+  "arch": "x86_64",
+  "event": "pre-release-smoke",
+  "tier": "tier0"
 }
 ```
 

@@ -24,15 +24,17 @@ def parse_compose_spec(
     Parse a compose specification into its components.
 
     Args:
-        spec: Either a version string like "8.10" or full compose name like "RHEL-8.10.0-Nightly"
+        spec: Either a version string like "8.10", full compose name like "RHEL-8.10.0-Nightly",
+              or CentOS Stream format like "CentOS-Stream-9"
         config: Configuration dictionary (optional, will be loaded if not provided)
 
     Returns:
         Dictionary containing parsed components:
         - major: Major version number
-        - minor: Minor version number
+        - minor: Minor version number (0 for CentOS Stream)
         - compose_name: Full compose name (translated via pin_compose if needed)
         - is_version_only: True if input was just version, False if full compose name
+        - is_centos_stream: True if source is CentOS Stream, False otherwise
 
     Raises:
         ValueError: If the specification format is invalid
@@ -44,7 +46,31 @@ def parse_compose_spec(
 
         config = load_config(paths=list(DEFAULT_USER_CONFIG_PATHS))
 
-    # Try parsing as version number first (e.g., "8.10")
+    # Try parsing as CentOS Stream format with aliases
+    # Supported formats: CentOS-Stream-9, centos-stream-9, stream-9, cs-9, stream9, cs9
+    spec_stripped = spec.strip()
+    centos_stream_patterns = [
+        r"^(?:CentOS-Stream|centos-stream|stream|cs)-(\d+)$",  # With hyphen: CentOS-Stream-9, stream-9, cs-9
+        r"^(?:stream|cs)(\d+)$",  # Without hyphen: stream9, cs9
+    ]
+
+    for pattern in centos_stream_patterns:
+        centos_stream_match = re.match(pattern, spec_stripped, re.IGNORECASE)
+        if centos_stream_match:
+            major = int(centos_stream_match.group(1))
+            compose_name = f"CentOS-Stream-{major}"
+            LOGGER.debug(
+                f"Parsed CentOS Stream spec '{spec_stripped}' as: {compose_name}"
+            )
+            return {
+                "major": major,
+                "minor": 0,  # CentOS Stream doesn't use minor versions
+                "compose_name": compose_name,
+                "is_version_only": False,
+                "is_centos_stream": True,
+            }
+
+    # Try parsing as version number (e.g., "8.10")
     version_match = re.match(r"^(\d+)\.(\d+)$", spec.strip())
     if version_match:
         major = int(version_match.group(1))
@@ -81,6 +107,7 @@ def parse_compose_spec(
             "minor": minor,
             "compose_name": compose_name,
             "is_version_only": True,
+            "is_centos_stream": False,
         }
 
     # Try parsing as full compose name (e.g., "RHEL-8.10.0-Nightly")
@@ -113,6 +140,7 @@ def parse_compose_spec(
             "minor": minor,
             "compose_name": compose_name,
             "is_version_only": False,
+            "is_centos_stream": False,
         }
 
     # If neither pattern matches, raise an error
@@ -217,9 +245,18 @@ def generate_tmt_context(
         Note: Brew artifact NVRs are automatically added later during payload building
         in the format package_name: version-release (e.g., leapp: 0.16.0-1.el9).
     """
+    # Generate distro based on whether source is CentOS Stream
+    if source_spec.get("is_centos_stream", False):
+        distro = f"stream-{source_spec['major']}"
+    else:
+        distro = f"rhel-{source_spec['major']}.{source_spec['minor']}"
+
+    # Target distro is always RHEL format (CentOS Stream is only used as source)
+    target_distro = f"rhel-{target_spec['major']}.{target_spec['minor']}"
+
     context = {
-        "distro": f"rhel-{source_spec['major']}.{source_spec['minor']}",
-        "target_distro": f"rhel-{target_spec['major']}.{target_spec['minor']}",
+        "distro": distro,
+        "target_distro": target_distro,
         "source_compose": source_spec.get("compose_name", ""),
         "upgrade_path": f"{source_spec['major']}to{target_spec['major']}",
     }
