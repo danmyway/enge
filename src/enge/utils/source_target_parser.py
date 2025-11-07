@@ -885,8 +885,18 @@ def resolve_effective_values(
             "tests", {}
         ).get("parallel_limit")
 
-    # Resolve tiers (CLI > Set)
-    resolved["tiers"] = getattr(cli_args, "tier", None) or set_config.get("tiers")
+    # Resolve tiers (CLI > Set > Config)
+    # Handle both singular "tier" and plural "tiers" keys
+    cli_tier = getattr(cli_args, "tier", None)
+    set_tiers = set_config.get("tiers")
+    config_tiers = config.get("tests", {}).get("tiers")
+    config_tier = config.get("tests", {}).get("tier")
+
+    # Normalize config_tier to list if it's a string
+    if config_tier and isinstance(config_tier, str):
+        config_tier = [config_tier]
+
+    resolved["tiers"] = cli_tier or set_tiers or config_tiers or config_tier
 
     # Resolve event (CLI > Set)
     resolved["event"] = getattr(cli_args, "event", None) or set_config.get("event")
