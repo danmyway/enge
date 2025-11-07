@@ -258,6 +258,16 @@ class SubmitTest:
             else:
                 regular_env_vars[key] = value
 
+        # Add TF_RESERVATION_DURATION if --reserve flag is set
+        if getattr(parsed_opts.cli_args, "reserve", False):
+            from enge.reserve import get_reservation_environment_variables
+
+            reserve_duration = getattr(parsed_opts.cli_args, "reserve_duration", 60)
+            reservation_env_vars = get_reservation_environment_variables(
+                reserve_duration
+            )
+            regular_env_vars.update(reservation_env_vars)
+
         # Build the base TMT context (arch will be set per environment)
         base_tmt_context = {"distro": self.tmt_distro}
 
@@ -284,6 +294,12 @@ class SubmitTest:
 
             # Build TMT configuration with context and environment
             tmt_config = {"context": arch_tmt_context}
+
+            # Add reserve extra_args if --reserve flag is set
+            if getattr(parsed_opts.cli_args, "reserve", False):
+                from enge.reserve import get_reservation_tmt_extra_args
+
+                tmt_config["extra_args"] = get_reservation_tmt_extra_args()
 
             # Handle ReportPortal environment variables for TMT
             if reportportal_env_vars or self.launch_uuid:
@@ -337,6 +353,38 @@ class SubmitTest:
                 "variables": regular_env_vars,
             }
 
+            # Add security group rules for reservation if --reserve is set
+            if getattr(parsed_opts.cli_args, "reserve", False):
+                from enge.reserve import get_security_group_rules
+
+                security_rules = get_security_group_rules()
+                if security_rules:
+                    environment_config["settings"]["provisioning"][
+                        "security_group_rules_ingress"
+                    ] = security_rules
+                    LOGGER.debug(
+                        f"Added security group rules for reservation: {security_rules}"
+                    )
+                else:
+                    LOGGER.warning(
+                        "Could not add security group rules for reservation - public IP could not be determined. "
+                        "You may need to configure firewall rules manually."
+                    )
+
+            # Add secrets with SSH authorized keys if --reserve is set
+            if getattr(parsed_opts.cli_args, "reserve", False):
+                from enge.reserve import get_reservation_secrets
+
+                secrets = get_reservation_secrets()
+                if secrets:
+                    environment_config["secrets"] = secrets
+                    LOGGER.debug(f"Added SSH authorized keys to secrets for {arch}")
+                else:
+                    LOGGER.warning(
+                        f"--reserve flag is set but no SSH public keys found in ~/.ssh/*.pub. "
+                        f"You may not be able to access the reserved machine."
+                    )
+
             # Only include artifacts if we have any artifacts (for copr/brew builds)
             if self.artifacts:
                 environment_config["artifacts"] = [
@@ -350,15 +398,26 @@ class SubmitTest:
 
             environments.append(environment_config)
 
+        # Handle reserve system test inclusion when --reserve is used with --test or --test-filter
+        test_name_for_payload = self.test_name
+        test_filter_for_payload = self.testfilter
+
+        if getattr(parsed_opts.cli_args, "reserve", False):
+            from enge.reserve import adjust_test_selection_for_reservation
+
+            test_name_for_payload, test_filter_for_payload = (
+                adjust_test_selection_for_reservation(self.test_name, self.testfilter)
+            )
+
         self.payload_raw = {
             "test": {
                 "fmf": {
                     "url": self.tests_git_url,
                     "ref": self.tests_git_ref,
                     "name": self.plan,
-                    "test_name": self.test_name,
+                    "test_name": test_name_for_payload,
                     "plan_filter": self.planfilter,
-                    "test_filter": self.testfilter,
+                    "test_filter": test_filter_for_payload,
                 }
             },
             "environments": environments,
@@ -451,6 +510,18 @@ class SubmitTest:
         if self.target_compose:
             target_compose_info = f"   Target compose:   {self.target_compose}\n"
 
+        # Format reservation information if --reserve is enabled
+        reservation_info = ""
+        if getattr(parsed_opts.cli_args, "reserve", False):
+            reserve_duration = getattr(parsed_opts.cli_args, "reserve_duration", 60)
+            reservation_info = (
+                f"\n"
+                f"{FormatText.format_text('   SYSTEM RESERVATION REQUESTED', text_col=FormatText.YELLOW, bold=True)}\n"
+                f"   Duration:         {reserve_duration} minutes\n"
+                f"   The system will be reserved after test completion.\n"
+                f"   IP Address for connection .\n"
+            )
+
         self.dispatch_summary = (
             FormatText.format_text(f"{summary_header}\n", bold=True)
             + f"   Source compose:   {self.compose}\n"
@@ -459,7 +530,8 @@ class SubmitTest:
             + arch_info
             + artifact_info
             + f"   Test results:     {self.log_artifact_url}\n"
-            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+            + reservation_info
+            + "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
         )
 
         def _handle_dry_run(payload_raw=self.build_payload()):
