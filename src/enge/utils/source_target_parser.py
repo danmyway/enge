@@ -186,7 +186,9 @@ def generate_environment_variables(
         "TARGET_RELEASE": f"{target_spec['major']}.{target_spec['minor']}",
     }
 
-    # Add INSTALL_LEAPP_FROM_COMPOSE=yes only if neither --copr nor --brew is specified
+    # Set INSTALL_LEAPP_FROM_COMPOSE based on artifact type for transparency
+    # yes = install from compose (no --copr or --brew)
+    # no = use build artifacts (--copr or --brew specified)
     if not has_copr and not has_brew:
         env_vars["INSTALL_LEAPP_FROM_COMPOSE"] = "yes"
     else:

@@ -196,7 +196,7 @@ def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
                     or ""
                 )
                 builds = brew_artifact.get_info(
-                    packages=brew_pkg_name,  # Fallback package name (will be overridden by NVR parsing)
+                    packages=brew_pkg_name,
                     reference=artifact_reference,
                     composes=[compose_name],
                     options=parsed_opts,
@@ -240,7 +240,7 @@ def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
                 )
                 brew_artifact = BrewRef([brew_ref])
                 builds = brew_artifact.get_info(
-                    packages=brew_pkg_name,  # Fallback package name (will be overridden by NVR parsing)
+                    packages=brew_pkg_name,
                     reference=[brew_ref],
                     composes=[compose_name],
                     options=parsed_opts,
@@ -284,7 +284,7 @@ def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
             )
             brew_artifact = BrewRef([parsed_opts.brew_reference])
             builds = brew_artifact.get_info(
-                packages=brew_pkg_name,  # Fallback package name (will be overridden by NVR parsing)
+                packages=brew_pkg_name,
                 reference=[parsed_opts.brew_reference],
                 composes=[compose_name],
                 options=parsed_opts,

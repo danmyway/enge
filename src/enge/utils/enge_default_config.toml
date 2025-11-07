@@ -44,16 +44,17 @@ composes_prod_url = '' # REQUIRED: URL for compose translation service (used for
 
 
 # ============================================================================
-# COPR_API (Copr build settings for artifacts)
-# - Owner/repo/package resolution and optional build references
-# - WARNING: Useless at this point, the copr rpm testing is broken, will be reconsidered in the future
+# COPR_API (COPR build settings for artifacts)
+# - Configuration for COPR build artifact resolution
+# - REQUIRED when using --copr with alias:reference format (e.g., lp:pr123)
+# - NOT REQUIRED when using --copr with direct Build ID (e.g., --copr 12345)
 # ============================================================================
 [copr_api]
-owner = ''
-owner_is_group = true
-repository = ''
-package = ''
-build_references = []
+owner = ''                    # REQUIRED for alias:ref format - COPR project owner
+owner_is_group = true         # REQUIRED - Whether owner is a group (prefix @ if true)
+repository = ''               # REQUIRED for alias:ref format - COPR repository name
+package = ''                  # Optional - Fallback package name (derived from alias if not set)
+build_references = []         # Optional - Default build references for test sets
 
 
 # ============================================================================

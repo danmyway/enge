@@ -17,6 +17,20 @@ ARTIFACT_MAPPING: Dict[str, str] = {
 }
 """Mapping of artifact type aliases to Testing Farm artifact types."""
 
+COPR_PACKAGE_ALIASES: Dict[str, str] = {
+    "lp": "leapp",
+    "lpr": "leapp-repository",
+}
+"""Mapping of package aliases to COPR package names for reference parsing."""
+
+# ==================== COPR API CONFIGURATION ====================
+
+COPR_BASE_URL: str = "https://copr.fedorainfracloud.org"
+"""Base URL for COPR API endpoints."""
+
+COPR_BUILT_PACKAGES_API_URL: str = f"{COPR_BASE_URL}/api_3/build/built-packages"
+"""API endpoint for fetching built packages from a COPR build."""
+
 # ==================== DEFAULT CONFIG SEARCH PATHS ====================
 
 DEFAULT_USER_CONFIG_PATHS: Tuple[str, ...] = (

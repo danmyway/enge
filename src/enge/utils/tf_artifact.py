@@ -31,299 +31,430 @@ class CoprRef:
         except (ValueError, TypeError):
             self.build_reference = ref_arg
 
-    def get_info(self, packages, repo, reference, composes, options):
-        """ """
-        try:
-            self.build_id = int(reference[0])
-        except (ValueError, TypeError):
-            self.build_reference = reference
+    @staticmethod
+    def _parse_copr_reference(ref_string: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Parse COPR reference format: alias:reference or buildID.
 
-        if self.build_reference == [None]:
-            LOGGER.warning("No specific value was provided for the copr build query!")
+        Args:
+            ref_string: Reference string (e.g., "lp:pr123", "lpr:pr456", or "12345")
+
+        Returns:
+            Tuple of (package_name, version_reference) or (None, None) if buildID
+
+        Examples:
+            "lp:pr123" -> ("leapp", "pr123")
+            "lpr:pr456" -> ("leapp-repository", "pr456")
+            "12345" -> (None, None)  # buildID format
+        """
+        if ":" not in ref_string:
+            # No colon means it's a build ID
+            return None, None
+
+        from .globals import COPR_PACKAGE_ALIASES
+
+        parts = ref_string.split(":", 1)
+        if len(parts) != 2:
+            LOGGER.warning(f"Invalid COPR reference format: {ref_string}")
+            return None, None
+
+        alias, version_ref = parts
+        package_name = COPR_PACKAGE_ALIASES.get(alias)
+
+        if not package_name:
             LOGGER.warning(
-                "The latest build from the project will be used as a testing artifact!"
+                f"Unknown package alias '{alias}'. Valid aliases: {list(COPR_PACKAGE_ALIASES.keys())}"
             )
-        # Get the effective package name (handle both string and list)
-        if isinstance(packages, list):
-            package = packages[0] if packages else None
-        else:
-            package = packages
-        repository = repo  # Keep the original name for compatibility
+            return None, None
 
+        return package_name, version_ref
+
+    @staticmethod
+    def _derive_chroot_from_source(source_spec: Dict[str, Any]) -> str:
+        """
+        Derive COPR chroot from source specification.
+
+        Args:
+            source_spec: Source specification dict with 'major' key
+
+        Returns:
+            Chroot string (e.g., "epel-8-x86_64")
+
+        Examples:
+            {"major": 8, "minor": 10} -> "epel-8-x86_64"
+            {"major": 9, "minor": 4} -> "epel-9-x86_64"
+        """
+        major_version = source_spec.get("major")
+        if not major_version:
+            raise ValidationError("Source specification missing 'major' version")
+
+        # COPR packages are built as noarch, so we always use x86_64
+        chroot = f"epel-{major_version}-x86_64"
+        LOGGER.debug(f"Derived COPR chroot: {chroot}")
+        return chroot
+
+    def _fetch_built_packages(self, build_id: int) -> Dict[str, Any]:
+        """
+        Fetch built packages for a COPR build from the API.
+
+        Args:
+            build_id: COPR build ID
+
+        Returns:
+            Dict with chroot keys containing package information
+
+        Example response structure:
+            {
+                "epel-8-x86_64": {
+                    "packages": [
+                        {"name": "pkg", "version": "1.0", "release": "1.el8", "arch": "noarch", "epoch": null}
+                    ]
+                }
+            }
+        """
+        from .globals import COPR_BUILT_PACKAGES_API_URL
+        from .http_client import http_get
+
+        url = f"{COPR_BUILT_PACKAGES_API_URL}/{build_id}"
+        LOGGER.debug(f"Fetching built packages from: {url}")
+
+        try:
+            response = http_get(url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            LOGGER.debug(f"Successfully fetched packages for build {build_id}")
+            return data
+        except Exception as e:
+            LOGGER.error(f"Failed to fetch built packages for build {build_id}: {e}")
+            raise ValidationError(f"Failed to fetch COPR built packages: {e}")
+
+    @staticmethod
+    def _build_package_list(packages_data: Dict[str, Any], chroot: str) -> List[str]:
+        """
+        Build list of package names from COPR built-packages API response.
+
+        Args:
+            packages_data: Response from built-packages API
+            chroot: Target chroot (e.g., "epel-8-x86_64")
+
+        Returns:
+            List of package names (excluding 'src' arch packages)
+
+        Example:
+            Input: {"epel-8-x86_64": {"packages": [
+                {"name": "pkg1", "arch": "noarch"},
+                {"name": "pkg2", "arch": "src"}
+            ]}}
+            Output: ["pkg1"]
+        """
+        if chroot not in packages_data:
+            LOGGER.warning(
+                f"Chroot '{chroot}' not found in built packages. Available: {list(packages_data.keys())}"
+            )
+            return []
+
+        chroot_data = packages_data.get(chroot, {})
+        packages = chroot_data.get("packages", [])
+
+        # Filter out 'src' architecture packages
+        package_names = [
+            f'{pkg["name"]}-{pkg["version"]}-{pkg["release"]}.{pkg["arch"]}'
+            for pkg in packages
+            if pkg.get("arch") != "src" and pkg.get("name")
+        ]
+
+        LOGGER.info(
+            f"Found {len(package_names)} packages for chroot {chroot}: {package_names}"
+        )
+        return package_names
+
+    def get_info(self, packages, repo, reference, composes, options):
+        """
+        Get COPR build information for testing.
+
+        Supports two reference formats:
+        1. Build ID (integer): Direct build ID lookup
+        2. Alias:reference (string): e.g., "lp:pr123" for leapp PR 123
+
+        Args:
+            packages: Package name(s) - can be overridden by alias parsing
+            repo: Repository name
+            reference: List of references (build IDs or alias:ref strings)
+            composes: List of compose names (source compose)
+            options: Parsed configuration options
+
+        Returns:
+            List of build info dicts with packages list from built-packages API
+        """
+        # Parse reference format
+        ref_str = str(reference[0]) if reference and reference[0] is not None else None
+
+        if not ref_str:
+            LOGGER.critical("No COPR reference provided!")
+            raise ValidationError("COPR reference is required")
+
+        # Try to parse as build ID first
+        try:
+            self.build_id = int(ref_str)
+            parsed_package = None  # Will use config package name
+            version_ref = None
+            LOGGER.debug(f"Parsed reference as build ID: {self.build_id}")
+        except (ValueError, TypeError):
+            # Try parsing as alias:reference format
+            parsed_package, version_ref = self._parse_copr_reference(ref_str)
+            if parsed_package and version_ref:
+                LOGGER.info(
+                    f"Parsed reference '{ref_str}' as package '{parsed_package}', version ref '{version_ref}'"
+                )
+                self.build_reference = [version_ref]
+            else:
+                LOGGER.critical(f"Invalid COPR reference format: '{ref_str}'")
+                LOGGER.critical(
+                    "Expected: build ID (integer) or 'alias:reference' (e.g., 'lp:pr123')"
+                )
+                raise ValidationError("Invalid COPR reference format")
+
+        # Determine effective package name
+        if parsed_package:
+            # Use package from alias parsing
+            package = parsed_package
+        else:
+            # Use package from config
+            if isinstance(packages, list):
+                package = packages[0] if packages else None
+            else:
+                package = packages
+            # Fallback to config package name
+            if not package:
+                package = options.copr_api.get("package") or options.project.get("name")
+
+        if not package:
+            LOGGER.critical("No package name could be determined!")
+            raise ValidationError("Package name is required")
+
+        # Setup COPR API connection
         owner = options.copr_api.get("owner") or options.project.get("owner")
-        rpm_name = options.copr_api.get("package") or options.project.get("name")
+        repository = repo
         owner_is_group = options.copr_api.get("owner_is_group") or False
-        copr_owner = owner
-        if owner_is_group:
-            copr_owner = "".join(("@", owner))
-        group = "g" if owner_is_group else ""
-        info = []
-        if not self.ref:
-            reference = [options.copr_api.get("build_references")]
-        build_reference = reference[0] if isinstance(reference, list) else reference
-        group_str = group if group is not None else ""
-        owner_str = owner if owner is not None else ""
-        rpm_name_str = rpm_name if rpm_name is not None else ""
+        copr_owner = f"@{owner}" if owner_is_group else owner
+
+        # Build base URL for logging
+        group_str = "g" if owner_is_group else ""
         self.copr_build_baseurl = os.path.join(
             "https://copr.fedorainfracloud.org/coprs",
-            group_str,
-            owner_str,
-            rpm_name_str,
+            group_str if group_str else "",
+            owner or "",
+            repository or package or "",
             "build",
         )
-        # Use source compose directly from options
+
+        # Use source compose
         source_compose = options.source_spec["compose_name"]
+        info = []
 
-        # For the new system, we use the source compose directly
-
-        if self.build_reference:
-
-            def _get_correct_build_list(build_ref=None):
-                """
-                Get a clean list of COPR builds that match the specified reference.
-
-                Returns:
-                    list: A list of COPR builds that match the specified reference.
-                """
-                clean_build_list = []
-                reference_pattern = rf".*{build_reference}(\..*|$)"
-                message = f"Gathering the fedora-copr-build information for the referenced {build_ref}."
-                # If no value is provided for the --copr argument nor is set in the config,
-                # query for the latest build in the project
-                if self.build_reference == [None]:
-                    message = "Gathering the fedora-copr-build information for the project's latest copr build."
-                LOGGER.info(message)
-                try:
-                    query = self.session.get_list(copr_owner, repository)
-                except CoprNoResultException as no_copr:
-                    LOGGER.critical(
-                        "There seems to be an issue with the copr_api configuration."
-                    )
-                    if not owner_is_group:
-                        LOGGER.critical(
-                            "Please check, that the owner, owner_is_group and package options are set correctly."
-                        )
-                    LOGGER.debug(f"{type(no_copr).__name__}: {no_copr}")
-                    raise ValidationError("COPR configuration invalid")
-
-                for build_munch in query:
-                    if isinstance(build_munch, list):
-                        if build_munch:
-                            build_munch = build_munch[0]
-                        else:
-                            continue
-                    # Only add builds that match the reference, are not failed, and have the correct package/version
-                    if (
-                        hasattr(build_munch, "state")
-                        and build_munch.state != "failed"
-                        and hasattr(build_munch, "source_package")
-                        and build_munch.source_package.get("name") == package
-                        and build_munch.source_package.get("version") is not None
-                        and re.match(
-                            reference_pattern,
-                            build_munch.source_package.get("version", ""),
-                        )
-                    ):
-                        clean_build_list.append(build_munch)
-
-                if not clean_build_list:
-                    LOGGER.warning(
-                        f"No build for given reference {build_reference} found!"
-                    )
-                    baseurl_str = (
-                        str(self.copr_build_baseurl)
-                        if self.copr_build_baseurl is not None
-                        else ""
-                    )
-                    LOGGER.warning(baseurl_str + "s")
-                return clean_build_list
-
-            for build_munch in _get_correct_build_list(build_reference):
-                if isinstance(build_munch, list):
-                    if build_munch:
-                        build_munch = build_munch[0]
-                    else:
-                        continue
-                build = build_munch
-                for build_info in self.get_build_dictionary(build, composes):
-                    info.append(build_info)
-                break
-
-        elif self.build_id:
+        # Handle reference-based search (alias:ref format)
+        if self.build_reference and version_ref:
             LOGGER.info(
-                f"Gathering the fedora-copr-build information for the referenced buildID {build_reference}."
+                f"Searching for COPR build matching package '{package}', version '{version_ref}'"
             )
+
             try:
-                build_munch = self.session.get(build_reference)
-            except coprexcept.CoprNoResultException as no_copr:
-                LOGGER.critical(f"{type(no_copr).__name__}: {no_copr}")
-                LOGGER.critical("Cowardly refusing to continue.")
-                raise ValidationError("COPR build not found")
-
-            if isinstance(build_munch, list):
-                if build_munch:
-                    build_munch = build_munch[0]
-                else:
-                    return
-            if (
-                hasattr(build_munch, "source_package")
-                and build_munch.source_package.get("name") != package
-            ):
+                query = self.session.get_list(copr_owner, repository)
+            except CoprNoResultException as no_copr:
                 LOGGER.critical(
-                    f"There seems to be some mismatch with the given buildID {build_reference}!"
+                    "Failed to query COPR builds - check copr_api configuration"
                 )
-                # Fix: Check for ownername and projectname attributes
-                ownername = getattr(build_munch, "ownername", "unknown")
-                projectname = getattr(build_munch, "projectname", "unknown")
-                LOGGER.critical(
-                    f"The ID points to owner: {ownername}, project: {projectname}"
-                )
-                LOGGER.critical("Cowardly refusing to continue.")
-                raise ValidationError("COPR build ID mismatch")
+                LOGGER.critical("Verify: owner, owner_is_group, repository settings")
+                LOGGER.debug(f"{type(no_copr).__name__}: {no_copr}")
+                raise ValidationError("COPR configuration invalid")
 
-            elif hasattr(build_munch, "state") and build_munch.state == "failed":
-                LOGGER.critical(
-                    FormatText.format_text(
-                        f"The build with the given ID {build_reference} reports as failed!",
-                        text_col=FormatText.RED,
-                        bold=True,
+            # Build regex pattern for version matching
+            reference_pattern = rf".*{version_ref}(\..*|$)"
+            found_build = None
+
+            for build_munch in query:
+                if isinstance(build_munch, list):
+                    build_munch = build_munch[0] if build_munch else None
+                if not build_munch:
+                    continue
+
+                # Match: not failed, correct package, version matches pattern
+                if (
+                    hasattr(build_munch, "state")
+                    and build_munch.state != "failed"
+                    and hasattr(build_munch, "source_package")
+                    and build_munch.source_package.get("name") == package
+                    and build_munch.source_package.get("version")
+                    and re.match(
+                        reference_pattern, build_munch.source_package.get("version", "")
                     )
-                )
-                LOGGER.critical(
-                    FormatText.format_text(
-                        "Please provide a valid build ID.",
-                        text_col=FormatText.RED,
-                        bold=True,
-                    )
-                )
-                LOGGER.critical(
-                    FormatText.format_text(
-                        "Exiting.", text_col=FormatText.RED, bold=True
-                    )
-                )
-                raise ValidationError("COPR build in failed state")
+                ):
+                    found_build = build_munch
+                    break
 
-            else:
-                build = build_munch
+            if not found_build:
+                LOGGER.critical(
+                    f"No COPR build found for package '{package}' matching '{version_ref}'"
+                )
+                LOGGER.critical(f"Check builds at: {self.copr_build_baseurl}s")
+                raise ValidationError(
+                    f"No matching COPR build found for {package}:{version_ref}"
+                )
 
-            for build_info in self.get_build_dictionary(build, composes):
-                info.append(build_info)
-        else:
-            LOGGER.critical("No build artifact reference nor ID provided!")
-            LOGGER.critical(
-                "Please provide a reference for the build installation "
-                "either through the command line or the config file."
+            # Extract build ID from found build
+            self.build_id = found_build.id
+            LOGGER.info(f"Found COPR build ID: {self.build_id}")
+
+        # Handle direct build ID lookup
+        if self.build_id:
+            LOGGER.info(
+                f"Fetching COPR build information for build ID: {self.build_id}"
             )
+
+            try:
+                build_munch = self.session.get(self.build_id)
+            except coprexcept.CoprNoResultException as no_copr:
+                LOGGER.critical(f"COPR build {self.build_id} not found: {no_copr}")
+                raise ValidationError(f"COPR build {self.build_id} not found")
+
+            # Unwrap if list
+            if isinstance(build_munch, list):
+                build_munch = build_munch[0] if build_munch else None
+
+            if not build_munch:
+                LOGGER.critical(f"Empty response for build ID {self.build_id}")
+                raise ValidationError("Empty build response")
+
+            # Validate build state
+            if hasattr(build_munch, "state") and build_munch.state == "failed":
+                LOGGER.critical(
+                    FormatText.format_text(
+                        f"Build {self.build_id} is in failed state!",
+                        text_col=FormatText.RED,
+                        bold=True,
+                    )
+                )
+                raise ValidationError(f"COPR build {self.build_id} is in failed state")
+
+            # Optionally validate package name match (if we have expected package)
+            if package and hasattr(build_munch, "source_package"):
+                build_package = build_munch.source_package.get("name")
+                if build_package and build_package != package:
+                    LOGGER.warning(
+                        f"Build {self.build_id} is for package '{build_package}', "
+                        f"expected '{package}' - proceeding anyway"
+                    )
+
+            # Get build info using new method
+            for build_info in self.get_build_dictionary(build_munch, composes, options):
+                info.append(build_info)
+
+        if not info:
+            LOGGER.critical("No COPR build information could be retrieved!")
+            raise ValidationError("Failed to retrieve COPR build information")
 
         return info
 
-    def get_build_dictionary(self, build, composes):
+    def get_build_dictionary(self, build, composes, options):
         """
-        Get the dictionary containing build information for each target distribution.
+        Get the dictionary containing build information using the new API-based approach.
 
         Args:
             build: The COPR build object.
-            composes (list): A list of strings representing the target distributions for the COPR build.
+            composes (list): A list of compose names (source compose).
+            options: Parsed configuration options with source_spec.
 
         Returns:
-            list: A list of dictionaries containing build information for each target distribution.
+            list: A list of dictionaries containing build information with packages list.
         """
         build_info = []
 
         def get_first_non_list(obj):
             if isinstance(obj, list):
-                if obj:
-                    return obj[0]
-                else:
-                    return None
+                return obj[0] if obj else None
             return obj
 
         build_obj = get_first_non_list(build)
-        if build_obj is None:
+        if not build_obj:
             return build_info
 
-        build_obj = get_first_non_list(build_obj)
-        if build_obj is None:
-            return build_info
+        # Check for running build
         if hasattr(build_obj, "state") and build_obj.state == "running":
             LOGGER.warning(
-                f"There is currently {build_obj.state} build task, please consider waiting for completion."
+                f"Build {build_obj.id} is currently running. Consider waiting for completion."
             )
-            LOGGER.warning(
-                f"See the project's builds dashboard: {self.copr_build_baseurl}" + "s/"
-            )
-            # Avoid blocking in non-interactive environments
+            LOGGER.warning(f"See: {self.copr_build_baseurl}s/")
+
             if not sys.stdin.isatty():
                 LOGGER.warning(
-                    "Non-interactive environment detected; proceeding with an older build automatically."
+                    "Non-interactive environment - cannot wait for running build"
                 )
+                raise ValidationError("Build is still running")
             else:
-                while True:
-                    user_response = input(
-                        "Do you wish to continue with an older build? (y/n) "
-                    )
-                    if user_response.lower() == "y":
-                        LOGGER.info("Moving on with an older build.")
-                        break
-                    elif user_response.lower() == "n":
-                        LOGGER.info("Exiting.")
-                        raise UserAbort("User aborted due to running COPR build")
-                    else:
-                        LOGGER.warning("Invalid response, please enter 'y' or 'n'. ")
+                user_input = input("Do you wish to continue anyway? (y/n) ")
+                if user_input.lower() != "y":
+                    raise UserAbort("User aborted due to running COPR build")
 
-        build_obj = get_first_non_list(build_obj)
-        if build_obj is None:
-            return build_info
+        # Get package info from build object
         if hasattr(build_obj, "source_package"):
             package_name = build_obj.source_package.get("name", "unknown")
             package_version = build_obj.source_package.get("version", "unknown")
         else:
             package_name = "unknown"
             package_version = "unknown"
+
+        build_id = getattr(build_obj, "id", None)
+        if not build_id:
+            LOGGER.error("Build object has no ID")
+            return build_info
+
+        LOGGER.info(f"Processing build {build_id}: {package_name}-{package_version}")
+
+        # Log build URL
+        build_url = os.path.join(str(self.copr_build_baseurl), str(build_id))
+        LOGGER.debug(f"Build URL: {build_url}")
+
+        # Derive chroot from source specification
+        try:
+            chroot = self._derive_chroot_from_source(options.source_spec)
+        except ValidationError as e:
+            LOGGER.error(f"Failed to derive chroot: {e}")
+            return build_info
+
+        # Fetch packages from API
+        try:
+            packages_data = self._fetch_built_packages(build_id)
+            package_list = self._build_package_list(packages_data, chroot)
+        except ValidationError as e:
+            LOGGER.error(f"Failed to fetch packages: {e}")
+            return build_info
+
+        if not package_list:
+            LOGGER.warning(f"No packages found for chroot {chroot}")
+            return build_info
+
+        # Build info dict for this compose
+        source_compose = (
+            composes[0] if composes else options.source_spec.get("compose_name")
+        )
+
+        copr_info_dict = {
+            "build_id": f"{build_id}:{chroot}",
+            "compose": source_compose,
+            "chroot": chroot,
+            "distro": source_compose,
+            "nvr": f"{package_name}-{package_version}",
+            "packages": package_list,
+        }
+
+        buildid_fmt = FormatText.format_text(build_id, bold=True)
+        compose_fmt = FormatText.format_text(source_compose, bold=True)
         LOGGER.info(
-            "Looking for a buildID of the %s version %s.",
-            package_name,
-            package_version,
+            f"COPR build {buildid_fmt} for {compose_fmt}: {len(package_list)} packages"
         )
-        if isinstance(package_version, str) and len(package_version.split(".")) > 3:
-            timestamp_str = package_version.split(".")[3]
-            timestamp_format = "%Y%m%d%H%M%S"
-            build_time = datetime.strptime(timestamp_str[0:13], timestamp_format)
-            LOGGER.debug(f"Last build found was built at {build_time}")
-        else:
-            build_time = None
-            LOGGER.debug("Could not parse build time from version string.")
-        LOGGER.debug(
-            f"Build URL: {os.path.join(str(self.copr_build_baseurl), str(getattr(build_obj, 'id', ''))) }"
-        )
+        LOGGER.debug(f"Packages: {', '.join(package_list)}")
 
-        for distro in composes:
-            copr_info_dict = {
-                "build_id": None,
-                "compose": distro,
-                "chroot": None,
-                "distro": distro,
-            }
-            build_obj = get_first_non_list(build_obj)
-            if build_obj is None:
-                continue
-            if hasattr(build_obj, "chroots"):
-                for chroot in build_obj.chroots:
-                    copr_info_dict["chroot"] = chroot
-                    copr_info_dict["build_id"] = f"{build_obj.id}:{chroot}" or None
-                    package_name = build_obj.source_package.get("name", "unknown")
-                    package_version = build_obj.source_package.get("version", "unknown")
-                    copr_info_dict["nvr"] = f"{package_name}-{package_version}"
-                    copr_info_dict["package"] = package_name
-                    buildid = FormatText.format_text(build_obj.id, bold=True)
-                    compose = FormatText.format_text(
-                        copr_info_dict["compose"], bold=True
-                    )
-                    LOGGER.info(
-                        f"The copr buildID {buildid} for testing on {compose} was assigned for the test job."
-                    )
-                    build_info.append(copr_info_dict)
-
+        build_info.append(copr_info_dict)
         return build_info
 
 
@@ -586,7 +717,7 @@ class BrewRef:
 
             brew_info_dict = {
                 "build_id": nvr,  # Use NVR instead of task_id as the artifact identifier
-                "package": individual_package_name,  # Use individual package name per NVR
+                "packages": [individual_package_name],  # List format for consistency
                 "compose": source_compose,
                 "distro": options.source_spec.get("compose_name", source_compose),
                 "nvr": nvr,

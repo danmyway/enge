@@ -118,13 +118,31 @@ class SubmitTest:
         self,
         artifact_id: str,
         artifact_type: str,
-        package: str,
+        packages: List[str],
         nvr: Optional[str] = None,
     ):
-        """Add an artifact to the list of artifacts for this test request."""
-        artifact_dict = {"id": artifact_id, "type": artifact_type, "package": package}
+        """
+        Add an artifact to the list of artifacts for this test request.
+
+        Args:
+            artifact_id: Build ID or identifier
+            artifact_type: Type of artifact (e.g., "fedora-copr-build")
+            packages: List of package names
+            nvr: NVR string for display/logging
+        """
+        if not packages:
+            LOGGER.warning(f"No packages provided for artifact {artifact_id}")
+            packages = []
+
+        artifact_dict = {
+            "id": artifact_id,
+            "type": artifact_type,
+            "packages": packages,
+        }
+
         if nvr is not None:
             artifact_dict["nvr"] = nvr
+
         self.artifacts.append(artifact_dict)
 
     def set_auto_tags(
@@ -343,7 +361,7 @@ class SubmitTest:
                     {
                         "id": artifact["id"],
                         "type": artifact["type"],
-                        "packages": [artifact["package"]],
+                        "packages": artifact["packages"],
                     }
                     for artifact in self.artifacts
                 ]
@@ -418,11 +436,24 @@ class SubmitTest:
                 f"   Artifacts:        {len(self.artifacts)} build(s) included\n"
             )
             for artifact in self.artifacts:
-                # Show NVR if available, otherwise show package name
+                # Show NVR and packages
+                packages = artifact.get("packages", [])
+                pkg_count = len(packages)
+
                 if artifact.get("nvr"):
                     artifact_info += f"                     • {artifact['type']}: {artifact['id']} ({artifact['nvr']})\n"
                 else:
-                    artifact_info += f"                     • {artifact['type']}: {artifact['id']} ({artifact['package']})\n"
+                    pkg_str = (
+                        f"{pkg_count} package(s)"
+                        if pkg_count > 1
+                        else (packages[0] if packages else "no packages")
+                    )
+                    artifact_info += f"                     • {artifact['type']}: {artifact['id']} ({pkg_str})\n"
+
+                # Always show package list if multiple packages
+                if pkg_count > 1:
+                    for pkg in packages:
+                        artifact_info += f"                       - {pkg}\n"
         else:
             artifact_info = "   Artifacts:        Using compose artifacts\n"
 
