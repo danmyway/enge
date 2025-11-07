@@ -240,16 +240,41 @@ def process_request_spec(
 
     # Plan filter
     try:
+        # Build additional filters based on RHSM flags
+        additional_filters = []
+        only_rhsm_mock_cdn = getattr(
+            resolved_opts.cli_args, "only_rhsm_mock_cdn", False
+        )
+        no_rhsm = getattr(resolved_opts.cli_args, "no_rhsm", False)
+        only_rhsm_stage_cdn = getattr(
+            resolved_opts.cli_args, "only_rhsm_stage_cdn", False
+        )
+        if only_rhsm_mock_cdn or only_rhsm_stage_cdn:
+            additional_filters.append("tag:rhsm")
+            LOGGER.debug("Adding tag:rhsm to plan filter")
+        elif no_rhsm:
+            additional_filters.append("tag:-rhsm")
+            LOGGER.info("Excluding RHSM-tagged tests from execution")
+            LOGGER.debug("Adding tag:-rhsm to plan filter")
+
         tier_plan_filter = None
         base_plan_filter = None
         if tier:
             tier_config = resolved_opts.tests.get("tier", {})
             tier_plan_filter = generate_tier_plan_filter(
-                [tier], tier_config, upgrade_path
+                [tier],
+                tier_config,
+                upgrade_path,
+                additional_filters if additional_filters else None,
             )
             LOGGER.debug(f"Generated plan filter for tier '{tier}': {tier_plan_filter}")
         else:
-            base_plan_filter = generate_tier_plan_filter([], None, upgrade_path)
+            base_plan_filter = generate_tier_plan_filter(
+                [],
+                None,
+                upgrade_path,
+                additional_filters if additional_filters else None,
+            )
             LOGGER.debug(f"Generated base non-tier plan filter: {base_plan_filter}")
         cli_planfilter = getattr(resolved_opts.cli_args, "planfilter", None)
         submit_test.planfilter = cli_planfilter or tier_plan_filter or base_plan_filter
@@ -356,6 +381,13 @@ def process_request_spec(
             )
     except ValueError as e:
         LOGGER.error(f"Failed to parse --context: {e}")
+
+    # Apply RHSM-specific settings if flags are set
+    only_rhsm_stage_cdn = getattr(resolved_opts.cli_args, "only_rhsm_stage_cdn", False)
+    if only_rhsm_stage_cdn:
+        merged_env_vars["RHSM_MODE"] = "stage"
+        temp_opts.tmt_context["product_phase"] = "rc"
+        LOGGER.debug("Applied RHSM stage settings: RHSM_MODE=stage, product_phase=rc")
 
     submit_test.set_specific_data([arch], merged_env_vars, temp_opts.tmt_context)
 

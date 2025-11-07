@@ -389,7 +389,10 @@ def parse_architectures(arch_input: List[str]) -> List[str]:
 
 
 def generate_tier_plan_filter(
-    tiers: List[str], tier_config: Dict[str, str], upgrade_path: str
+    tiers: List[str],
+    tier_config: Dict[str, str],
+    upgrade_path: str,
+    additional_filters: Optional[List[str]] = None,
 ) -> str:
     """
     Generate plan_filter from tier specifications.
@@ -399,6 +402,7 @@ def generate_tier_plan_filter(
         tiers: List of tier names from CLI
         tier_config: Tier configuration mapping from config
         upgrade_path: Upgrade path alias (e.g., "8to9")
+        additional_filters: Optional list of additional filter strings to include (e.g., ["tag:rhsm"])
 
     Returns:
         Combined plan_filter string
@@ -411,9 +415,15 @@ def generate_tier_plan_filter(
         'tag:8to9 & tag:smoke & enabled:true'
         >>> generate_tier_plan_filter([], None, "8to9")
         'tag:8to9 & enabled:true'
+        >>> generate_tier_plan_filter([], None, "8to9", ["tag:rhsm"])
+        'tag:8to9 & tag:rhsm & enabled:true'
     """
     if not tiers:
-        return f"tag:{upgrade_path} & enabled:true"
+        base_filters = [f"tag:{upgrade_path}"]
+        if additional_filters:
+            base_filters.extend(additional_filters)
+        base_filters.append("enabled:true")
+        return " & ".join(base_filters)
 
     # Look up tier mappings
     tier_filters = []
@@ -429,7 +439,10 @@ def generate_tier_plan_filter(
         LOGGER.debug(f"Mapped tier '{tier}' to filter '{tier_filter}'")
 
     # Combine upgrade path with tier filters using & operator
-    all_filters = [f"tag:{upgrade_path}"] + tier_filters + ["enabled:true"]
+    all_filters = [f"tag:{upgrade_path}"] + tier_filters
+    if additional_filters:
+        all_filters.extend(additional_filters)
+    all_filters.append("enabled:true")
     combined_filter = " & ".join(all_filters)
 
     return combined_filter
