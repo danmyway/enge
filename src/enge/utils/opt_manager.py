@@ -1103,6 +1103,20 @@ class ParsedOpts:
             # Store effective tiers for use in dispatch and context generation
             self.effective_tiers = effective_values.get("tiers")
 
+            # Validate tiers from config if they exist (CLI tiers already validated above)
+            if self.effective_tiers and not getattr(self.cli_args, "tier", None):
+                tier_config = self.tests.get("tier", {})
+                if tier_config:
+                    for tier in self.effective_tiers:
+                        if tier not in tier_config:
+                            available_tiers = list(tier_config.keys())
+                            logger.error(
+                                f"Tier '{tier}' from config not found in tier configuration. Available tiers: {available_tiers}"
+                            )
+                            raise ValidationError(
+                                f"Tier '{tier}' from config not found in tier configuration"
+                            )
+
             # Generate TMT context (architecture will be set per environment)
             # Use first tier from effective_tiers if available
             first_tier = None
