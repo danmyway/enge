@@ -192,7 +192,131 @@ enge test --source 9.7 --plan /plans/tier0 --context event=nightly --context cus
 
 # Multiple architectures in non-set mode create one request per architecture
 enge test --source 9.7 --plan /plans/tier0 --arch s390x --arch x86_64
+
+# Reserve the machine after test run for debugging (60 minutes default)
+enge test --source 9.7 --plan /plans/tier0 --reserve
+
+# Reserve with custom duration (120 minutes)
+enge test --source 9.7 --plan /plans/tier0 --reserve --reserve-duration 120
 ```
+
+###### Machine Reservation for Debugging
+
+The `--reserve` and `--reserve-duration` flags allow you to reserve the test machine after the test run completes, providing time for manual inspection and debugging.
+
+**How It Works:**
+
+When `--reserve` is enabled, enge automatically:
+1. Adds the Testing Farm reserve system test to the discover step using TMT extra_args
+2. Sets the `TF_RESERVATION_DURATION` environment variable with the specified duration in minutes
+
+**Arguments:**
+- `--reserve`: Enable machine reservation after test completion
+- `--reserve-duration DURATION`: Specify reservation duration in minutes (default: 60)
+
+**Technical Details:**
+
+The reservation functionality is implemented in the dedicated `enge.reserve` module, which provides:
+- `get_reservation_environment_variables()` - Generates TF_RESERVATION_DURATION environment variable
+- `get_reservation_tmt_extra_args()` - Configures TMT discover step with the reserve system test
+- `get_reservation_secrets()` - Manages SSH authorized keys for machine access
+- `get_security_group_rules()` - Fetches public IP and creates security group rules for network access
+- `adjust_test_selection_for_reservation()` - Modifies test selection to include the reserve system test
+
+When using `--reserve` with `--test` or `--testfilter`, the reserve system test is automatically appended:
+- With `--test`: Adds ` | /testing-farm/reserve-system` to the test_name field
+- With `--testfilter`: Adds ` | name:/testing-farm/reserve-system` to the test_filter field
+
+The reservation is implemented by:
+- Adding `extra_args.discover` to the TMT configuration with the reserve system test:
+  ```json
+  {
+    "tmt": {
+      "extra_args": {
+        "discover": ["--insert --how fmf --url https://gitlab.com/testing-farm/tests --ref main --test /testing-farm/reserve-system"]
+      }
+    }
+  }
+  ```
+- Setting the `TF_RESERVATION_DURATION` environment variable in the Testing Farm payload
+- Adding SSH authorized keys to the `secrets` section for authentication:
+  ```json
+  {
+    "secrets": {
+      "TF_RESERVATION_AUTHORIZED_KEYS_BASE64": "<base64-encoded-ssh-public-keys>"
+    }
+  }
+  ```
+- Configuring security group rules to allow network access from your public IP:
+  ```json
+  {
+    "settings": {
+      "provisioning": {
+        "security_group_rules_ingress": [
+          {
+            "type": "ingress",
+            "protocol": "-1",
+            "cidr": "<your-public-ip>/32",
+            "port_min": 0,
+            "port_max": 65535
+          }
+        ]
+      }
+    }
+  }
+  ```
+  Your public IP is automatically fetched from https://ipv4.icanhazip.com
+
+**SSH Keys Requirement:**
+
+To access the reserved machine, enge automatically reads all SSH public keys from `~/.ssh/*.pub`, encodes them as base64, and includes them in the Testing Farm payload. This allows you to SSH into the reserved machine using your existing SSH keys.
+
+- Ensure you have at least one SSH public key in `~/.ssh/` (e.g., `~/.ssh/id_rsa.pub`, `~/.ssh/id_ed25519.pub`)
+- If no SSH keys are found, a warning will be displayed, and you may not be able to access the reserved machine
+- All `.pub` files in `~/.ssh/` are automatically included
+
+**Usage Examples:**
+
+```bash
+# Reserve machine with default 60 minute duration
+enge test --copr pr123 --tier tier0 --reserve
+
+# Reserve machine for 2 hours (120 minutes)
+enge test --brew leapp-0.16.0-1.el9 --plan /plans/tier0 --reserve --reserve-duration 120
+
+# Use with test sets
+enge test --set pre-release-smoke --reserve --reserve-duration 90
+
+# Combine with dryrun to verify payload
+enge test --source 9.7 --plan /plans/tier0 --reserve --dryrun
+```
+
+When reservation is enabled, the request summary will display reservation information:
+
+```
+~ REQUEST SUMMARY ~
+   Source compose:   RHEL-9.7.0-Nightly
+   Plan:             /plans/tier0
+   Architecture:     x86_64
+   Artifacts:        Using compose artifacts
+   Test results:     https://artifacts.dev.testing-farm.io/...
+
+   🔒 RESERVATION ENABLED
+   Duration:         60 minutes
+   The system will be reserved after test completion.
+   Access instructions will be available in the test results.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+```
+
+**Notes:**
+- The reservation begins after all tests complete
+- Access instructions will be provided in the Testing Farm results
+- The machine will be automatically released after the specified duration
+- This feature is primarily intended for debugging test failures
+
+**Future Development:**
+
+A standalone `enge reserve` subcommand is planned for future releases, which will provide direct reservation capabilities independent of test execution. This will allow users to reserve machines without running tests, manage existing reservations, and perform other reservation-related operations.
 
 ###### Compose resolution and target derivation
 

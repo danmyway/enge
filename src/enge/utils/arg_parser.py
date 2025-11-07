@@ -253,6 +253,24 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "Can be combined with --set-tag for additional custom tags.",
     )
 
+    # Debugging tools
+    test.add_argument(
+        "--reserve",
+        action="store_true",
+        help="Reserve the machine after the test run is finished. "
+        "Needs to be used in combination with --reserve-duration",
+    )
+
+    test.add_argument(
+        "--reserve-duration",
+        type=int,
+        default=60,
+        metavar="DURATION",
+        help="Duration of the reserve in minutes. "
+        "Needs to be used in combination with --reserve. "
+        "Defaults to 60 minutes.",
+    )
+
     # ==================== REPORT SUBCOMMAND ====================
     report = subparsers.add_parser(
         "report",

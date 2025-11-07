@@ -5,6 +5,7 @@ This module provides common utilities including text formatting and date/time he
 """
 
 from datetime import datetime
+import os
 from typing import Optional
 
 
