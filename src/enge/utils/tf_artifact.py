@@ -749,25 +749,44 @@ class BrewRef:
             LOGGER.debug(
                 f"Gathering brew build information for {package} version {reference}"
             )
-            # Append the list of TaskID's collected from the listBuilds query
-            tasks = [
-                build_info.get("task_id")
-                for build_info in query
-                for ref in reference
-                if ref in build_info.get("nvr")
-            ]
-            volume_names = [
-                build_info.get("volume_name")
-                for build_info in query
-                for ref in reference
-                if ref in build_info.get("nvr")
-            ]
-            nvrs = [
-                build_info.get("nvr")
-                for build_info in query
-                for ref in reference
-                if ref in build_info.get("nvr")
-            ]
+            # For each reference, find the latest build that exactly matches the NVR
+            # (not substring match to avoid matching suffixed builds like .draft, .test, etc.)
+            tasks = []
+            volume_names = []
+            nvrs = []
+
+            for ref in reference:
+                # Find all builds that exactly match this reference
+                matching_builds = [
+                    build_info for build_info in query if build_info.get("nvr") == ref
+                ]
+
+                if matching_builds:
+                    # If multiple builds exist with the same NVR, select the latest one by completion_time
+                    if len(matching_builds) > 1:
+                        try:
+                            matching_builds.sort(
+                                key=lambda x: x.get("completion_time", 0), reverse=True
+                            )
+                            LOGGER.debug(
+                                f"Multiple builds found for NVR '{ref}', selected latest "
+                                f"(task_id: {matching_builds[0].get('task_id')}, "
+                                f"completion_time: {matching_builds[0].get('completion_time')})"
+                            )
+                        except (TypeError, KeyError) as e:
+                            LOGGER.warning(
+                                f"Error sorting builds for '{ref}': {e}, using first result"
+                            )
+
+                    latest_build = matching_builds[0]
+                    tasks.append(latest_build.get("task_id"))
+                    volume_names.append(latest_build.get("volume_name"))
+                    nvrs.append(latest_build.get("nvr"))
+                    LOGGER.info(
+                        f"Selected build for '{ref}': task_id={latest_build.get('task_id')}, nvr={latest_build.get('nvr')}"
+                    )
+                else:
+                    LOGGER.warning(f"No exact match found for NVR reference: {ref}")
 
         elif self.task_id:
             LOGGER.debug(
