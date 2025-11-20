@@ -206,6 +206,37 @@ class SubmitTest:
             if self.target_compose and tmt_context is not None:
                 tmt_context["target_compose"] = self.target_compose
 
+    def populate_from_request_data(self, request_data: Dict[str, Any]) -> None:
+        """
+        Populate SubmitTest attributes from extracted request data (e.g., from rerun).
+
+        Args:
+            request_data: Dictionary containing fields extracted from a Testing Farm request
+        """
+        self.tests_git_url = request_data.get("tests_git_url")
+        self.tests_git_ref = request_data.get("tests_git_ref")
+        self.plan = request_data.get("plan")
+        self.planfilter = request_data.get("planfilter")
+        self.testfilter = request_data.get("testfilter")
+        self.test_name = request_data.get("test_name")
+        self.compose = request_data.get("compose")
+        self.artifacts = request_data.get("artifacts", [])
+        self.business_unit_tag = request_data.get("business_unit_tag")
+        self.tmt_distro = request_data.get("tmt_distro")
+        self.parallel_limit = request_data.get("parallel_limit")
+
+        # Set architectures and use set_specific_data for TMT context and env vars
+        architectures = request_data.get("architectures", [])
+        tmt_context = request_data.get("tmt_context", {})
+        env_vars = request_data.get("environment_variables", {})
+
+        if architectures:
+            self.set_specific_data(architectures, env_vars, tmt_context)
+        else:
+            # Fallback: set TMT context and env vars directly if no architectures
+            self.set_tmt_context = tmt_context
+            self.set_environment_variables = env_vars
+
     def record_task_ids(self, task_id):
         self.latest_tasks_file = parsed_opts.archive_tasks_latest
         self.archive_tasks_default_path = parsed_opts.archive_tasks_default
@@ -437,7 +468,15 @@ class SubmitTest:
             )
             for artifact in self.artifacts:
                 # Show NVR and packages
-                packages = artifact.get("packages", [])
+                packages = (
+                    artifact.get("packages", [])
+                    if artifact.get("packages")
+                    else [
+                        f"artifact type: {artifact.get('type', None)}, artifact id: {artifact.get('id', None)}"
+                    ]
+                )
+                print(artifact)
+                print(packages)
                 pkg_count = len(packages)
 
                 if artifact.get("nvr"):
@@ -493,11 +532,16 @@ class SubmitTest:
             "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
         )
 
-        def _handle_dry_run(payload_raw=self.build_payload()):
+        def _handle_dry_run():
             from pygments import highlight, lexers, formatters
 
             LOGGER.info("DRY RUN | Printing out requested payload:")
-            payload_formatted = json.dumps(payload_raw, indent=4)
+            # Use stored payload if available (for rerun), otherwise build from attributes
+            if self.payload_raw:
+                payload_to_display = self.payload_raw
+            else:
+                _, payload_to_display = self.build_payload()
+            payload_formatted = json.dumps(payload_to_display, indent=4)
             colorful_json = highlight(
                 payload_formatted, lexers.JsonLexer(), formatters.TerminalFormatter()
             )
@@ -513,6 +557,8 @@ class SubmitTest:
         # Check for dry run first - don't send actual request if dry run is enabled
         if getattr(parsed_opts.cli_args, "dryrun", False):
             LOGGER.debug("Dry run mode - skipping actual request to Testing Farm")
+            # Store the payload for dry run display (may be a pre-built payload for rerun)
+            self.payload_raw = payload_raw
             self.dispatch_summary = self.assess_summary_message()
             print(self.dispatch_summary)
             return

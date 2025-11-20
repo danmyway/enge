@@ -25,6 +25,78 @@ def _brew_ref_type(value):
     return BrewRef(value)
 
 
+def _add_input_source_args(parser: argparse.ArgumentParser) -> None:
+    """
+    Add common input source arguments (-f/--file, -i/--input, --get-tag)
+    to a parser. Used by report, rerun, reportportal, and cancel subcommands.
+    """
+    parser.add_argument(
+        "-f",
+        "--file",
+        action="append",
+        metavar="FILE",
+        help="Filepath containing request IDs, artifact URLs, or request URLs to parse. "
+        "Can be provided multiple times: -f file1 -f ~/file2",
+    )
+
+    parser.add_argument(
+        "-i",
+        "--input",
+        action="append",
+        metavar="ID_OR_URL",
+        help="Request ID, artifact URL, or request URL to parse from command line. "
+        "Can be provided multiple times: -i id1 -i id2",
+    )
+
+    parser.add_argument(
+        "--get-tag",
+        action="append",
+        metavar="TAG",
+        help="Query for all task results under a given tag. Can be used multiple times.",
+    )
+
+
+def _add_dryrun_arg(
+    parser: argparse.ArgumentParser, help_text: Optional[str] = None
+) -> None:
+    """
+    Add --dryrun argument to a parser.
+
+    Args:
+        parser: The parser to add the argument to
+        help_text: Custom help text. If None, uses a default message.
+    """
+    default_help = (
+        "Print the payload that would be sent to Testing Farm without sending it."
+    )
+    parser.add_argument(
+        "--dryrun",
+        action="store_true",
+        help=help_text or default_help,
+    )
+
+
+def _add_tagging_args(parser: argparse.ArgumentParser) -> None:
+    """
+    Add common tagging arguments (--set-tag, --auto-tag) to a parser.
+    Used by test and rerun subcommands.
+    """
+    parser.add_argument(
+        "--set-tag",
+        action="append",
+        metavar="TAG",
+        help="Tag the archived task file with a custom tag. Can be used multiple times.",
+    )
+
+    parser.add_argument(
+        "--auto-tag",
+        action="store_true",
+        help="Automatically tag archived task files with set name, architecture, and tier information. "
+        "Tags will be in the format: setname.arch.tier (e.g., pre-release.x86_64.tier0). "
+        "Can be combined with --set-tag for additional custom tags.",
+    )
+
+
 def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     """
     Define and parse command-line arguments for enge.
@@ -254,26 +326,9 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Wait for successful API response after submitting request.",
     )
 
-    test.add_argument(
-        "--dryrun",
-        action="store_true",
-        help="Print the payload that would be sent to Testing Farm without sending it.",
-    )
-
-    test.add_argument(
-        "--set-tag",
-        action="append",
-        metavar="TAG",
-        help="Tag the archived task file with a custom tag. Can be used multiple times.",
-    )
-
-    test.add_argument(
-        "--auto-tag",
-        action="store_true",
-        help="Automatically tag archived task files with set name, architecture, and tier information. "
-        "Tags will be in the format: setname.arch.tier (e.g., pre-release.x86_64.tier0). "
-        "Can be combined with --set-tag for additional custom tags.",
-    )
+    # Execution control
+    _add_dryrun_arg(test)
+    _add_tagging_args(test)
 
     # ==================== REPORT SUBCOMMAND ====================
     report = subparsers.add_parser(
@@ -285,30 +340,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     # Input sources
-    report.add_argument(
-        "-f",
-        "--file",
-        action="append",
-        metavar="FILE",
-        help="Filepath containing request IDs, artifact URLs, or request URLs to parse. "
-        "Can be provided multiple times: -f file1 -f ~/file2",
-    )
-
-    report.add_argument(
-        "-i",
-        "--input",
-        action="append",
-        metavar="ID_OR_URL",
-        help="Request ID, artifact URL, or request URL to parse from command line. "
-        "Can be provided multiple times: -i id1 -i id2",
-    )
-
-    report.add_argument(
-        "--get-tag",
-        action="append",
-        metavar="TAG",
-        help="Query for all task results under a given tag. Can be used multiple times.",
-    )
+    _add_input_source_args(report)
 
     # Output control
     report.add_argument(
@@ -382,53 +414,12 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         parents=[common],
     )
 
-    # Input sources (same as report)
-    rerun.add_argument(
-        "-f",
-        "--file",
-        action="append",
-        metavar="FILE",
-        help="Filepath containing request IDs, artifact URLs, or request URLs to parse. "
-        "Can be provided multiple times: -f file1 -f ~/file2",
-    )
-
-    rerun.add_argument(
-        "-i",
-        "--input",
-        action="append",
-        metavar="ID_OR_URL",
-        help="Request ID, artifact URL, or request URL to parse from command line. "
-        "Can be provided multiple times: -i id1 -i id2",
-    )
-
-    rerun.add_argument(
-        "--get-tag",
-        action="append",
-        metavar="TAG",
-        help="Query for all task results under a given tag. Can be used multiple times.",
-    )
+    # Input sources
+    _add_input_source_args(rerun)
 
     # Rerun control
-    rerun.add_argument(
-        "--set-tag",
-        action="append",
-        metavar="TAG",
-        help="Tag the archived task file with a custom tag. Can be used multiple times.",
-    )
-
-    rerun.add_argument(
-        "--auto-tag",
-        action="store_true",
-        help="Automatically tag archived task files with set name, architecture, and tier information. "
-        "Tags will be in the format: setname.arch.tier (e.g., pre-release.x86_64.tier0). "
-        "Can be combined with --set-tag for additional custom tags.",
-    )
-
-    rerun.add_argument(
-        "--dryrun",
-        action="store_true",
-        help="Print the payload that would be sent to Testing Farm without sending it.",
-    )
+    _add_tagging_args(rerun)
+    _add_dryrun_arg(rerun)
 
     rerun.add_argument(
         "--error",
@@ -465,37 +456,13 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Test ReportPortal connection and show sample data for debugging.",
     )
 
-    # Input sources (same as report and rerun) - for --finish action
-    reportportal.add_argument(
-        "-f",
-        "--file",
-        action="append",
-        metavar="FILE",
-        help="Filepath containing request IDs, artifact URLs, or request URLs. "
-        "Can be provided multiple times: -f file1 -f ~/file2",
-    )
-
-    reportportal.add_argument(
-        "-i",
-        "--input",
-        action="append",
-        metavar="ID_OR_URL",
-        help="Request ID, artifact URL, or request URL from command line. "
-        "Can be provided multiple times: -i id1 -i id2",
-    )
-
-    reportportal.add_argument(
-        "--get-tag",
-        action="append",
-        metavar="TAG",
-        help="Query for all task results under a given tag. Can be used multiple times.",
-    )
+    # Input sources (for --finish action)
+    _add_input_source_args(reportportal)
 
     # ReportPortal control options
-    reportportal.add_argument(
-        "--dryrun",
-        action="store_true",
-        help="Show what would be sent to ReportPortal without actually finishing launches.",
+    _add_dryrun_arg(
+        reportportal,
+        help_text="Show what would be sent to ReportPortal without actually finishing launches.",
     )
 
     # ==================== CANCEL SUBCOMMAND ====================
@@ -506,37 +473,13 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         parents=[common],
     )
 
-    # Input sources (same as report and rerun)
-    cancel.add_argument(
-        "-f",
-        "--file",
-        action="append",
-        metavar="FILE",
-        help="Filepath containing request IDs, artifact URLs, or request URLs to cancel. "
-        "Can be provided multiple times: -f file1 -f ~/file2",
-    )
-
-    cancel.add_argument(
-        "-i",
-        "--input",
-        action="append",
-        metavar="ID_OR_URL",
-        help="Request ID, artifact URL, or request URL to cancel from command line. "
-        "Can be provided multiple times: -i id1 -i id2",
-    )
-
-    cancel.add_argument(
-        "--get-tag",
-        action="append",
-        metavar="TAG",
-        help="Query for all tasks under a given tag to cancel. Can be used multiple times.",
-    )
+    # Input sources
+    _add_input_source_args(cancel)
 
     # Cancel control
-    cancel.add_argument(
-        "--dryrun",
-        action="store_true",
-        help="Show which tasks would be cancelled without actually cancelling them.",
+    _add_dryrun_arg(
+        cancel,
+        help_text="Show which tasks would be cancelled without actually cancelling them.",
     )
 
     parsed_args = parser.parse_args(args)

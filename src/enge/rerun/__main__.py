@@ -73,17 +73,41 @@ class RerunJobs:
                 # Keep only FAILED results (exclude ERROR)
                 result_filter.append("ERROR")
 
-            # Filter test suites based on the result filter
-            filtered_suites = [
-                suite
-                for suite in details["testsuites"]
-                if suite["testsuite_result"] not in result_filter
-            ]
+            # Filter test suites based on the result filter and collect failed tests per suite
+            filtered_suites = []
+            suite_test_mapping = {}  # Map suite name to list of failed test names
+
+            for suite in details["testsuites"]:
+                # Skip suites that don't match result filter
+                if suite["testsuite_result"] in result_filter:
+                    continue
+
+                # Extract failed testcase names from this suite
+                failed_test_names = []
+                for testcase in suite.get("testcases", []):
+                    # Collect testcase names that failed/errored (not skipped or passed)
+                    if testcase["testcase_result"] not in ["SKIPPED", "PASSED"]:
+                        # Split on '::' and take the last part, then suffix with $
+                        test_name = testcase["testcase_name"].split("::")[-1] + "$"
+                        failed_test_names.append(test_name)
+
+                # Store mapping of suite to its failed tests
+                suite_name = suite["testsuite_name"]
+                suite_test_mapping[suite_name] = failed_test_names
+                filtered_suites.append(suite)
 
             # Process and store data for filtered test suites
-            suite_names = "|".join(suite["testsuite_name"] for suite in filtered_suites)
-            if suite_names:
-                self.processed_data[key] = (suite_names, details["target_name"])
+            if filtered_suites:
+                # Suffix the suite name with $ to indicate that it is an end of a string match
+                suite_names = "|".join(
+                    suite["testsuite_name"] + "$" for suite in filtered_suites
+                )
+                # Store suite names, compose, and suite-to-tests mapping
+                self.processed_data[key] = (
+                    suite_names,
+                    details["source_compose"],
+                    suite_test_mapping,
+                )
                 self.rerun_uuids.append(key)
 
         # Log and display qualifying plans for a re-run
@@ -91,21 +115,39 @@ class RerunJobs:
             info_table = PrettyTable()
             info_table.field_names = [
                 "Original Request",
-                "Target",
+                "Source Compose Name",
                 "Arch",
                 "Re-run Plans",
+                "Re-run Tests",
             ]
 
             logger.info("The following plans qualify for a re-run:")
             for req in self.processed_data.keys():
-                data = self.processed_data[
-                    req
-                ]  # Use direct access since we're iterating over keys
-                rerun_plans = "\n".join(data[0].split("|"))
-                rerun_target = data[1]
-                rerun_arch = "placeholder_arch"
-                row = [req, rerun_target, rerun_arch, rerun_plans]
+                data = self.processed_data[req]
+                suite_names_list = [s.replace("$", "") for s in data[0].split("|")]
+                rerun_source_compose = data[1]
+                suite_test_mapping = data[2] if len(data) > 2 and data[2] else {}
+                rerun_arch = self.parsed_dict[req]["testsuites"][0]["testsuite_arch"]
 
+                # Build plans column: just plan names
+                rerun_plans = "\n".join(suite_names_list)
+
+                # Build tests column: aligned with plans, showing tests indented under their plans
+                tests_aligned = []
+                for suite_name in suite_names_list:
+                    failed_tests = suite_test_mapping.get(suite_name, [])
+                    if failed_tests:
+                        # Add tests for this plan (remove $ suffix for display)
+                        for test_name in failed_tests:
+                            display_name = test_name.rstrip("$")
+                            tests_aligned.append(display_name)
+                    else:
+                        # Add blank line to align with plan that has no tests
+                        tests_aligned.append("")
+
+                rerun_tests = "\n".join(tests_aligned) if tests_aligned else ""
+
+                row = [req, rerun_source_compose, rerun_arch, rerun_plans, rerun_tests]
                 info_table.add_row(row, divider=True)
             info_table.align = "l"
             print(info_table)
@@ -121,6 +163,168 @@ class RerunJobs:
                 )
             )
 
+    def drop_payload_keys(self, keys_to_drop: list) -> None:
+        """
+        Drop additional keys from all rerun payloads.
+
+        Args:
+            keys_to_drop: List of key paths to drop. Supports dot notation for nested keys.
+                         For environments, use "environments.0.key" (there's always exactly one environment).
+                         (e.g., ["some_key", "nested.key", "environments.0.tmt.context.some_key"])
+        """
+        for payload in self.rerun_payloads:
+            for key_path in keys_to_drop:
+                self._drop_nested_key(payload, key_path)
+
+    def drop_payload_keys_by_pattern(self, key_path: str, pattern: str) -> None:
+        """
+        Drop keys matching a pattern from a specific path in all rerun payloads.
+
+        Args:
+            key_path: Path to the dictionary containing keys to filter (e.g., "environments.0.variables").
+                     Supports dot notation and array indices.
+            pattern: Pattern to match keys against. Can be:
+                    - Prefix pattern: "PACKIT_*" (matches keys starting with "PACKIT_")
+                    - Suffix pattern: "*_suffix" (matches keys ending with "_suffix")
+                    - Contains pattern: "*middle*" (matches keys containing "middle")
+                    - Exact pattern: "exact_key" (matches exact key name)
+        """
+        for payload in self.rerun_payloads:
+            target_dict = self._get_nested_value(payload, key_path)
+            if isinstance(target_dict, dict):
+                keys_to_drop = self._match_keys(target_dict.keys(), pattern)
+                for key in keys_to_drop:
+                    target_dict.pop(key, None)
+
+    def _get_nested_value(self, payload: Dict[str, Any], key_path: str) -> Any:
+        """Get a nested value from payload, supporting dot notation and array indices."""
+        keys = key_path.split(".")
+        current = payload
+
+        for key in keys:
+            if key.isdigit():
+                idx = int(key)
+                if isinstance(current, list) and 0 <= idx < len(current):
+                    current = current[idx]
+                else:
+                    return None
+            else:
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
+                else:
+                    return None
+
+        return current
+
+    def _match_keys(self, keys: Any, pattern: str) -> list:
+        """
+        Match keys against a pattern.
+
+        Args:
+            keys: Iterable of key names
+            pattern: Pattern string (supports * as wildcard)
+
+        Returns:
+            List of matching keys
+        """
+        if not pattern:
+            return []
+
+        matches = []
+
+        # Handle different pattern types
+        if pattern.startswith("*") and pattern.endswith("*"):
+            # Contains pattern: *middle*
+            substring = pattern[1:-1]
+            matches = [k for k in keys if substring in k]
+        elif pattern.startswith("*"):
+            # Suffix pattern: *_suffix
+            suffix = pattern[1:]
+            matches = [k for k in keys if k.endswith(suffix)]
+        elif pattern.endswith("*"):
+            # Prefix pattern: PACKIT_*
+            prefix = pattern[:-1]
+            matches = [k for k in keys if k.startswith(prefix)]
+        else:
+            # Exact match (no wildcard)
+            matches = [k for k in keys if k == pattern]
+
+        return matches
+
+    def _drop_nested_key(self, payload: Dict[str, Any], key_path: str) -> None:
+        """
+        Drop a key from payload, supporting dot notation for nested keys.
+        Supports array indices (e.g., "environments.0.key" for the single environment).
+        """
+        keys = key_path.split(".")
+        current = payload
+
+        for key in keys[:-1]:
+            # Handle array index
+            if key.isdigit():
+                idx = int(key)
+                if isinstance(current, list) and 0 <= idx < len(current):
+                    current = current[idx]
+                else:
+                    return  # Invalid index or not an array
+            else:
+                # Regular dict key
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
+                else:
+                    return  # Path doesn't exist, nothing to drop
+
+        # Drop the final key
+        final_key = keys[-1]
+        if isinstance(current, dict):
+            current.pop(final_key, None)
+
+    def overwrite_payload_values(self, updates: Dict[str, Any]) -> None:
+        """
+        Overwrite values in all rerun payloads.
+
+        Args:
+            updates: Dictionary of key paths to new values. Supports dot notation for nested keys.
+                    For environments, use "environments.0.key" (there's always exactly one environment supported for rerun).
+                    (e.g., {"some_key": "value", "environments.0.tmt.context.key": "value"})
+        """
+        for payload in self.rerun_payloads:
+            for key_path, value in updates.items():
+                self._set_nested_key(payload, key_path, value)
+
+    def _set_nested_key(
+        self, payload: Dict[str, Any], key_path: str, value: Any
+    ) -> None:
+        """
+        Set a value in payload, supporting dot notation for nested keys and array indices.
+        Creates nested dicts if needed. Supports array indices (e.g., "environments.0.key" for the single environment).
+        """
+        keys = key_path.split(".")
+        current = payload
+
+        for i, key in enumerate(keys[:-1]):
+            # Handle array index
+            if key.isdigit():
+                idx = int(key)
+                if isinstance(current, list) and 0 <= idx < len(current):
+                    current = current[idx]
+                else:
+                    return  # Invalid index
+            else:
+                # Regular dict key
+                if key not in current or not isinstance(current[key], (dict, list)):
+                    # Create dict if next key is not a digit (not an array index)
+                    if i + 1 < len(keys) - 1 and not keys[i + 1].isdigit():
+                        current[key] = {}
+                    else:
+                        return  # Can't create array
+                current = current[key]
+
+        # Set the final value
+        final_key = keys[-1]
+        if isinstance(current, dict):
+            current[final_key] = value
+
     def build_rerun_payloads(self, uuids):
         """
         Build re-run payloads for the qualifying tasks by retrieving detailed information
@@ -131,6 +335,9 @@ class RerunJobs:
 
         Returns:
             list: A list of filtered payloads ready for re-submission.
+
+        Raises:
+            ValidationError: If any request has multiple environments (not supported for rerun).
         """
         self.rerun_payloads = []
 
@@ -145,16 +352,28 @@ class RerunJobs:
             request_details = response.json()
 
             match_uuid = request_details.get("id")
-            if len(request_details.get("environments_requested")) > 1:
-                logger.critical(
-                    "There were multiple environments requested in the original task."
-                )
-                logger.critical(
-                    "Cowardly refusing to continue due to the inability to correctly assign environments to failed plans."
-                )
+            environments_requested = request_details.get("environments_requested", [])
+
+            # Fail fast if multiple environments detected
+            if len(environments_requested) > 1:
                 from enge.utils.errors import ValidationError
 
-                raise ValidationError("Multiple environments in original task")
+                logger.critical(
+                    f"Rerun of multi-environment requests is not supported. "
+                    f"Request {match_uuid} has {len(environments_requested)} environments."
+                )
+                logger.critical(
+                    "Please rerun requests with only a single environment, or schedule a job for each environment separately."
+                )
+                raise ValidationError(
+                    f"Multi-environment rerun not supported: request {match_uuid} has {len(environments_requested)} environments"
+                )
+
+            if len(environments_requested) == 0:
+                logger.warning(
+                    f"No environments found in request {match_uuid}, skipping"
+                )
+                continue
 
             # Determine the test plan to use for re-run based on the task state
             if request_details.get("state") == "error":
@@ -162,15 +381,47 @@ class RerunJobs:
                     "The original plan filtering will be used, "
                     f"since no plan from the original request {request} finished successfully."
                 )
-                self.plan = (
-                    request_details["test"]["fmf"]["name"]
-                    or request_details["test"]["fmf"]["plan_filter"]
-                )
-            else:
+                # Keep original plan/filter, but still set test_name if we have failed test names
                 if match_uuid in self.processed_data:
-                    request_details["test"]["fmf"]["name"] = self.processed_data[
-                        match_uuid
-                    ][0]
+                    data = self.processed_data[match_uuid]
+                    if len(data) > 2 and data[2]:
+                        suite_test_mapping = data[2]
+                        # Collect all failed test names from all suites
+                        all_failed_tests = []
+                        for suite_name, test_names in suite_test_mapping.items():
+                            all_failed_tests.extend(test_names)
+                        if all_failed_tests:
+                            # Ensure test.fmf structure exists
+                            if "test" not in request_details:
+                                request_details["test"] = {}
+                            if "fmf" not in request_details["test"]:
+                                request_details["test"]["fmf"] = {}
+                            request_details["test"]["fmf"]["test_name"] = "|".join(
+                                all_failed_tests
+                            )
+            else:
+                # Update plan name and test name with filtered data for rerun
+                if match_uuid in self.processed_data:
+                    data = self.processed_data[match_uuid]
+                    # Ensure test.fmf structure exists
+                    if "test" not in request_details:
+                        request_details["test"] = {}
+                    if "fmf" not in request_details["test"]:
+                        request_details["test"]["fmf"] = {}
+
+                    request_details["test"]["fmf"]["name"] = data[0]
+
+                    # Set test_name if we have failed test names from xunit results
+                    if len(data) > 2 and data[2]:
+                        suite_test_mapping = data[2]
+                        # Collect all failed test names from all suites
+                        all_failed_tests = []
+                        for suite_name, test_names in suite_test_mapping.items():
+                            all_failed_tests.extend(test_names)
+                        if all_failed_tests:
+                            request_details["test"]["fmf"]["test_name"] = "|".join(
+                                all_failed_tests
+                            )
 
             # Remove unnecessary keys from the payload
             keys_to_remove = {
@@ -202,8 +453,15 @@ class RerunJobs:
         return self.rerun_payloads
 
 
-def _maybe_create_rp_launch(context: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    event_name = getattr(parsed_opts.cli_args, "event", None)
+def _maybe_create_rp_launch(
+    context: Optional[Dict[str, Any]] = None, event_name: Optional[str] = None
+) -> Optional[str]:
+    """Create ReportPortal launch for rerun based on original task's event.
+
+    Args:
+        context: Optional context dictionary for ReportPortal
+        event_name: Event name from the original task's environments.tmt.context.event
+    """
     if not event_name:
         # Fall back to a generic rerun event label if not provided
         event_name = "rerun"
@@ -223,35 +481,114 @@ def main():
     Main function to qualify tasks for re-run, build their re-run payloads,
     and submit the requests via the Testing Farm API.
     """
-    # Handle ReportPortal launch creation if requested (with minimal context for rerun)
-    rerun_context = {
-        "set_name": "rerun",  # Indicate this is a rerun operation
-    }
-    reportportal_launch_uuid = _maybe_create_rp_launch(rerun_context)
-
     jobs = RerunJobs()
-    submit = SubmitTest()
-
-    # Set up the submitter
-    submit.print_header = True
 
     # Qualify tasks for re-run
     jobs.qualify_results()
 
-    # Build re-run payloads
+    # Build re-run payloads (extract data from original requests)
     jobs.build_rerun_payloads(jobs.rerun_uuids)
 
-    # Set API key for submission
+    # Extract event from the first payload's original task for ReportPortal launch
+    event_name = None
+    if jobs.rerun_payloads:
+        first_payload = jobs.rerun_payloads[0]
+        environments = first_payload.get("environments", [])
+        if environments and len(environments) > 0:
+            tmt_context = environments[0].get("tmt", {}).get("context", {})
+            event_name = tmt_context.get("event")
+
+    # Handle ReportPortal launch creation if requested (with minimal context for rerun)
+    rerun_context = {
+        "set_name": "rerun",  # Indicate this is a rerun operation
+    }
+    reportportal_launch_uuid = _maybe_create_rp_launch(
+        rerun_context, event_name=event_name
+    )
+
+    jobs.overwrite_payload_values(
+        {
+            "environments.0.tmt.context.initiator": "enge",
+            "environments.0.tmt.context.trigger": "rerun",
+        }
+    )
+    jobs.drop_payload_keys_by_pattern("environments.0.variables", "PACKIT_*")
+    jobs.drop_payload_keys_by_pattern("environments.0.variables", "CI_*")
+    jobs.drop_payload_keys(["environments.0.tmt.context.uniq_id"])
+
+    # Set up the submitter (only for API key and headers)
+    submit = SubmitTest()
+    submit.print_header = True
     submit.api_key = parsed_opts.testing_farm.get("api_key")
 
-    # Build request headers and send re-run requests
-    req_header, _ = submit.build_payload()
+    # Build authorization header (payload will be the filtered original payload)
+    req_header = {"Authorization": f"Bearer {submit.api_key}"}
+
+    # Send each rerun request using the filtered original payload
     for i, payload in enumerate(jobs.rerun_payloads):
-        submit.compose = list(jobs.processed_data.values())[i][1]
-        submit.plan = list(jobs.processed_data.values())[i][0]
+        # Extract data from payload to populate SubmitTest for proper summary display
+        request_data = {}
 
+        # Extract test/fmf data
+        test_fmf = payload.get("test", {}).get("fmf", {})
+        if test_fmf:
+            # Plan name: remove $ suffix and join multiple plans with ', '
+            plan_name = test_fmf.get("name", "")
+            if plan_name:
+                # Split by |, remove $ suffix from each, and join with ', '
+                plan_parts = [
+                    p.rstrip("$") for p in plan_name.split("|") if p.rstrip("$")
+                ]
+                request_data["plan"] = (
+                    ", ".join(plan_parts) if plan_parts else plan_name.rstrip("$")
+                )
+
+            # Test name: remove $ suffix and join multiple tests with ', '
+            test_name = test_fmf.get("test_name", "")
+            if test_name:
+                # Split by |, remove $ suffix from each, and join with ', '
+                test_parts = [
+                    t.rstrip("$") for t in test_name.split("|") if t.rstrip("$")
+                ]
+                request_data["test_name"] = (
+                    ", ".join(test_parts) if test_parts else test_name.rstrip("$")
+                )
+
+            request_data["planfilter"] = test_fmf.get("plan_filter")
+            request_data["testfilter"] = test_fmf.get("test_filter")
+            request_data["tests_git_url"] = test_fmf.get("url")
+            request_data["tests_git_ref"] = test_fmf.get("ref")
+
+        # Extract environment data (assuming single environment)
+        if payload.get("environments") and len(payload["environments"]) > 0:
+            env = payload["environments"][0]
+
+            # Source compose
+            compose = env.get("os", {}).get("compose")
+            if compose:
+                request_data["compose"] = compose
+
+            # Artifacts
+            artifacts = env.get("artifacts", [])
+            if artifacts:
+                request_data["artifacts"] = artifacts
+
+            # Architecture
+            arch = env.get("arch")
+            if arch:
+                request_data["architectures"] = [arch]
+
+            # TMT context and environment variables
+            tmt = env.get("tmt", {})
+            if tmt:
+                request_data["tmt_context"] = tmt.get("context", {})
+                request_data["environment_variables"] = env.get("variables", {})
+
+        # Populate SubmitTest instance with extracted data
+        submit.populate_from_request_data(request_data)
+
+        # Send the request
         submit.send_request(payload, req_header)
-
         submit.print_header = False
 
 
