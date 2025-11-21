@@ -73,6 +73,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "--target",
         help="Target compose for upgrade. "
         "Can be provided in a format of <major>.<minor> (e.g. 9.4) or explicit compose name (e.g. RHEL-9.4.0-Nightly). "
+        "When --source is CentOS Stream, providing only the major version (e.g. 10) is allowed. "
         "If not specified, will be derived from source as <source_major + 1>.<source_minor - 6>",
     )
 

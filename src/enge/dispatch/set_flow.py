@@ -325,7 +325,10 @@ def process_request_spec(
     temp_opts.architectures = [arch]
 
     # Regenerate TMT context with per-set source/target specs
-    from enge.utils.source_target_parser import generate_tmt_context
+    from enge.utils.source_target_parser import (
+        apply_centos_context_overrides,
+        generate_tmt_context,
+    )
 
     temp_opts.tmt_context = generate_tmt_context(
         source_spec,
@@ -362,11 +365,15 @@ def process_request_spec(
         set_name,
         arch,
         tier,
-        f"{source_spec['major']}.{source_spec['minor']}",
-        f"{target_spec['major']}.{target_spec['minor']}",
+        auto_env_vars.get("SOURCE_RELEASE"),
+        auto_env_vars.get("TARGET_RELEASE"),
         source_spec["compose_name"],
         target_spec["compose_name"],
         event=per_set_event,
+    )
+
+    temp_opts.tmt_context = apply_centos_context_overrides(
+        temp_opts.tmt_context, source_spec, target_spec, merged_env_vars
     )
     # Enrich TMT context with target compose if URL provided
     if "TARGET_COMPOSE_URL" in merged_env_vars:

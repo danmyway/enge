@@ -35,6 +35,7 @@ def parse_compose_spec(
         - compose_name: Full compose name (translated via pin_compose if needed)
         - is_version_only: True if input was just version, False if full compose name
         - is_centos_stream: True if source is CentOS Stream, False otherwise
+        - is_major_only: True if only a major version was requested, False otherwise
 
     Raises:
         ValueError: If the specification format is invalid
@@ -68,6 +69,7 @@ def parse_compose_spec(
                 "compose_name": compose_name,
                 "is_version_only": False,
                 "is_centos_stream": True,
+                "is_major_only": False,
             }
 
     # Try parsing as version number (e.g., "8.10")
@@ -108,6 +110,7 @@ def parse_compose_spec(
             "compose_name": compose_name,
             "is_version_only": True,
             "is_centos_stream": False,
+            "is_major_only": False,
         }
 
     # Try parsing as full compose name (e.g., "RHEL-8.10.0-Nightly")
@@ -141,6 +144,7 @@ def parse_compose_spec(
             "compose_name": compose_name,
             "is_version_only": False,
             "is_centos_stream": False,
+            "is_major_only": False,
         }
 
     # If neither pattern matches, raise an error
@@ -172,6 +176,8 @@ def derive_target_from_source(source_spec: Dict[str, Any]) -> Dict[str, Any]:
         "minor": target_minor,
         "compose_name": target_compose_name,
         "is_version_only": source_spec["is_version_only"],
+        "is_centos_stream": False,
+        "is_major_only": False,
     }
 
 
@@ -209,9 +215,22 @@ def generate_environment_variables(
     Returns:
         Dictionary of environment variables
     """
+
+    def _format_release(spec: Dict[str, Any], force_major_only: bool = False) -> str:
+        if force_major_only:
+            return str(spec["major"])
+        return f"{spec['major']}.{spec['minor']}"
+
+    source_force_major = source_spec.get("is_centos_stream", False) or source_spec.get(
+        "is_major_only", False
+    )
+    target_force_major = target_spec.get("is_major_only", False) or source_spec.get(
+        "is_centos_stream", False
+    )
+
     env_vars = {
-        "SOURCE_RELEASE": f"{source_spec['major']}.{source_spec['minor']}",
-        "TARGET_RELEASE": f"{target_spec['major']}.{target_spec['minor']}",
+        "SOURCE_RELEASE": _format_release(source_spec, source_force_major),
+        "TARGET_RELEASE": _format_release(target_spec, target_force_major),
     }
 
     # Set INSTALL_LEAPP_FROM_COMPOSE based on artifact type for transparency
@@ -245,14 +264,20 @@ def generate_tmt_context(
         Note: Brew artifact NVRs are automatically added later during payload building
         in the format package_name: version-release (e.g., leapp: 0.16.0-1.el9).
     """
-    # Generate distro based on whether source is CentOS Stream
-    if source_spec.get("is_centos_stream", False):
-        distro = f"stream-{source_spec['major']}"
-    else:
-        distro = f"rhel-{source_spec['major']}.{source_spec['minor']}"
 
-    # Target distro is always RHEL format (CentOS Stream is only used as source)
-    target_distro = f"rhel-{target_spec['major']}.{target_spec['minor']}"
+    def _format_distro(
+        prefix: str, spec: Dict[str, Any], major_only: bool = False
+    ) -> str:
+        if major_only:
+            return f"{prefix}-{spec['major']}"
+        return f"{prefix}-{spec['major']}.{spec['minor']}"
+
+    if source_spec.get("is_centos_stream", False):
+        distro = _format_distro("centos", source_spec, True)
+        target_distro = _format_distro("rhel", target_spec, True)
+    else:
+        distro = _format_distro("rhel", source_spec)
+        target_distro = _format_distro("rhel", target_spec)
 
     context = {
         "distro": distro,
@@ -268,6 +293,37 @@ def generate_tmt_context(
         context["tier"] = tier
 
     return context
+
+
+def apply_centos_context_overrides(
+    tmt_context: Dict[str, Any],
+    source_spec: Dict[str, Any],
+    target_spec: Dict[str, Any],
+    env_vars: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """
+    Ensure CentOS Stream scenarios use CentOS naming and honor TARGET_OS overrides.
+
+    Args:
+        tmt_context: Existing TMT context dictionary
+        source_spec: Parsed source specification
+        target_spec: Parsed target specification
+        env_vars: Final merged environment variables (optional)
+
+    Returns:
+        Updated TMT context dictionary (copy)
+    """
+    if not source_spec.get("is_centos_stream", False):
+        return tmt_context
+
+    updated_context = dict(tmt_context or {})
+    updated_context["distro"] = f"centos-{source_spec['major']}"
+
+    target_os = (env_vars or {}).get("TARGET_OS", "").strip().lower()
+    target_prefix = "centos" if target_os == "centos" else "rhel"
+    updated_context["target_distro"] = f"{target_prefix}-{target_spec['major']}"
+
+    return updated_context
 
 
 def parse_environment_variables(env_args: Optional[list] = None) -> Dict[str, str]:
@@ -512,8 +568,24 @@ def parse_source_target_config(
         source_spec = parse_compose_spec(source, config)
         LOGGER.debug(f"Parsed source spec: {source_spec}")
 
-        if target:
-            target_spec = parse_compose_spec(target, config)
+        target_input = target
+        target_major_only = False
+        if target and source_spec.get("is_centos_stream"):
+            target_str = str(target).strip()
+            if re.fullmatch(r"\d+", target_str):
+                target_input = f"{target_str}.0"
+                target_major_only = True
+                LOGGER.debug(
+                    "Interpreting major-only target '%s' as '%s' because source is CentOS Stream",
+                    target,
+                    target_input,
+                )
+
+        if target_input:
+            target_spec = parse_compose_spec(target_input, config)
+            target_spec["is_major_only"] = (
+                target_spec.get("is_major_only", False) or target_major_only
+            )
             LOGGER.debug(f"Parsed target spec: {target_spec}")
         else:
             target_spec = derive_target_from_source(source_spec)
