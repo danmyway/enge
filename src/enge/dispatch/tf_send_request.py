@@ -475,8 +475,6 @@ class SubmitTest:
                         f"artifact type: {artifact.get('type', None)}, artifact id: {artifact.get('id', None)}"
                     ]
                 )
-                print(artifact)
-                print(packages)
                 pkg_count = len(packages)
 
                 if artifact.get("nvr"):

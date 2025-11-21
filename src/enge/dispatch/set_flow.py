@@ -444,13 +444,9 @@ def process_request_spec(
                 # For dryrun, add deterministic uniq_id so payload shows expected attributes
                 if getattr(resolved_opts.cli_args, "dryrun", False):
                     placeholder_uuid = "00000000-0000-0000-0000-000000000000"
-                    complete_tmt_context["uniq_id"] = "-".join(
-                        placeholder_uuid.split("-")[:2]
-                    )
+                    complete_tmt_context["uniq_id"] = placeholder_uuid
                 else:
-                    complete_tmt_context["uniq_id"] = "-".join(
-                        launch_uuid.split("-")[:2]
-                    )
+                    complete_tmt_context["uniq_id"] = launch_uuid
 
                 launch_uuid_effective = launch_uuid or placeholder_uuid
                 submit_test.set_launch_uuid(launch_uuid_effective)
