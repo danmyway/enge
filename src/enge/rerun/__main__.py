@@ -1,7 +1,8 @@
 import logging
 import os
 import sys
-from typing import Optional, Dict, Any
+from pathlib import Path
+from typing import Optional, Dict, Any, Iterable, List
 
 from enge.utils.http_client import http_get
 from prettytable import PrettyTable
@@ -9,10 +10,9 @@ from prettytable import PrettyTable
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks, parse_request_xunit
 from enge.utils.opt_manager import parsed_opts
-from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT
+from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
 from enge.utils import FormatText
 from enge.utils.reportportal_helper import create_launch as rp_create_launch
-from enge.utils.globals import RP_COMPATIBLE_EVENT
 
 colorize = FormatText()
 
@@ -21,6 +21,99 @@ logger = logging.getLogger(__name__)
 # Don't print unnecessary log messages from the report module
 report_logger = logging.getLogger("enge.report")
 report_logger.setLevel(logging.WARNING)
+
+
+def _unique_preserve(values: Iterable[str]) -> List[str]:
+    """Return values with duplicates removed while preserving their order."""
+    seen = set()
+    ordered: List[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def _resolve_archive_sources(
+    task_source: Optional[Any],
+    archive_default_path: Optional[str],
+    cli_args: Any,
+) -> List[Path]:
+    """
+    Resolve archive file paths that were used as rerun inputs.
+
+    Args:
+        task_source: Metadata returned by parse_tasks (file list, filenames, or None)
+        archive_default_path: Configured archive directory path
+
+    Returns:
+        List of Path objects pointing to archive files associated with the rerun input.
+    """
+    paths: List[Path] = []
+
+    file_args = getattr(cli_args, "file", None) or []
+    for entry in file_args:
+        if entry:
+            paths.append(Path(entry).expanduser())
+
+    get_tag_args = getattr(cli_args, "get_tag", None)
+    if get_tag_args and task_source and archive_default_path:
+        if isinstance(task_source, str):
+            filenames = [task_source]
+        else:
+            filenames = list(task_source)
+        archive_root = Path(archive_default_path).expanduser()
+        for filename in filenames:
+            if filename:
+                paths.append(archive_root / filename)
+
+    return paths
+
+
+def _extract_tags_from_filename(path: Path) -> List[str]:
+    """Extract appended tags from an archive filename."""
+    name = path.name
+    if "." not in name:
+        return []
+    _, *tag_parts = name.split(".")
+    return [part for part in tag_parts if part]
+
+
+def _collect_inherited_tags(
+    task_source: Optional[Any],
+    cli_args: Optional[Any] = None,
+    archive_default_path: Optional[str] = None,
+) -> List[str]:
+    """
+    Collect tags from archive files referenced by the rerun command.
+
+    Returns:
+        Ordered list of inherited tags with the 'rerun' marker appended when applicable.
+    """
+    archive_paths = _resolve_archive_sources(
+        task_source,
+        (
+            archive_default_path
+            if archive_default_path is not None
+            else getattr(parsed_opts, "archive_tasks_default", None)
+        ),
+        cli_args or parsed_opts.cli_args,
+    )
+    if not archive_paths:
+        return []
+
+    inherited: List[str] = []
+    for archive_path in archive_paths:
+        inherited.extend(_extract_tags_from_filename(archive_path))
+
+    inherited.append("rerun")
+    tags = _unique_preserve(inherited)
+
+    if tags:
+        logger.debug("Inheriting archive tags for rerun: %s", tags)
+
+    return tags
 
 
 class RerunJobs:
@@ -466,6 +559,8 @@ def main():
     # Build re-run payloads (extract data from original requests)
     jobs.build_rerun_payloads(jobs.rerun_uuids)
 
+    inherited_tags = _collect_inherited_tags(jobs.task_source)
+
     # Extract context from the first payload's original task for ReportPortal launch
     event_name = None
     tier = None
@@ -608,6 +703,11 @@ def main():
 
     # Set up the submitter (only for API key and headers)
     submit = SubmitTest()
+    if inherited_tags:
+        existing_tags = submit.set_tag or []
+        combined_tags = _unique_preserve([*existing_tags, *inherited_tags])
+        submit.set_tag = combined_tags
+        logger.info("Archiving rerun tasks with tags: %s", ", ".join(combined_tags))
     submit.print_header = True
     submit.api_key = parsed_opts.testing_farm.get("api_key")
 

@@ -96,6 +96,12 @@ enge ships with a default configuration used as a base for all settings. Default
 
 >__NOTE__: Pre-configured default configuration file will be distributed in the leapp-tests repository.
 
+If you maintain the default configuration in a different location (for example,
+checked out from a private repository), point enge to it by adding
+`default_config_path = '/path/to/enge_default_config.toml'` either at the root of
+your `enge.toml` or inside the `[common]` section. When set, this path takes
+precedence over the system-wide default.
+
 If both are present, enge compares their `version` fields (semantic-like `X.Y.Z`, e.g. `2025.08.27`), and **logs a warning** when the system default under `/etc/enge/enge_default_config.toml` appears older than the bundled example, suggesting an update.
 
 Key default paths from the bundled defaults (can be overridden in your `enge.toml`):
@@ -586,6 +592,7 @@ Reads the same input as the report module - `--file`, `--input` or `--get-tag` (
 Use `--error` or `--fail` if you want to further specify which type of non-zero result you want to re-run, default is both results. If the whole task reports state error, the original plan filtering will be used, otherwise each of the failing/erroring plans will be passed to the plan name field connected by a pipe `|`, meaning all qualified plans from a single original request will be sent as one request for a re-run.<br>
 Use `--dryrun` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
 Use `--set-tag` to label the archived jobs file.
+When rerun pulls UUIDs from an archived file (direct path or `--get-tag`), the newly archived rerun file inherits all original tags and appends a `.rerun` suffix automatically so follow-up runs stay linked to their source.
 
 For detailed information about task archiving and tagging functionality, see the [Task Archiving and Tagging](#task-archiving-and-tagging) section.
 
@@ -625,6 +632,7 @@ The `--set-tag`, `--auto-tag`, and `--get-tag` options provide a powerful way to
   - **Sets**: Creates combined tags like `setname.architecture.tier` for precise identification
   - **Tiers**: Creates combined tags like `architecture.tier` when no set is specified
   - **Plans**: Creates tags for architecture (when single architecture is configured)
+  - **Detailed Upgrade Path**: Adds a detailed source→target shorthand (e.g., `98to102` for 9.8→10.2) so inherited rerun archives can be traced back to their exact release pair.
 - Can be combined with `--set-tag` for additional custom tags
 - **Generates separate archive files** - each unique tag combination creates its own file
 - Particularly useful for test sets with multiple tier/architecture combinations as it creates granular, organized files
