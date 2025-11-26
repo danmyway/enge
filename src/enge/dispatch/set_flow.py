@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from enge.utils.source_target_parser import (
     parse_source_target_config,
     generate_upgrade_path_alias,
+    generate_detailed_upgrade_path_alias,
     parse_architectures,
     generate_tier_plan_filter,
     generate_environment_variables,
@@ -57,6 +58,7 @@ class RequestSpec:
     source_spec: Dict[str, Any]
     target_spec: Dict[str, Any]
     upgrade_path: str
+    upgrade_path_detailed: Optional[str] = None
     effective_values: Dict[str, Any]
 
 
@@ -89,6 +91,9 @@ def expand_set_requests() -> List[RequestSpec]:
                 source_value, target_value, resolved_opts.config
             )
             upgrade_path = generate_upgrade_path_alias(source_spec, target_spec)
+            detailed_upgrade_path = generate_detailed_upgrade_path_alias(
+                source_spec, target_spec
+            )
         except ValueError as e:
             LOGGER.error(
                 f"Failed to parse configuration for test set '{set_name}': {e}"
@@ -126,6 +131,7 @@ def expand_set_requests() -> List[RequestSpec]:
                                 source_spec=source_spec,
                                 target_spec=target_spec,
                                 upgrade_path=upgrade_path,
+                                upgrade_path_detailed=detailed_upgrade_path,
                                 effective_values=effective_values,
                             )
                         )
@@ -139,6 +145,7 @@ def expand_set_requests() -> List[RequestSpec]:
                             source_spec=source_spec,
                             target_spec=target_spec,
                             upgrade_path=upgrade_path,
+                            upgrade_path_detailed=detailed_upgrade_path,
                             effective_values=effective_values,
                         )
                     )
@@ -162,6 +169,7 @@ def process_request_spec(
     source_spec = spec.source_spec
     target_spec = spec.target_spec
     upgrade_path = spec.upgrade_path
+    upgrade_path_detailed = spec.upgrade_path_detailed
     arch = spec.arch
     effective_values = spec.effective_values
 
@@ -236,7 +244,12 @@ def process_request_spec(
     submit_test.print_header = idx == 1
 
     # Auto tags if enabled
-    submit_test.set_auto_tags(set_name=set_name, architecture=arch, tier=tier)
+    submit_test.set_auto_tags(
+        set_name=set_name,
+        architecture=arch,
+        tier=tier,
+        upgrade_path_tag=upgrade_path_detailed,
+    )
 
     # Plan filter
     try:

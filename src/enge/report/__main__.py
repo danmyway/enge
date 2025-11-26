@@ -196,7 +196,9 @@ def build_table_comparison():
     # Sort UUIDs by architecture first, then by creation date within each architecture
     def get_arch_and_timestamp(uuid):
         data = parsed_dict[uuid]
-        arch = data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
+        arch = (
+            data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
+        )
         created = data.get("created", "")
         return (arch, created)
 
@@ -209,7 +211,9 @@ def build_table_comparison():
     for i, uuid in enumerate(uuids, 1):
         data = parsed_dict[uuid]
         # Get architecture from first testsuite or default to Unknown
-        arch = data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
+        arch = (
+            data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
+        )
         # Use format: "arch (index)" for cleaner headers
         header = f"{arch} ({i})"
         headers.append(header)
@@ -474,10 +478,11 @@ def main(result_table=None):
                     )
                 )
                 for index, info in metadata.items():
-                    if isinstance(info, dict) and 'uuid' in info:
+                    if isinstance(info, dict) and "uuid" in info:
                         print(
                             FormatText.format_text(
-                                f"({index}) {info['arch']}: {info['url']}", text_col=FormatText.DIM
+                                f"({index}) {info['arch']}: {info['url']}",
+                                text_col=FormatText.DIM,
                             )
                         )
 

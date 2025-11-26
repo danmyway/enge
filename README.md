@@ -632,6 +632,7 @@ The `--set-tag`, `--auto-tag`, and `--get-tag` options provide a powerful way to
   - **Sets**: Creates combined tags like `setname.architecture.tier` for precise identification
   - **Tiers**: Creates combined tags like `architecture.tier` when no set is specified
   - **Plans**: Creates tags for architecture (when single architecture is configured)
+  - **Detailed Upgrade Path**: Adds a detailed source→target shorthand (e.g., `98to102` for 9.8→10.2) so inherited rerun archives can be traced back to their exact release pair.
 - Can be combined with `--set-tag` for additional custom tags
 - **Generates separate archive files** - each unique tag combination creates its own file
 - Particularly useful for test sets with multiple tier/architecture combinations as it creates granular, organized files

@@ -163,6 +163,38 @@ def generate_upgrade_path_alias(
     return f"{source_spec['major']}to{target_spec['major']}"
 
 
+def generate_detailed_upgrade_path_alias(
+    source_spec: Dict[str, Any], target_spec: Dict[str, Any]
+) -> Optional[str]:
+    """
+    Generate detailed upgrade path alias including minor versions (e.g., "98to102").
+
+    Args:
+        source_spec: Source specification dictionary
+        target_spec: Target specification dictionary
+
+    Returns:
+        Detailed upgrade path alias string or None if components are missing
+    """
+
+    def _format(spec: Dict[str, Any]) -> Optional[str]:
+        major = spec.get("major")
+        minor = spec.get("minor")
+        if major is None or minor is None:
+            return None
+        try:
+            return f"{int(major)}{int(minor)}"
+        except (TypeError, ValueError):
+            return None
+
+    source_alias = _format(source_spec)
+    target_alias = _format(target_spec)
+    if not source_alias or not target_alias:
+        return None
+
+    return f"{source_alias}to{target_alias}"
+
+
 def generate_environment_variables(
     source_spec: Dict[str, Any],
     target_spec: Dict[str, Any],

@@ -150,14 +150,16 @@ class SubmitTest:
         set_name: Optional[str] = None,
         architecture: Optional[str] = None,
         tier: Optional[str] = None,
+        upgrade_path_tag: Optional[str] = None,
     ):
         """
-        Set auto-generated tags based on set name, architecture, and tier.
+        Set auto-generated tags based on set name, architecture, tier, and detailed upgrade path.
 
         Args:
             set_name: Name of the test set (optional)
             architecture: Target architecture (optional)
             tier: Test tier (optional)
+            upgrade_path_tag: Detailed upgrade path alias (e.g., "98to102")
         """
         if not self.auto_tag_enabled:
             return
@@ -179,6 +181,9 @@ class SubmitTest:
                 auto_tags.append(architecture)
             if tier:
                 auto_tags.append(tier)
+
+        if upgrade_path_tag:
+            auto_tags.append(upgrade_path_tag)
 
         self.auto_generated_tags = auto_tags
         LOGGER.debug(f"Generated auto tags: {auto_tags}")
