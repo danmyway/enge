@@ -20,6 +20,7 @@ from enge.utils.source_target_parser import (
     generate_upgrade_path_alias,
     generate_environment_variables,
     generate_tmt_context,
+    apply_centos_context_overrides,
     parse_environment_variables,
     parse_tmt_context,
     merge_tmt_context,
@@ -1021,8 +1022,8 @@ class ParsedOpts:
                 None,
                 None,
                 None,
-                f"{self.source_spec['major']}.{self.source_spec['minor']}",
-                f"{self.target_spec['major']}.{self.target_spec['minor']}",
+                auto_env_vars.get("SOURCE_RELEASE"),
+                auto_env_vars.get("TARGET_RELEASE"),
                 self.source_spec["compose_name"],
                 self.target_spec["compose_name"],
                 event=effective_values.get("event"),
@@ -1051,6 +1052,13 @@ class ParsedOpts:
                 self.target_spec,
                 event=effective_values.get("event"),
                 tier=first_tier,
+            )
+
+            self.tmt_context = apply_centos_context_overrides(
+                self.tmt_context,
+                self.source_spec,
+                self.target_spec,
+                self.environment_variables,
             )
 
             # Merge context based on mode:

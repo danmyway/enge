@@ -135,7 +135,8 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "--source",
         required=False,  # Will be validated later based on whether --set is provided
         help="Source compose to be upgraded. "
-        "Can be provided in a format of <major>.<minor> (e.g. 8.10) or explicit compose name (e.g. RHEL-8.10.0-Nightly). "
+        "Can be provided in a format of <major>.<minor> (e.g. 8.10), explicit compose name (e.g. RHEL-8.10.0-Nightly), "
+        "or CentOS Stream format (e.g. CentOS-Stream-9, stream-9, cs-9, stream9, cs9). "
         "If --target is not specified, the path is resolved to <major + 1>.<minor - 6> (e.g. 8.10 -> 9.4). "
         "Required unless --set is provided.",
     )
@@ -144,6 +145,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "--target",
         help="Target compose for upgrade. "
         "Can be provided in a format of <major>.<minor> (e.g. 9.4) or explicit compose name (e.g. RHEL-9.4.0-Nightly). "
+        "When --source is CentOS Stream, providing only the major version (e.g. 10) is allowed. "
         "If not specified, will be derived from source as <source_major + 1>.<source_minor - 6>",
     )
 
