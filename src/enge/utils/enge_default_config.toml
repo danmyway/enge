@@ -5,7 +5,7 @@
 # - User configuration files (enge.toml) override these defaults.
 # - Use this file as a reference for available keys and default values.
 # ============================================================================
-version = '2025.08.27'
+version = '2025.11.18'
 
 # ============================================================================
 # COMMON (Global paths and storage locations - defaults)

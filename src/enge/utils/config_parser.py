@@ -39,9 +39,15 @@ def _parse_version(version_val: Any) -> Optional[tuple[int, int, int]]:
     return None
 
 
-def load_default_config() -> Dict[str, Any]:
+def load_default_config(
+    user_override: Optional[Union[str, Path]] = None,
+) -> Dict[str, Any]:
     """
     Load the built-in default configuration.
+
+    Args:
+        user_override: Optional path provided by user configuration that should
+            be treated as the default configuration source.
 
     Returns:
         Default configuration dictionary
@@ -49,6 +55,15 @@ def load_default_config() -> Dict[str, Any]:
     Raises:
         SystemExit: If default config cannot be loaded
     """
+    user_override_path: Optional[Path] = None
+    if user_override:
+        try:
+            user_override_path = Path(user_override).expanduser()
+        except TypeError:
+            LOGGER.warning(
+                "Ignoring default configuration override because it is not a valid path"
+            )
+
     # Preferred external default at /etc/enge/enge_default_config.toml
     external_path = Path("/etc/enge/enge_default_config.toml")
     # Fallbacks to package-bundled example and dev path
@@ -59,11 +74,24 @@ def load_default_config() -> Dict[str, Any]:
     except Exception:
         bundled_path = Path(__file__).parent / "enge_default_config.toml"
 
+    override_cfg = None
+    if user_override_path:
+        override_cfg = _safe_load_toml(user_override_path)
+        if override_cfg:
+            LOGGER.info(
+                f"Using user-defined default configuration at {user_override_path}"
+            )
+        else:
+            LOGGER.warning(
+                f"User-defined default configuration {user_override_path} is "
+                "not readable; falling back"
+            )
+
     external_cfg = _safe_load_toml(external_path)
     bundled_cfg = _safe_load_toml(bundled_path) if bundled_path else None
 
     # Version comparison warning: warn only if external exists and is older than bundled
-    if external_cfg and bundled_cfg:
+    if override_cfg is None and external_cfg and bundled_cfg:
         ext_ver = _parse_version(external_cfg.get("version"))
         bun_ver = _parse_version(bundled_cfg.get("version"))
         if ext_ver and bun_ver and ext_ver < bun_ver:
@@ -73,6 +101,8 @@ def load_default_config() -> Dict[str, Any]:
             )
 
     # Selection: prefer external when present
+    if override_cfg:
+        return override_cfg
     if external_cfg:
         return external_cfg
     if bundled_cfg:
@@ -135,9 +165,6 @@ def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
         LOGGER.critical("No configuration file paths provided")
         raise ConfigurationError("No configuration file paths provided")
 
-    # Load default configuration
-    default_config = load_default_config()
-
     # Append system/user paths in priority order if not already present
     expanded_paths = [Path(path).expanduser() for path in paths]
     for p in DEFAULT_USER_CONFIG_PATHS:
@@ -166,6 +193,34 @@ def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
             except OSError as e:
                 LOGGER.warning(f"Error reading config file {path}: {e}")
                 continue
+
+    default_override_path: Optional[Union[str, Path]] = None
+    override_source = "root"
+    if user_config:
+        override_candidate = user_config.get("default_config_path")
+        if override_candidate is None:
+            common_section = user_config.get("common")
+            if isinstance(common_section, dict):
+                override_candidate = common_section.get("default_config_path")
+                if override_candidate is not None:
+                    override_source = "[common]"
+        if isinstance(override_candidate, (str, Path)):
+            override_text = str(override_candidate).strip()
+            if override_text:
+                default_override_path = override_text
+            else:
+                LOGGER.warning(
+                    f"Ignoring default_config_path override in {override_source} "
+                    "because it is empty"
+                )
+        elif override_candidate is not None:
+            LOGGER.warning(
+                f"Ignoring default_config_path override in {override_source} "
+                "because it must be a string path"
+            )
+
+    # Load default configuration, honoring user override if provided
+    default_config = load_default_config(default_override_path)
 
     if user_config is None:
         # No user config found, use defaults only

@@ -96,6 +96,12 @@ enge ships with a default configuration used as a base for all settings. Default
 
 >__NOTE__: Pre-configured default configuration file will be distributed in the leapp-tests repository.
 
+If you maintain the default configuration in a different location (for example,
+checked out from a private repository), point enge to it by adding
+`default_config_path = '/path/to/enge_default_config.toml'` either at the root of
+your `enge.toml` or inside the `[common]` section. When set, this path takes
+precedence over the system-wide default.
+
 If both are present, enge compares their `version` fields (semantic-like `X.Y.Z`, e.g. `2025.08.27`), and **logs a warning** when the system default under `/etc/enge/enge_default_config.toml` appears older than the bundled example, suggesting an update.
 
 Key default paths from the bundled defaults (can be overridden in your `enge.toml`):
