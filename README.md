@@ -592,6 +592,7 @@ Reads the same input as the report module - `--file`, `--input` or `--get-tag` (
 Use `--error` or `--fail` if you want to further specify which type of non-zero result you want to re-run, default is both results. If the whole task reports state error, the original plan filtering will be used, otherwise each of the failing/erroring plans will be passed to the plan name field connected by a pipe `|`, meaning all qualified plans from a single original request will be sent as one request for a re-run.<br>
 Use `--dryrun` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
 Use `--set-tag` to label the archived jobs file.
+When rerun pulls UUIDs from an archived file (direct path or `--get-tag`), the newly archived rerun file inherits all original tags and appends a `.rerun` suffix automatically so follow-up runs stay linked to their source.
 
 For detailed information about task archiving and tagging functionality, see the [Task Archiving and Tagging](#task-archiving-and-tagging) section.
 
