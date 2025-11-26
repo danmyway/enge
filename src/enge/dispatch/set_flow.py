@@ -58,8 +58,8 @@ class RequestSpec:
     source_spec: Dict[str, Any]
     target_spec: Dict[str, Any]
     upgrade_path: str
-    upgrade_path_detailed: Optional[str] = None
     effective_values: Dict[str, Any]
+    upgrade_path_detailed: Optional[str] = None
 
 
 def _get_parsed_opts():
