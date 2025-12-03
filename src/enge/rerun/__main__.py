@@ -155,12 +155,15 @@ class RerunJobs:
         for i in self.req_url_list:
             logger.debug(f"Parsing the payload from: {i}")
         self.parsed_dict = parse_request_xunit(
-            self.req_url_list, self.task_source, True
+            self.req_url_list, self.task_source, False
         )
 
         for key, details in self.parsed_dict.items():
             # Determine the result filter based on CLI arguments
-            result_filter = ["SKIPPED"]  # We want to filter out skipped plans
+            result_filter = [
+                "SKIPPED",
+                "PASSED",
+            ]  # We want to filter out skipped and passed plans
 
             if parsed_opts.cli_args.error:
                 # Keep only ERROR results (exclude FAILED)
@@ -217,6 +220,25 @@ class RerunJobs:
                 )
                 self.rerun_uuids.append(key)
 
+        # Identify tasks that were not parsed (Error, No XML, Canceled, etc.)
+        for req_url in self.req_url_list:
+            # Extract UUID (simple split, assuming valid URL from parse_tasks)
+            uuid = req_url.rstrip("/").split("/")[-1]
+
+            if uuid not in self.parsed_dict:
+                # Task is missing from parsed results -> Fallback candidate
+                logger.debug(
+                    f"Task {uuid} missing from parsed results, adding as fallback candidate."
+                )
+                self.processed_data[uuid] = (
+                    None,  # No suite names
+                    None,  # No compose
+                    None,  # No mapping
+                    None,  # No undefined filters
+                    self.uuid_source_map.get(uuid) or self.uuid_source_map.get(req_url),
+                )
+                self.rerun_uuids.append(uuid)
+
         # Log and display qualifying plans for a re-run
         if self.processed_data:
             info_table = PrettyTable()
@@ -231,6 +253,12 @@ class RerunJobs:
             logger.info("The following plans qualify for a re-run:")
             for req in self.processed_data.keys():
                 data = self.processed_data[req]
+                # Handle fallback entries (data[0] is None)
+                if data[0] is None:
+                    row = [req, "N/A", "Unknown", "FALLBACK (Original Filter)", ""]
+                    info_table.add_row(row, divider=True)
+                    continue
+
                 suite_names_list = [s.replace("$", "") for s in data[0].split("|")]
                 rerun_source_compose = data[1]
                 suite_test_mapping = data[2] if len(data) > 2 and data[2] else {}
@@ -495,57 +523,53 @@ class RerunJobs:
             processed_entry = self.processed_data.get(match_uuid)
             undefined_plan_filters: List[str] = []
             source_path = None
+            has_specific_plans = False
+
             if processed_entry:
+                if processed_entry[0] is not None:
+                    has_specific_plans = True
                 if len(processed_entry) > 3 and processed_entry[3]:
                     undefined_plan_filters = processed_entry[3]
                 if len(processed_entry) > 4:
                     source_path = processed_entry[4]
 
-            # Determine the test plan to use for re-run based on the task state
-            if request_details.get("state") == "error":
+            # Handle Fallback vs Specific Rerun
+            if not has_specific_plans:
+                state = request_details.get("state", "").lower()
+                if state in ["queued", "running"]:
+                    logger.warning(f"Request {match_uuid} is {state}, skipping rerun.")
+                    continue
+
                 logger.info(
-                    "The original plan filtering will be used, "
-                    f"since no plan from the original request {request} finished successfully."
+                    f"Request {match_uuid} has no parseable results (state: {state}). "
+                    "Rerunning with original plan filter (fallback)."
                 )
-                # Keep original plan/filter, but still set test_name if we have failed test names
-                if processed_entry:
-                    if len(processed_entry) > 2 and processed_entry[2]:
-                        suite_test_mapping = processed_entry[2]
-                        # Collect all failed test names from all suites
-                        all_failed_tests = []
-                        for suite_name, test_names in suite_test_mapping.items():
-                            all_failed_tests.extend(test_names)
-                        if all_failed_tests:
-                            # Ensure test.fmf structure exists
-                            if "test" not in request_details:
-                                request_details["test"] = {}
-                            if "fmf" not in request_details["test"]:
-                                request_details["test"]["fmf"] = {}
-                            request_details["test"]["fmf"]["test_name"] = "|".join(
-                                all_failed_tests
-                            )
-            else:
+                # Fallback: Use original payload as is (no specific plan/test filter)
+
+            elif processed_entry:
                 # Update plan name and test name with filtered data for rerun
-                if processed_entry:
-                    # Ensure test.fmf structure exists
-                    if "test" not in request_details:
-                        request_details["test"] = {}
-                    if "fmf" not in request_details["test"]:
-                        request_details["test"]["fmf"] = {}
+                # Ensure test.fmf structure exists
+                if "test" not in request_details:
+                    request_details["test"] = {}
+                if "fmf" not in request_details["test"]:
+                    request_details["test"]["fmf"] = {}
 
-                    request_details["test"]["fmf"]["name"] = processed_entry[0]
+                request_details["test"]["fmf"]["name"] = processed_entry[0]
 
-                    # Set test_name if we have failed test names from xunit results
-                    if len(processed_entry) > 2 and processed_entry[2]:
-                        suite_test_mapping = processed_entry[2]
-                        # Collect all failed test names from all suites
-                        all_failed_tests = []
-                        for suite_name, test_names in suite_test_mapping.items():
-                            all_failed_tests.extend(test_names)
-                        if all_failed_tests:
-                            request_details["test"]["fmf"]["test_name"] = "|".join(
-                                all_failed_tests
-                            )
+                # Ensure plan_filter is removed so that specific plan selection works
+                request_details["test"]["fmf"]["plan_filter"] = None
+
+                # Set test_name if we have failed test names from xunit results
+                if len(processed_entry) > 2 and processed_entry[2]:
+                    suite_test_mapping = processed_entry[2]
+                    # Collect all failed test names from all suites
+                    all_failed_tests = []
+                    for suite_name, test_names in suite_test_mapping.items():
+                        all_failed_tests.extend(test_names)
+                    if all_failed_tests:
+                        request_details["test"]["fmf"]["test_name"] = "|".join(
+                            all_failed_tests
+                        )
 
             # Remove unnecessary keys from the payload
             keys_to_remove = {
