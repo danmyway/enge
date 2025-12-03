@@ -38,15 +38,16 @@ def update_retval(new_value):
         RETURN_VALUE = new_value
 
 
-def parse_tasks():
+def _parse_tasks_impl():
     request_url_list = []
+    uuid_source_map = {}
 
     def _get_tasks_source_data():
         source = None
         source_data = []
         if getattr(parsed_opts.cli_args, "input", None):
             LOGGER.debug("Getting tasks from command line input arguments")
-            source_data.extend(parsed_opts.cli_args.input)
+            source_data.extend([(line, None) for line in parsed_opts.cli_args.input])
 
         if parsed_opts.cli_args.file:
             source = parsed_opts.cli_args.file
@@ -54,7 +55,7 @@ def parse_tasks():
                 if os.path.exists(file):
                     with open(file) as fh:
                         task_ids = fh.readlines()
-                    source_data.extend(task_ids)
+                    source_data.extend([(line, file) for line in task_ids])
                 else:
                     LOGGER.critical(
                         f"Given path {parsed_opts.cli_args.file} does not exist!"
@@ -94,7 +95,7 @@ def parse_tasks():
                 file = os.path.join(default_path, file)
                 with open(file) as fh:
                     task_ids = fh.readlines()
-                source_data.extend(task_ids)
+                source_data.extend([(line, file) for line in task_ids])
 
         if not any(
             (
@@ -114,7 +115,7 @@ def parse_tasks():
                 raise ValidationError("Latest jobs file missing")
             source = latest
             with open(source) as fh:
-                source_data = fh.readlines()
+                source_data = [(line, source) for line in fh.readlines()]
 
         return source, source_data
 
@@ -124,8 +125,8 @@ def parse_tasks():
         r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
     )
 
-    for task in tasks_source_data:
-        task = task.strip().rstrip("/")
+    for task_line, source_file in tasks_source_data:
+        task = task_line.strip().rstrip("/")
         if not task:
             continue
 
@@ -135,21 +136,32 @@ def parse_tasks():
             continue
 
         matched_uuid = match.group(0)
-        task = os.path.join(
+        task_url = os.path.join(
             str(parsed_opts.testing_farm_endpoint.api_endpoint_url), matched_uuid
         )
 
         # Validate UUID
         task_id = None
         try:
-            task_id = task.split("/")[-1]
+            task_id = task_url.split("/")[-1]
             uuid.UUID(task_id)
         except ValueError:
             raise ValueError(task_id)
 
-        request_url_list.append(task)
+        request_url_list.append(task_url)
+        uuid_source_map[task_url] = source_file
+        uuid_source_map[matched_uuid] = source_file
 
-    return request_url_list, tasks_source
+    return request_url_list, tasks_source, uuid_source_map
+
+
+def parse_tasks():
+    req, src, _ = _parse_tasks_impl()
+    return req, src
+
+
+def parse_tasks_with_map():
+    return _parse_tasks_impl()
 
 
 def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=False):
