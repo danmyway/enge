@@ -1,3 +1,4 @@
+import copy
 import logging
 import os
 import sys
@@ -169,6 +170,7 @@ class RerunJobs:
             # Filter test suites based on the result filter and collect failed tests per suite
             filtered_suites = []
             suite_test_mapping = {}  # Map suite name to list of failed test names
+            undefined_suites = []  # Plans with UNDEFINED result and no failed tests
 
             for suite in details["testsuites"]:
                 # Skip suites that don't match result filter
@@ -189,6 +191,14 @@ class RerunJobs:
                 suite_test_mapping[suite_name] = failed_test_names
                 filtered_suites.append(suite)
 
+                # Track UNDEFINED plans without testcase data so that we can
+                # rerun them separately without a restrictive test filter.
+                if (
+                    suite.get("testsuite_result") == "UNDEFINED"
+                    and not failed_test_names
+                ):
+                    undefined_suites.append(f"{suite_name}$")
+
             # Process and store data for filtered test suites
             if filtered_suites:
                 # Suffix the suite name with $ to indicate that it is an end of a string match
@@ -200,6 +210,7 @@ class RerunJobs:
                     suite_names,
                     details["source_compose"],
                     suite_test_mapping,
+                    _unique_preserve(undefined_suites),
                 )
                 self.rerun_uuids.append(key)
 
@@ -468,6 +479,11 @@ class RerunJobs:
                 )
                 continue
 
+            processed_entry = self.processed_data.get(match_uuid)
+            undefined_plan_filters: List[str] = []
+            if processed_entry and len(processed_entry) > 3 and processed_entry[3]:
+                undefined_plan_filters = processed_entry[3]
+
             # Determine the test plan to use for re-run based on the task state
             if request_details.get("state") == "error":
                 logger.info(
@@ -475,10 +491,9 @@ class RerunJobs:
                     f"since no plan from the original request {request} finished successfully."
                 )
                 # Keep original plan/filter, but still set test_name if we have failed test names
-                if match_uuid in self.processed_data:
-                    data = self.processed_data[match_uuid]
-                    if len(data) > 2 and data[2]:
-                        suite_test_mapping = data[2]
+                if processed_entry:
+                    if len(processed_entry) > 2 and processed_entry[2]:
+                        suite_test_mapping = processed_entry[2]
                         # Collect all failed test names from all suites
                         all_failed_tests = []
                         for suite_name, test_names in suite_test_mapping.items():
@@ -494,19 +509,18 @@ class RerunJobs:
                             )
             else:
                 # Update plan name and test name with filtered data for rerun
-                if match_uuid in self.processed_data:
-                    data = self.processed_data[match_uuid]
+                if processed_entry:
                     # Ensure test.fmf structure exists
                     if "test" not in request_details:
                         request_details["test"] = {}
                     if "fmf" not in request_details["test"]:
                         request_details["test"]["fmf"] = {}
 
-                    request_details["test"]["fmf"]["name"] = data[0]
+                    request_details["test"]["fmf"]["name"] = processed_entry[0]
 
                     # Set test_name if we have failed test names from xunit results
-                    if len(data) > 2 and data[2]:
-                        suite_test_mapping = data[2]
+                    if len(processed_entry) > 2 and processed_entry[2]:
+                        suite_test_mapping = processed_entry[2]
                         # Collect all failed test names from all suites
                         all_failed_tests = []
                         for suite_name, test_names in suite_test_mapping.items():
@@ -542,6 +556,25 @@ class RerunJobs:
 
             # Append the filtered payload for re-run
             self.rerun_payloads.append(filtered_payload)
+
+            # Add a plan-only rerun when UNDEFINED plans would be skipped
+            test_filters = (
+                filtered_payload.get("test", {}).get("fmf", {}).get("test_name")
+            )
+            if undefined_plan_filters and test_filters:
+                plan_only_payload = copy.deepcopy(filtered_payload)
+                plan_only_payload.setdefault("test", {}).setdefault("fmf", {})
+                plan_only_payload["test"]["fmf"]["name"] = "|".join(
+                    _unique_preserve(undefined_plan_filters)
+                )
+                plan_only_payload["test"]["fmf"].pop("test_name", None)
+                logger.info(
+                    "Request %s includes %d UNDEFINED plan(s) with no testcase "
+                    "information; submitting an additional plan-only rerun.",
+                    match_uuid,
+                    len(undefined_plan_filters),
+                )
+                self.rerun_payloads.append(plan_only_payload)
 
         return self.rerun_payloads
 
