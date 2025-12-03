@@ -236,26 +236,36 @@ class RerunJobs:
                 suite_test_mapping = data[2] if len(data) > 2 and data[2] else {}
                 rerun_arch = self.parsed_dict[req]["testsuites"][0]["testsuite_arch"]
 
-                # Build plans column: just plan names
-                rerun_plans = "\n".join(suite_names_list)
-
-                # Build tests column: aligned with plans, showing tests indented under their plans
-                tests_aligned = []
-                for suite_name in suite_names_list:
+                # Build rows for plans and tests
+                for i, suite_name in enumerate(suite_names_list):
                     failed_tests = suite_test_mapping.get(suite_name, [])
+                    is_last_plan = i == len(suite_names_list) - 1
+
+                    # Only show request details on the very first row
+                    req_col = req if i == 0 else ""
+                    comp_col = rerun_source_compose if i == 0 else ""
+                    arch_col = rerun_arch if i == 0 else ""
+
+                    # Add Plan row
+                    # Divider needed only if this is the last plan AND no tests follow
+                    is_plan_row_final = is_last_plan and not failed_tests
+                    info_table.add_row(
+                        [req_col, comp_col, arch_col, suite_name, ""],
+                        divider=is_plan_row_final,
+                    )
+
+                    # Add Test rows
                     if failed_tests:
-                        # Add tests for this plan (remove $ suffix for display)
-                        for test_name in failed_tests:
+                        for j, test_name in enumerate(failed_tests):
                             display_name = test_name.rstrip("$")
-                            tests_aligned.append(display_name)
-                    else:
-                        # Add blank line to align with plan that has no tests
-                        tests_aligned.append("")
+                            is_last_test = j == len(failed_tests) - 1
+                            # Divider needed if this is the last test of the last plan
+                            is_test_row_final = is_last_plan and is_last_test
 
-                rerun_tests = "\n".join(tests_aligned) if tests_aligned else ""
-
-                row = [req, rerun_source_compose, rerun_arch, rerun_plans, rerun_tests]
-                info_table.add_row(row, divider=True)
+                            info_table.add_row(
+                                ["", "", "", "", display_name],
+                                divider=is_test_row_final,
+                            )
             info_table.align = "l"
             print(info_table)
             if parsed_opts.cli_args.dryrun:
