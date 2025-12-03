@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Optional, Dict, Any, Iterable, List
+from datetime import datetime
 
 from enge.utils.http_client import http_get
 from prettytable import PrettyTable
@@ -590,6 +591,7 @@ class RerunJobs:
                 k: v for k, v in request_details.items() if k not in keys_to_remove
             }
             filtered_payload["_enge_source_path"] = source_path
+            filtered_payload["_original_uuid"] = match_uuid
 
             # Update environment key for re-run compatibility
             filtered_payload["environments"] = filtered_payload.pop(
@@ -646,6 +648,110 @@ def _get_next_rerun_tag(tags: List[str]) -> str:
     return "rerun"
 
 
+def _create_rerun_launch_for_payload(
+    payload: Dict[str, Any], is_dryrun: bool
+) -> Optional[str]:
+    """
+    Create a ReportPortal launch for a single rerun payload.
+    """
+    environments = payload.get("environments", [])
+    if not environments:
+        return None
+
+    env = environments[0]
+    tmt_context = env.get("tmt", {}).get("context", {})
+    event_name = tmt_context.get("event")
+
+    if not event_name or event_name not in RP_COMPATIBLE_EVENT:
+        return None
+
+    tier = tmt_context.get("tier")
+    arch = env.get("arch")
+
+    # Build context for launch creation (reuse existing helper pattern)
+    rerun_context = {
+        "tier": tier,
+        "architecture": arch,
+    }
+
+    # Generate launch name with RERUN prefix: RERUN~EVENT_NAME~timestamp~tier~arch
+    timestamp = datetime.now().strftime("%Y-%m-%d")
+    tier_str = tier or "unknown"
+    arch_str = arch or "unknown"
+    launch_name = f"RERUN~{event_name.upper()}~{timestamp}~{tier_str}~{arch_str}"
+
+    from enge.reportportal.__main__ import ReportPortalLaunch
+
+    if is_dryrun:
+        try:
+            rp_launch = ReportPortalLaunch()
+            # Pass full TMT context for attribute generation, mirroring dispatch flow
+            payload_data = rp_launch.generate_launch_payload(
+                name=launch_name, context=rerun_context, tmt_context=tmt_context
+            )
+
+            # Add "rerun" tag manually if not present
+            if "tags" in payload_data:
+                if "rerun" not in payload_data["tags"]:
+                    payload_data["tags"].append("rerun")
+            else:
+                payload_data["tags"] = ["rerun"]
+
+            try:
+                from pygments import highlight, lexers, formatters
+                import json
+
+                payload_formatted = json.dumps(payload_data, indent=4)
+                colorful_json = highlight(
+                    payload_formatted,
+                    lexers.JsonLexer(),
+                    formatters.TerminalFormatter(),
+                )
+                logger.info("DRY RUN | ReportPortal launch payload that would be sent:")
+                print(colorful_json)
+            except Exception:
+                logger.info("DRY RUN | ReportPortal launch payload that would be sent:")
+                print(json.dumps(payload_data, indent=4))
+            return "dryrun_placeholder"
+        except Exception as e:
+            logger.warning(f"DRY RUN | Could not generate ReportPortal payload: {e}")
+            return None
+    else:
+        try:
+            rp_launch = ReportPortalLaunch()
+            # Override generate_launch_payload temporarily or modify launch after creation?
+            # Better: The create_launch method uses generate_launch_payload internally.
+            # We can't easily inject tags into generate_launch_payload without modifying ReportPortalLaunch class
+            # or subclassing it.
+            # BUT: generate_launch_payload is a method on the instance.
+            # We can monkey-patch it or just rely on the standard tags + tmt_context attributes.
+            # Wait, the user wants 'rerun' tag in ADDITION to 'automated', 'enge'.
+
+            # Let's subclass temporarily to inject the tag
+            class RerunReportPortalLaunch(ReportPortalLaunch):
+                def generate_launch_payload(
+                    self, name=None, description=None, context=None, tmt_context=None
+                ):
+                    data = super().generate_launch_payload(
+                        name, description, context, tmt_context
+                    )
+                    if "tags" in data:
+                        if "rerun" not in data["tags"]:
+                            data["tags"].append("rerun")
+                    else:
+                        data["tags"] = ["rerun"]
+                    return data
+
+            rp_launch = RerunReportPortalLaunch()
+            launch_uuid = rp_launch.create_launch(
+                name=launch_name, context=rerun_context, tmt_context=tmt_context
+            )
+            return launch_uuid
+        except Exception as e:
+            logger.error(f"Failed to create ReportPortal launch: {e}")
+            return None
+
+
 def main():
     """
     Main function to qualify tasks for re-run, build their re-run payloads,
@@ -659,85 +765,7 @@ def main():
     # Build re-run payloads (extract data from original requests)
     jobs.build_rerun_payloads(jobs.rerun_uuids)
 
-    # Extract context from the first payload's original task for ReportPortal launch
-    event_name = None
-    tier = None
-    arch = None
-    if jobs.rerun_payloads:
-        first_payload = jobs.rerun_payloads[0]
-        environments = first_payload.get("environments", [])
-        if environments and len(environments) > 0:
-            env = environments[0]
-            tmt_context = env.get("tmt", {}).get("context", {})
-            event_name = tmt_context.get("event")
-            tier = tmt_context.get("tier")
-            arch = env.get("arch")
-
-    # Handle ReportPortal launch creation if requested
-    # Use the existing helper function but customize launch name with RERUN prefix
-    reportportal_launch_uuid = None
-    if event_name and event_name in RP_COMPATIBLE_EVENT:
-        from enge.utils.reportportal_helper import create_launch as rp_create_launch
-        from datetime import datetime
-
-        # Build context for launch creation (reuse existing helper pattern)
-        rerun_context = {
-            "tier": tier,
-            "architecture": arch,
-        }
-
-        # Generate launch name with RERUN prefix: RERUN~EVENT_NAME~timestamp~tier~arch
-        timestamp = datetime.now().strftime("%Y-%m-%d")
-        tier_str = tier or "unknown"
-        arch_str = arch or "unknown"
-        launch_name = f"RERUN~{event_name.upper()}~{timestamp}~{tier_str}~{arch_str}"
-
-        # Create launch using the helper but with custom name
-        # We'll override the name in the ReportPortalLaunch class
-        from enge.reportportal.__main__ import ReportPortalLaunch
-
-        is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
-        if is_dryrun:
-            try:
-                rp_launch = ReportPortalLaunch()
-                payload = rp_launch.generate_launch_payload(
-                    name=launch_name, context=rerun_context, tmt_context=None
-                )
-                try:
-                    from pygments import highlight, lexers, formatters
-                    import json
-
-                    payload_formatted = json.dumps(payload, indent=4)
-                    colorful_json = highlight(
-                        payload_formatted,
-                        lexers.JsonLexer(),
-                        formatters.TerminalFormatter(),
-                    )
-                    logger.info(
-                        "DRY RUN | ReportPortal launch payload that would be sent:"
-                    )
-                    print(colorful_json)
-                except Exception:
-                    logger.info(
-                        "DRY RUN | ReportPortal launch payload that would be sent:"
-                    )
-                    print(json.dumps(payload, indent=4))
-                # In dryrun, set a flag so we still add env vars to payloads
-                reportportal_launch_uuid = "dryrun_placeholder"
-            except Exception as e:
-                logger.warning(
-                    f"DRY RUN | Could not generate ReportPortal payload: {e}"
-                )
-        else:
-            try:
-                rp_launch = ReportPortalLaunch()
-                reportportal_launch_uuid = rp_launch.create_launch(
-                    name=launch_name, context=rerun_context, tmt_context=None
-                )
-            except Exception as e:
-                logger.error(f"Failed to create ReportPortal launch: {e}")
-                reportportal_launch_uuid = None
-
+    # Common payload cleanup before processing
     jobs.overwrite_payload_values(
         {
             "environments.0.tmt.context.initiator": "enge",
@@ -748,57 +776,6 @@ def main():
     jobs.drop_payload_keys_by_pattern("environments.0.variables", "CI_*")
     jobs.drop_payload_keys(["environments.0.tmt.context.uniq_id"])
 
-    # Set uniq_id with full launch UUID if available (or placeholder in dryrun)
-    if reportportal_launch_uuid:
-        if reportportal_launch_uuid == "dryrun_placeholder":
-            uniq_id_value = "00000000-0000-0000-0000-000000000000"
-        else:
-            uniq_id_value = reportportal_launch_uuid
-        jobs.overwrite_payload_values(
-            {"environments.0.tmt.context.uniq_id": uniq_id_value}
-        )
-
-    # Add ReportPortal environment variables if launch was created (or in dryrun mode)
-    # In dryrun mode, we still want to show the env vars in the payload
-    if reportportal_launch_uuid:
-        from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
-        from enge.utils.source_target_parser import (
-            generate_reportportal_environment_variables,
-        )
-
-        # Get base ReportPortal config vars (URL, TOKEN, PROJECT) from config
-        rp_config_vars = generate_reportportal_environment_variables(
-            config=parsed_opts.config,
-            cli_args=parsed_opts.cli_args,
-        )
-
-        # Filter out LAUNCH and LAUNCH_DESCRIPTION, keep only base vars (URL, TOKEN, PROJECT)
-        # This matches the logic in dispatch/tf_send_request.py build_payload()
-        rp_base_vars = {
-            k: v
-            for k, v in rp_config_vars.items()
-            if not (k.endswith("LAUNCH") or k.endswith("LAUNCH_DESCRIPTION"))
-        }
-
-        # Add UPLOAD_TO_LAUNCH with the launch UUID (or placeholder in dryrun)
-        upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
-        if reportportal_launch_uuid == "dryrun_placeholder":
-            # Use placeholder UUID for dryrun (matches dispatch behavior)
-            rp_base_vars[upload_key] = "00000000-0000-0000-0000-000000000000"
-        else:
-            rp_base_vars[upload_key] = reportportal_launch_uuid
-
-        # Add ReportPortal env vars to each payload's tmt.environment (not variables)
-        # This matches the structure used in dispatch/tf_send_request.py build_payload()
-        for payload in jobs.rerun_payloads:
-            if payload.get("environments") and len(payload["environments"]) > 0:
-                env = payload["environments"][0]
-                # Ensure tmt structure exists
-                if "tmt" not in env:
-                    env["tmt"] = {}
-                # Set or update tmt.environment with ReportPortal vars
-                env["tmt"]["environment"] = rp_base_vars
-
     # Set up the submitter (only for API key and headers)
     submit = SubmitTest()
     base_tags = submit.set_tag or []
@@ -806,11 +783,67 @@ def main():
     submit.print_header = True
     submit.api_key = parsed_opts.testing_farm.get("api_key")
 
-    # Build authorization header (payload will be the filtered original payload)
+    # Build authorization header
     req_header = {"Authorization": f"Bearer {submit.api_key}"}
+
+    is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
 
     # Send each rerun request using the filtered original payload
     for i, payload in enumerate(jobs.rerun_payloads):
+        # Add rerun_of to tmt.context
+        original_uuid = payload.pop("_original_uuid", None)
+        if original_uuid:
+            jobs._set_nested_key(
+                payload, "environments.0.tmt.context.rerun_of", original_uuid
+            )
+
+        # Create launch per request
+        launch_uuid = _create_rerun_launch_for_payload(payload, is_dryrun)
+
+        # Set uniq_id if launch exists (or dryrun placeholder)
+        if launch_uuid:
+            if launch_uuid == "dryrun_placeholder":
+                uniq_id_value = "00000000-0000-0000-0000-000000000000"
+            else:
+                uniq_id_value = launch_uuid
+
+            jobs._set_nested_key(
+                payload, "environments.0.tmt.context.uniq_id", uniq_id_value
+            )
+
+            # Add ReportPortal env vars
+            from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+            from enge.utils.source_target_parser import (
+                generate_reportportal_environment_variables,
+            )
+
+            # Get base ReportPortal config vars
+            rp_config_vars = generate_reportportal_environment_variables(
+                config=parsed_opts.config,
+                cli_args=parsed_opts.cli_args,
+            )
+
+            # Filter out LAUNCH and LAUNCH_DESCRIPTION, keep only base vars
+            rp_base_vars = {
+                k: v
+                for k, v in rp_config_vars.items()
+                if not (k.endswith("LAUNCH") or k.endswith("LAUNCH_DESCRIPTION"))
+            }
+
+            # Add UPLOAD_TO_LAUNCH
+            upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
+            if launch_uuid == "dryrun_placeholder":
+                rp_base_vars[upload_key] = "00000000-0000-0000-0000-000000000000"
+            else:
+                rp_base_vars[upload_key] = launch_uuid
+
+            # Add to payload
+            if payload.get("environments") and len(payload["environments"]) > 0:
+                env = payload["environments"][0]
+                if "tmt" not in env:
+                    env["tmt"] = {}
+                env["tmt"]["environment"] = rp_base_vars
+
         # Determine tags for this request based on its source file
         source_path = payload.pop("_enge_source_path", None)
         current_tags = []
