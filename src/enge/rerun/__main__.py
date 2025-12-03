@@ -9,7 +9,7 @@ from enge.utils.http_client import http_get
 from prettytable import PrettyTable
 
 from enge.dispatch.tf_send_request import SubmitTest
-from enge.report.__main__ import parse_tasks, parse_request_xunit
+from enge.report.__main__ import parse_tasks_with_map, parse_request_xunit
 from enge.utils.opt_manager import parsed_opts
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
 from enge.utils import FormatText
@@ -138,7 +138,9 @@ class RerunJobs:
         self.rerun_uuids = []
 
         # Retrieve task URLs and their source from the report module
-        self.req_url_list, self.task_source = parse_tasks()
+        self.req_url_list, self.task_source, self.uuid_source_map = (
+            parse_tasks_with_map()
+        )
 
     def qualify_results(self):
         """
@@ -211,6 +213,7 @@ class RerunJobs:
                     details["source_compose"],
                     suite_test_mapping,
                     _unique_preserve(undefined_suites),
+                    self.uuid_source_map.get(key),
                 )
                 self.rerun_uuids.append(key)
 
@@ -481,8 +484,12 @@ class RerunJobs:
 
             processed_entry = self.processed_data.get(match_uuid)
             undefined_plan_filters: List[str] = []
-            if processed_entry and len(processed_entry) > 3 and processed_entry[3]:
-                undefined_plan_filters = processed_entry[3]
+            source_path = None
+            if processed_entry:
+                if len(processed_entry) > 3 and processed_entry[3]:
+                    undefined_plan_filters = processed_entry[3]
+                if len(processed_entry) > 4:
+                    source_path = processed_entry[4]
 
             # Determine the test plan to use for re-run based on the task state
             if request_details.get("state") == "error":
@@ -548,6 +555,7 @@ class RerunJobs:
             filtered_payload = {
                 k: v for k, v in request_details.items() if k not in keys_to_remove
             }
+            filtered_payload["_enge_source_path"] = source_path
 
             # Update environment key for re-run compatibility
             filtered_payload["environments"] = filtered_payload.pop(
@@ -591,8 +599,6 @@ def main():
 
     # Build re-run payloads (extract data from original requests)
     jobs.build_rerun_payloads(jobs.rerun_uuids)
-
-    inherited_tags = _collect_inherited_tags(jobs.task_source)
 
     # Extract context from the first payload's original task for ReportPortal launch
     event_name = None
@@ -736,11 +742,8 @@ def main():
 
     # Set up the submitter (only for API key and headers)
     submit = SubmitTest()
-    if inherited_tags:
-        existing_tags = submit.set_tag or []
-        combined_tags = _unique_preserve([*existing_tags, *inherited_tags])
-        submit.set_tag = combined_tags
-        logger.info("Archiving rerun tasks with tags: %s", ", ".join(combined_tags))
+    base_tags = submit.set_tag or []
+
     submit.print_header = True
     submit.api_key = parsed_opts.testing_farm.get("api_key")
 
@@ -749,6 +752,22 @@ def main():
 
     # Send each rerun request using the filtered original payload
     for i, payload in enumerate(jobs.rerun_payloads):
+        # Determine tags for this request based on its source file
+        source_path = payload.pop("_enge_source_path", None)
+        current_tags = ["rerun"]
+        if source_path:
+            current_tags = _extract_tags_from_filename(Path(source_path))
+            current_tags.append("rerun")
+
+        combined_tags = _unique_preserve([*base_tags, *current_tags])
+        submit.set_tag = combined_tags
+
+        logger.info(
+            "Archiving rerun task %d/%d with tags: %s",
+            i + 1,
+            len(jobs.rerun_payloads),
+            ", ".join(combined_tags),
+        )
         # Extract data from payload to populate SubmitTest for proper summary display
         request_data = {}
 
