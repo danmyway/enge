@@ -993,6 +993,16 @@ class ParsedOpts:
                 self.source_spec, self.target_spec
             )
 
+            # Parse CLI environment variables
+            cli_env_args = getattr(self.cli_args, "environment", None)
+            cli_env_vars = parse_environment_variables(cli_env_args)
+
+            # Get environment variables from test sets
+            set_env_vars = effective_values.get("environment", {})
+
+            # Determine target_os for automatic generation
+            target_os = cli_env_vars.get("TARGET_OS") or set_env_vars.get("TARGET_OS")
+
             # Generate automatic environment variables
             # Check CLI args directly, not just references list (which could be empty)
             copr_artifact = getattr(self.cli_args, "copr", None)
@@ -1002,14 +1012,8 @@ class ParsedOpts:
                 self.target_spec,
                 has_copr=bool(copr_artifact or self.copr_references),
                 has_brew=bool(brew_artifact or self.brew_references),
+                target_os=target_os,
             )
-
-            # Parse CLI environment variables
-            cli_env_args = getattr(self.cli_args, "environment", None)
-            cli_env_vars = parse_environment_variables(cli_env_args)
-
-            # Get environment variables from test sets
-            set_env_vars = effective_values.get("environment", {})
 
             # Merge environment variables (CLI > Test Set > Automatic)
             self.environment_variables = merge_set_environment_variables(

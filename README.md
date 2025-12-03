@@ -6,13 +6,14 @@
    2. [Cloud Resources Tag](#cloud-resources-tag)
 3. [Setting up](#setting-up)
    1. [Installation](#installation)
-       1. [Install](#install)
-       2. [Set up the configuration file](#set-up-the-configuration-file)
+       1. [Enable the copr repository](#enable-the-copr-repository)
+       2. [Install](#install)
+       3. [Set up the configuration file](#set-up-the-configuration-file)
           1. [Configuration locations and precedence](#configuration-locations-and-precedence)
           2. [Default configuration and version check](#default-configuration-and-version-check)
           3. [System-wide configuration (RPM installs)](#system-wide-configuration-rpm-installs)
    2. [Usage](#usage)
-       1. [Commands](#sub-commands)
+       1. [Sub-Commands](#sub-commands)
           1. [Test](#test)
              1. [RHSM-Specific Filtering](#rhsm-specific-filtering)
              2. [Compose resolution and target derivation](#compose-resolution-and-target-derivation)
@@ -21,12 +22,13 @@
           4. [ReportPortal Integration](#reportportal-integration)
           5. [Report](#report)
           6. [Rerun](#rerun)
+          7. [Cancel](#cancel)
    3. [Troubleshooting configuration and validation](#troubleshooting-configuration-and-validation)
-          7. [Task Archiving and Tagging](#task-archiving-and-tagging)
+       1. [Empty string overrides vs. inheriting defaults](#empty-string-overrides-vs-inheriting-defaults)
+   4. [Task Archiving and Tagging](#task-archiving-and-tagging)
 
 
-ENGE
-=
+# ENGE
 ### ENGE is a New Generation of the [tesar](https://github.com/danmyway/tesar) Tool
 #### Send requests to the Testing Farm API through the command line interface
 This tool mimics the ability of the Packit project to dispatch a test request to the Testing Farm endpoint.
@@ -577,25 +579,6 @@ enge report --show-tests --input 9f42645f-bcaa-4c73-87e2-6e1efef16635 --short
 enge report --show-ids --file ~/my_jobs_file
 ```
 
-## Troubleshooting configuration and validation
-
-#### Empty string overrides vs. inheriting defaults
-
-enge merges your user configuration over the defaults. If you set a key to an empty string (e.g., `[tests].git_ref = ''`), that explicit value overrides the default and is treated as missing by validators. This can trigger errors like:
-
-```
-CRITICAL | Operational defaults validation failed:
-CRITICAL |   - Missing operational default: [tests].git_ref
-CRITICAL | This indicates a problem with the default configuration file.
-CRITICAL | Configuration error: Operational defaults validation failed
-```
-
-To inherit the default value shipped in `enge_default_config.toml`, **omit the key entirely** in your user `enge.toml` (or comment it out). Only set a value when you want to intentionally override the default.
-
-Notes:
-- Set-level values (under `[tests.set.<name>]`) are evaluated when using `--set`. Top-level operational defaults such as `[tests].git_ref` are still validated; leaving them as empty strings will fail validation.
-- If you rely exclusively on set-level configuration, remove or comment out the top-level empty keys to avoid overriding defaults.
-
 Corresponding return code is set based on the results with following logic:
  * 0 - The results are complete for each request and all are pass
  * 1 - Python exception or bailout
@@ -612,7 +595,6 @@ The default way to show results is by showing each run details as a separate tab
 
 ##### Rerun
 Rerun tasks which report as FAILED or ERROR.<br>
-Only works for whole plans.<br>
 Reads the same input as the report module - `--file`, `--input` or `--get-tag` (with regex pattern support), which can be combined.<br>
 Use `--error` or `--fail` if you want to further specify which type of non-zero result you want to re-run, default is both results. If the whole task reports state error, the original plan filtering will be used, otherwise each of the failing/erroring plans will be passed to the plan name field connected by a pipe `|`, meaning all qualified plans from a single original request will be sent as one request for a re-run.<br>
 Use `--dryrun` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
@@ -641,7 +623,42 @@ enge rerun --get-tag "rc.*" --set-tag rerun         # matches rc, rc.x86_64, rc.
 enge rerun --get-tag "tier[01]" --set-tag tier01    # matches tier0 or tier1
 ```
 
-##### Task Archiving and Tagging
+##### Cancel
+Cancels running or queued Testing Farm tasks.<br>
+This command helps in stopping tasks that are no longer needed or were dispatched incorrectly.<br>
+Reads the same input sources as report/rerun modules (`--file`, `--input`, `--get-tag`) to identify tasks to cancel.<br>
+
+```
+# Cancel a specific task by UUID
+enge cancel -i 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b
+
+# Cancel tasks from a file
+enge cancel -f ~/my_jobs_file
+
+# Cancel tasks identified by tag
+enge cancel --get-tag "my-run"
+```
+
+## Troubleshooting configuration and validation
+
+#### Empty string overrides vs. inheriting defaults
+
+enge merges your user configuration over the defaults. If you set a key to an empty string (e.g., `[tests].git_ref = ''`), that explicit value overrides the default and is treated as missing by validators. This can trigger errors like:
+
+```
+CRITICAL | Operational defaults validation failed:
+CRITICAL |   - Missing operational default: [tests].git_ref
+CRITICAL | This indicates a problem with the default configuration file.
+CRITICAL | Configuration error: Operational defaults validation failed
+```
+
+To inherit the default value shipped in `enge_default_config.toml`, **omit the key entirely** in your user `enge.toml` (or comment it out). Only set a value when you want to intentionally override the default.
+
+Notes:
+- Set-level values (under `[tests.set.<name>]`) are evaluated when using `--set`. Top-level operational defaults such as `[tests].git_ref` are still validated; leaving them as empty strings will fail validation.
+- If you rely exclusively on set-level configuration, remove or comment out the top-level empty keys to avoid overriding defaults.
+
+## Task Archiving and Tagging
 
 The `--set-tag`, `--auto-tag`, and `--get-tag` options provide a powerful way to organize and retrieve test results:
 
