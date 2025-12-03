@@ -587,6 +587,31 @@ class RerunJobs:
         return self.rerun_payloads
 
 
+def _get_next_rerun_tag(tags: List[str]) -> str:
+    """
+    Determine the next rerun tag based on existing tags.
+    No rerun tag -> rerun
+    rerun -> rerun1
+    rerun1 -> rerun2
+    """
+    max_index = -1
+    has_base_rerun = False
+
+    for tag in tags:
+        if tag == "rerun":
+            has_base_rerun = True
+        elif tag.startswith("rerun") and tag[5:].isdigit():
+            index = int(tag[5:])
+            if index > max_index:
+                max_index = index
+
+    if max_index > -1:
+        return f"rerun{max_index + 1}"
+    if has_base_rerun:
+        return "rerun1"
+    return "rerun"
+
+
 def main():
     """
     Main function to qualify tasks for re-run, build their re-run payloads,
@@ -754,10 +779,13 @@ def main():
     for i, payload in enumerate(jobs.rerun_payloads):
         # Determine tags for this request based on its source file
         source_path = payload.pop("_enge_source_path", None)
-        current_tags = ["rerun"]
+        current_tags = []
         if source_path:
-            current_tags = _extract_tags_from_filename(Path(source_path))
-            current_tags.append("rerun")
+            extracted = _extract_tags_from_filename(Path(source_path))
+            next_tag = _get_next_rerun_tag(extracted)
+            current_tags = extracted + [next_tag]
+        else:
+            current_tags = ["rerun"]
 
         combined_tags = _unique_preserve([*base_tags, *current_tags])
         submit.set_tag = combined_tags
