@@ -234,6 +234,7 @@ def generate_environment_variables(
     target_spec: Dict[str, Any],
     has_copr: bool = False,
     has_brew: bool = False,
+    target_os: Optional[str] = None,
 ) -> Dict[str, str]:
     """
     Generate environment variables for the Testing Farm payload.
@@ -243,6 +244,7 @@ def generate_environment_variables(
         target_spec: Target specification dictionary
         has_copr: Whether --copr is specified
         has_brew: Whether --brew is specified
+        target_os: Target OS (e.g., "centos", "rhel")
 
     Returns:
         Dictionary of environment variables
@@ -256,8 +258,13 @@ def generate_environment_variables(
     source_force_major = source_spec.get("is_centos_stream", False) or source_spec.get(
         "is_major_only", False
     )
-    target_force_major = target_spec.get("is_major_only", False) or source_spec.get(
-        "is_centos_stream", False
+
+    # Target should use major version only if:
+    # 1. Explicitly requested (is_major_only is True)
+    # 2. Source is CentOS Stream AND target_os is "centos"
+    target_force_major = target_spec.get("is_major_only", False) or (
+        source_spec.get("is_centos_stream", False)
+        and (target_os and target_os.strip().lower() == "centos")
     )
 
     env_vars = {

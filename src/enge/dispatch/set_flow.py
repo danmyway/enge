@@ -353,6 +353,13 @@ def process_request_spec(
     # Check CLI args directly, not just test set config
     copr_artifact = getattr(resolved_opts.cli_args, "copr", None)
     brew_artifact = getattr(resolved_opts.cli_args, "brew", None)
+
+    cli_env_args = getattr(resolved_opts.cli_args, "environment", None)
+    cli_env_vars = parse_environment_variables(cli_env_args)
+    set_env_vars = effective_values.get("environment", {})
+
+    target_os = cli_env_vars.get("TARGET_OS") or set_env_vars.get("TARGET_OS")
+
     auto_env_vars = generate_environment_variables(
         source_spec,
         target_spec,
@@ -364,10 +371,9 @@ def process_request_spec(
             brew_artifact
             or effective_values.get("brew_api", {}).get("build_references")
         ),
+        target_os=target_os,
     )
-    cli_env_args = getattr(resolved_opts.cli_args, "environment", None)
-    cli_env_vars = parse_environment_variables(cli_env_args)
-    set_env_vars = effective_values.get("environment", {})
+
     merged_env_vars = merge_set_environment_variables(
         auto_env_vars,
         set_env_vars,
