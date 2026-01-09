@@ -36,6 +36,7 @@ def parse_compose_spec(
         - is_version_only: True if input was just version, False if full compose name
         - is_centos_stream: True if source is CentOS Stream, False otherwise
         - is_major_only: True if only a major version was requested, False otherwise
+        - os_type: OS type string ("rhel", "centos", etc.) for TARGET_OS generation
 
     Raises:
         ValueError: If the specification format is invalid
@@ -70,6 +71,7 @@ def parse_compose_spec(
                 "is_version_only": False,
                 "is_centos_stream": True,
                 "is_major_only": False,
+                "os_type": "centos",
             }
 
     # Try parsing as version number (e.g., "8.10")
@@ -111,6 +113,7 @@ def parse_compose_spec(
             "is_version_only": True,
             "is_centos_stream": False,
             "is_major_only": False,
+            "os_type": "rhel",
         }
 
     # Try parsing as full compose name (e.g., "RHEL-8.10.0-Nightly")
@@ -145,6 +148,7 @@ def parse_compose_spec(
             "is_version_only": False,
             "is_centos_stream": False,
             "is_major_only": False,
+            "os_type": "rhel",
         }
 
     # If neither pattern matches, raise an error
@@ -178,6 +182,7 @@ def derive_target_from_source(source_spec: Dict[str, Any]) -> Dict[str, Any]:
         "is_version_only": source_spec["is_version_only"],
         "is_centos_stream": False,
         "is_major_only": False,
+        "os_type": "rhel",
     }
 
 
@@ -248,22 +253,21 @@ def generate_environment_variables(
         Dictionary of environment variables
     """
 
-    def _format_release(spec: Dict[str, Any], force_major_only: bool = False) -> str:
-        if force_major_only:
+    def _format_release(spec: Dict[str, Any]) -> str:
+        """Format release version - major-only if CentOS Stream or explicitly major-only."""
+        if spec.get("is_centos_stream", False) or spec.get("is_major_only", False):
             return str(spec["major"])
         return f"{spec['major']}.{spec['minor']}"
 
-    source_force_major = source_spec.get("is_centos_stream", False) or source_spec.get(
-        "is_major_only", False
-    )
-    target_force_major = target_spec.get("is_major_only", False) or source_spec.get(
-        "is_centos_stream", False
-    )
-
     env_vars = {
-        "SOURCE_RELEASE": _format_release(source_spec, source_force_major),
-        "TARGET_RELEASE": _format_release(target_spec, target_force_major),
+        "SOURCE_RELEASE": _format_release(source_spec),
+        "TARGET_RELEASE": _format_release(target_spec),
     }
+
+    # Auto-generate TARGET_OS for non-RHEL targets (e.g., centos, alma, rocky)
+    target_os_type = target_spec.get("os_type", "rhel")
+    if target_os_type != "rhel":
+        env_vars["TARGET_OS"] = target_os_type
 
     # Set INSTALL_LEAPP_FROM_COMPOSE based on artifact type for transparency
     # yes = install from compose (no --copr or --brew)
@@ -297,19 +301,18 @@ def generate_tmt_context(
         in the format package_name: version-release (e.g., leapp: 0.16.0-1.el9).
     """
 
-    def _format_distro(
-        prefix: str, spec: Dict[str, Any], major_only: bool = False
-    ) -> str:
-        if major_only:
+    def _format_distro(prefix: str, spec: Dict[str, Any]) -> str:
+        """Format distro string - major-only if CentOS Stream or explicitly major-only."""
+        if spec.get("is_centos_stream", False) or spec.get("is_major_only", False):
             return f"{prefix}-{spec['major']}"
         return f"{prefix}-{spec['major']}.{spec['minor']}"
 
-    if source_spec.get("is_centos_stream", False):
-        distro = _format_distro("centos", source_spec, True)
-        target_distro = _format_distro("rhel", target_spec, True)
-    else:
-        distro = _format_distro("rhel", source_spec)
-        target_distro = _format_distro("rhel", target_spec)
+    # Determine prefixes based on distro type
+    source_prefix = "centos" if source_spec.get("is_centos_stream", False) else "rhel"
+    target_prefix = "centos" if target_spec.get("is_centos_stream", False) else "rhel"
+
+    distro = _format_distro(source_prefix, source_spec)
+    target_distro = _format_distro(target_prefix, target_spec)
 
     context = {
         "distro": distro,
@@ -351,9 +354,22 @@ def apply_centos_context_overrides(
     updated_context = dict(tmt_context or {})
     updated_context["distro"] = f"centos-{source_spec['major']}"
 
-    target_os = (env_vars or {}).get("TARGET_OS", "").strip().lower()
-    target_prefix = "centos" if target_os == "centos" else "rhel"
-    updated_context["target_distro"] = f"{target_prefix}-{target_spec['major']}"
+    # Determine target prefix: CentOS Stream target takes priority, then TARGET_OS env var, then default to rhel
+    if target_spec.get("is_centos_stream", False):
+        target_prefix = "centos"
+    else:
+        target_os = (env_vars or {}).get("TARGET_OS", "").strip().lower()
+        target_prefix = "centos" if target_os == "centos" else "rhel"
+
+    # Format target_distro based on target_spec's own properties (not source's)
+    if target_spec.get("is_centos_stream", False) or target_spec.get(
+        "is_major_only", False
+    ):
+        updated_context["target_distro"] = f"{target_prefix}-{target_spec['major']}"
+    else:
+        updated_context["target_distro"] = (
+            f"{target_prefix}-{target_spec['major']}.{target_spec['minor']}"
+        )
 
     return updated_context
 
