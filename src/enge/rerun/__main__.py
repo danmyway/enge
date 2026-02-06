@@ -1,7 +1,6 @@
 import copy
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Optional, Dict, Any, Iterable, List
 from datetime import datetime
@@ -14,7 +13,12 @@ from enge.report.__main__ import parse_tasks_with_map, parse_request_xunit
 from enge.utils.opt_manager import parsed_opts
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
 from enge.utils import FormatText
-from enge.utils.reportportal_helper import create_launch as rp_create_launch
+from enge.utils.nested_dict import (
+    get_nested_value,
+    set_nested_key,
+    drop_nested_key,
+    match_keys,
+)
 
 colorize = FormatText()
 
@@ -143,16 +147,123 @@ class RerunJobs:
             parse_tasks_with_map()
         )
 
+    # ------------------------------------------------------------------
+    # qualify_results and its helpers
+    # ------------------------------------------------------------------
+
+    def _filter_suites_for_uuid(self, key: str, details: dict) -> None:
+        """Filter test suites for a single UUID and store qualifying data."""
+        result_filter = ["SKIPPED", "PASSED"]
+        if parsed_opts.cli_args.error:
+            result_filter.append("FAILED")
+        elif parsed_opts.cli_args.fail:
+            result_filter.append("ERROR")
+
+        filtered_suites = []
+        suite_test_mapping: Dict[str, List[str]] = {}
+        undefined_suites: List[str] = []
+
+        for suite in details["testsuites"]:
+            if suite["testsuite_result"] in result_filter:
+                continue
+
+            failed_test_names = [
+                testcase["testcase_name"].split("::")[-1] + "$"
+                for testcase in suite.get("testcases", [])
+                if testcase["testcase_result"] not in ["SKIPPED", "PASSED"]
+            ]
+
+            suite_name = suite["testsuite_name"]
+            suite_test_mapping[suite_name] = failed_test_names
+            filtered_suites.append(suite)
+
+            if suite.get("testsuite_result") == "UNDEFINED" and not failed_test_names:
+                undefined_suites.append(f"{suite_name}$")
+
+        if filtered_suites:
+            suite_names = "|".join(
+                suite["testsuite_name"] + "$" for suite in filtered_suites
+            )
+            self.processed_data[key] = (
+                suite_names,
+                details["source_compose"],
+                suite_test_mapping,
+                _unique_preserve(undefined_suites),
+                self.uuid_source_map.get(key),
+            )
+            self.rerun_uuids.append(key)
+
+    def _add_unparsed_fallbacks(self) -> None:
+        """Add tasks that were not parseable as fallback rerun candidates."""
+        for req_url in self.req_url_list:
+            uuid = req_url.rstrip("/").split("/")[-1]
+            if uuid not in self.parsed_dict:
+                logger.debug(
+                    f"Task {uuid} missing from parsed results, adding as fallback candidate."
+                )
+                self.processed_data[uuid] = (
+                    None,
+                    None,
+                    None,
+                    None,
+                    self.uuid_source_map.get(uuid) or self.uuid_source_map.get(req_url),
+                )
+                self.rerun_uuids.append(uuid)
+
+    def _display_qualification_table(self) -> None:
+        """Print a summary table of plans qualifying for rerun."""
+        info_table = PrettyTable()
+        info_table.field_names = [
+            "Original Request",
+            "Source Compose Name",
+            "Arch",
+            "Re-run Plans",
+            "Re-run Tests",
+        ]
+
+        logger.info("The following plans qualify for a re-run:")
+        for req, data in self.processed_data.items():
+            if data[0] is None:
+                info_table.add_row(
+                    [req, "N/A", "Unknown", "FALLBACK (Original Filter)", ""],
+                    divider=True,
+                )
+                continue
+
+            suite_names_list = [s.replace("$", "") for s in data[0].split("|")]
+            rerun_source_compose = data[1]
+            suite_test_mapping = data[2] if len(data) > 2 and data[2] else {}
+            rerun_arch = self.parsed_dict[req]["testsuites"][0]["testsuite_arch"]
+
+            for i, suite_name in enumerate(suite_names_list):
+                failed_tests = suite_test_mapping.get(suite_name, [])
+                is_last_plan = i == len(suite_names_list) - 1
+
+                req_col = req if i == 0 else ""
+                comp_col = rerun_source_compose if i == 0 else ""
+                arch_col = rerun_arch if i == 0 else ""
+
+                info_table.add_row(
+                    [req_col, comp_col, arch_col, suite_name, ""],
+                    divider=(is_last_plan and not failed_tests),
+                )
+
+                if failed_tests:
+                    for j, test_name in enumerate(failed_tests):
+                        info_table.add_row(
+                            ["", "", "", "", test_name.rstrip("$")],
+                            divider=(is_last_plan and j == len(failed_tests) - 1),
+                        )
+
+        info_table.align = "l"
+        print(info_table)
+
     def qualify_results(self):
-        """
-        Parse the task results, filter them based on specified CLI arguments (e.g., 'ERROR' or 'FAILED'),
-        and prepare the data for re-run.
-        """
+        """Parse task results, filter by CLI flags, and prepare data for rerun."""
         logger.info(
             "Looking for tasks from the requested sources, this may take a while."
         )
 
-        # Parse test results from the specified URLs
         for i in self.req_url_list:
             logger.debug(f"Parsing the payload from: {i}")
         self.parsed_dict = parse_request_xunit(
@@ -160,143 +271,12 @@ class RerunJobs:
         )
 
         for key, details in self.parsed_dict.items():
-            # Determine the result filter based on CLI arguments
-            result_filter = [
-                "SKIPPED",
-                "PASSED",
-            ]  # We want to filter out skipped and passed plans
+            self._filter_suites_for_uuid(key, details)
 
-            if parsed_opts.cli_args.error:
-                # Keep only ERROR results (exclude FAILED)
-                result_filter.append("FAILED")
-            elif parsed_opts.cli_args.fail:
-                # Keep only FAILED results (exclude ERROR)
-                result_filter.append("ERROR")
+        self._add_unparsed_fallbacks()
 
-            # Filter test suites based on the result filter and collect failed tests per suite
-            filtered_suites = []
-            suite_test_mapping = {}  # Map suite name to list of failed test names
-            undefined_suites = []  # Plans with UNDEFINED result and no failed tests
-
-            for suite in details["testsuites"]:
-                # Skip suites that don't match result filter
-                if suite["testsuite_result"] in result_filter:
-                    continue
-
-                # Extract failed testcase names from this suite
-                failed_test_names = []
-                for testcase in suite.get("testcases", []):
-                    # Collect testcase names that failed/errored (not skipped or passed)
-                    if testcase["testcase_result"] not in ["SKIPPED", "PASSED"]:
-                        # Split on '::' and take the last part, then suffix with $
-                        test_name = testcase["testcase_name"].split("::")[-1] + "$"
-                        failed_test_names.append(test_name)
-
-                # Store mapping of suite to its failed tests
-                suite_name = suite["testsuite_name"]
-                suite_test_mapping[suite_name] = failed_test_names
-                filtered_suites.append(suite)
-
-                # Track UNDEFINED plans without testcase data so that we can
-                # rerun them separately without a restrictive test filter.
-                if (
-                    suite.get("testsuite_result") == "UNDEFINED"
-                    and not failed_test_names
-                ):
-                    undefined_suites.append(f"{suite_name}$")
-
-            # Process and store data for filtered test suites
-            if filtered_suites:
-                # Suffix the suite name with $ to indicate that it is an end of a string match
-                suite_names = "|".join(
-                    suite["testsuite_name"] + "$" for suite in filtered_suites
-                )
-                # Store suite names, compose, and suite-to-tests mapping
-                self.processed_data[key] = (
-                    suite_names,
-                    details["source_compose"],
-                    suite_test_mapping,
-                    _unique_preserve(undefined_suites),
-                    self.uuid_source_map.get(key),
-                )
-                self.rerun_uuids.append(key)
-
-        # Identify tasks that were not parsed (Error, No XML, Canceled, etc.)
-        for req_url in self.req_url_list:
-            # Extract UUID (simple split, assuming valid URL from parse_tasks)
-            uuid = req_url.rstrip("/").split("/")[-1]
-
-            if uuid not in self.parsed_dict:
-                # Task is missing from parsed results -> Fallback candidate
-                logger.debug(
-                    f"Task {uuid} missing from parsed results, adding as fallback candidate."
-                )
-                self.processed_data[uuid] = (
-                    None,  # No suite names
-                    None,  # No compose
-                    None,  # No mapping
-                    None,  # No undefined filters
-                    self.uuid_source_map.get(uuid) or self.uuid_source_map.get(req_url),
-                )
-                self.rerun_uuids.append(uuid)
-
-        # Log and display qualifying plans for a re-run
         if self.processed_data:
-            info_table = PrettyTable()
-            info_table.field_names = [
-                "Original Request",
-                "Source Compose Name",
-                "Arch",
-                "Re-run Plans",
-                "Re-run Tests",
-            ]
-
-            logger.info("The following plans qualify for a re-run:")
-            for req in self.processed_data.keys():
-                data = self.processed_data[req]
-                # Handle fallback entries (data[0] is None)
-                if data[0] is None:
-                    row = [req, "N/A", "Unknown", "FALLBACK (Original Filter)", ""]
-                    info_table.add_row(row, divider=True)
-                    continue
-
-                suite_names_list = [s.replace("$", "") for s in data[0].split("|")]
-                rerun_source_compose = data[1]
-                suite_test_mapping = data[2] if len(data) > 2 and data[2] else {}
-                rerun_arch = self.parsed_dict[req]["testsuites"][0]["testsuite_arch"]
-
-                # Build rows for plans and tests
-                for i, suite_name in enumerate(suite_names_list):
-                    failed_tests = suite_test_mapping.get(suite_name, [])
-                    is_last_plan = i == len(suite_names_list) - 1
-
-                    # Only show request details on the very first row
-                    req_col = req if i == 0 else ""
-                    comp_col = rerun_source_compose if i == 0 else ""
-                    arch_col = rerun_arch if i == 0 else ""
-
-                    # Add Plan row
-                    # Divider needed only if this is the last plan AND no tests follow
-                    is_plan_row_final = is_last_plan and not failed_tests
-                    info_table.add_row(
-                        [req_col, comp_col, arch_col, suite_name, ""],
-                        divider=is_plan_row_final,
-                    )
-
-                    # Add Test rows
-                    if failed_tests:
-                        for j, test_name in enumerate(failed_tests):
-                            display_name = test_name.rstrip("$")
-                            is_last_test = j == len(failed_tests) - 1
-                            # Divider needed if this is the last test of the last plan
-                            is_test_row_final = is_last_plan and is_last_test
-
-                            info_table.add_row(
-                                ["", "", "", "", display_name],
-                                divider=is_test_row_final,
-                            )
-            info_table.align = "l"
-            print(info_table)
+            self._display_qualification_table()
             if parsed_opts.cli_args.dryrun:
                 return
         else:
@@ -310,295 +290,180 @@ class RerunJobs:
             )
 
     def drop_payload_keys(self, keys_to_drop: list) -> None:
-        """
-        Drop additional keys from all rerun payloads.
-
-        Args:
-            keys_to_drop: List of key paths to drop. Supports dot notation for nested keys.
-                         For environments, use "environments.0.key" (there's always exactly one environment).
-                         (e.g., ["some_key", "nested.key", "environments.0.tmt.context.some_key"])
-        """
+        """Drop keys (dot-notation paths) from all rerun payloads."""
         for payload in self.rerun_payloads:
             for key_path in keys_to_drop:
-                self._drop_nested_key(payload, key_path)
+                drop_nested_key(payload, key_path)
 
     def drop_payload_keys_by_pattern(self, key_path: str, pattern: str) -> None:
-        """
-        Drop keys matching a pattern from a specific path in all rerun payloads.
-
-        Args:
-            key_path: Path to the dictionary containing keys to filter (e.g., "environments.0.variables").
-                     Supports dot notation and array indices.
-            pattern: Pattern to match keys against. Can be:
-                    - Prefix pattern: "PACKIT_*" (matches keys starting with "PACKIT_")
-                    - Suffix pattern: "*_suffix" (matches keys ending with "_suffix")
-                    - Contains pattern: "*middle*" (matches keys containing "middle")
-                    - Exact pattern: "exact_key" (matches exact key name)
-        """
+        """Drop keys matching *pattern* at *key_path* in all rerun payloads."""
         for payload in self.rerun_payloads:
-            target_dict = self._get_nested_value(payload, key_path)
+            target_dict = get_nested_value(payload, key_path)
             if isinstance(target_dict, dict):
-                keys_to_drop = self._match_keys(target_dict.keys(), pattern)
-                for key in keys_to_drop:
+                for key in match_keys(target_dict.keys(), pattern):
                     target_dict.pop(key, None)
 
-    def _get_nested_value(self, payload: Dict[str, Any], key_path: str) -> Any:
-        """Get a nested value from payload, supporting dot notation and array indices."""
-        keys = key_path.split(".")
-        current = payload
-
-        for key in keys:
-            if key.isdigit():
-                idx = int(key)
-                if isinstance(current, list) and 0 <= idx < len(current):
-                    current = current[idx]
-                else:
-                    return None
-            else:
-                if isinstance(current, dict) and key in current:
-                    current = current[key]
-                else:
-                    return None
-
-        return current
-
-    def _match_keys(self, keys: Any, pattern: str) -> list:
-        """
-        Match keys against a pattern.
-
-        Args:
-            keys: Iterable of key names
-            pattern: Pattern string (supports * as wildcard)
-
-        Returns:
-            List of matching keys
-        """
-        if not pattern:
-            return []
-
-        matches = []
-
-        # Handle different pattern types
-        if pattern.startswith("*") and pattern.endswith("*"):
-            # Contains pattern: *middle*
-            substring = pattern[1:-1]
-            matches = [k for k in keys if substring in k]
-        elif pattern.startswith("*"):
-            # Suffix pattern: *_suffix
-            suffix = pattern[1:]
-            matches = [k for k in keys if k.endswith(suffix)]
-        elif pattern.endswith("*"):
-            # Prefix pattern: PACKIT_*
-            prefix = pattern[:-1]
-            matches = [k for k in keys if k.startswith(prefix)]
-        else:
-            # Exact match (no wildcard)
-            matches = [k for k in keys if k == pattern]
-
-        return matches
-
-    def _drop_nested_key(self, payload: Dict[str, Any], key_path: str) -> None:
-        """
-        Drop a key from payload, supporting dot notation for nested keys.
-        Supports array indices (e.g., "environments.0.key" for the single environment).
-        """
-        keys = key_path.split(".")
-        current = payload
-
-        for key in keys[:-1]:
-            # Handle array index
-            if key.isdigit():
-                idx = int(key)
-                if isinstance(current, list) and 0 <= idx < len(current):
-                    current = current[idx]
-                else:
-                    return  # Invalid index or not an array
-            else:
-                # Regular dict key
-                if isinstance(current, dict) and key in current:
-                    current = current[key]
-                else:
-                    return  # Path doesn't exist, nothing to drop
-
-        # Drop the final key
-        final_key = keys[-1]
-        if isinstance(current, dict):
-            current.pop(final_key, None)
-
     def overwrite_payload_values(self, updates: Dict[str, Any]) -> None:
-        """
-        Overwrite values in all rerun payloads.
-
-        Args:
-            updates: Dictionary of key paths to new values. Supports dot notation for nested keys.
-                    For environments, use "environments.0.key" (there's always exactly one environment supported for rerun).
-                    (e.g., {"some_key": "value", "environments.0.tmt.context.key": "value"})
-        """
+        """Overwrite values (dot-notation paths) in all rerun payloads."""
         for payload in self.rerun_payloads:
             for key_path, value in updates.items():
-                self._set_nested_key(payload, key_path, value)
+                set_nested_key(payload, key_path, value)
 
-    def _set_nested_key(
-        self, payload: Dict[str, Any], key_path: str, value: Any
-    ) -> None:
+    # ------------------------------------------------------------------
+    # build_rerun_payloads and its helpers
+    # ------------------------------------------------------------------
+
+    _PAYLOAD_KEYS_TO_REMOVE = frozenset(
+        {
+            "id",
+            "user_id",
+            "token_id",
+            "notes",
+            "result",
+            "run",
+            "user",
+            "queued_time",
+            "run_time",
+            "created",
+            "updated",
+            "state",
+        }
+    )
+
+    @staticmethod
+    def _fetch_and_validate_request(request_uuid: str) -> Optional[dict]:
+        """Fetch request details from the API and validate environment count.
+
+        Returns the request details dict, or ``None`` if the request should be
+        skipped.  Raises ``ValidationError`` for multi-environment requests.
         """
-        Set a value in payload, supporting dot notation for nested keys and array indices.
-        Creates nested dicts if needed. Supports array indices (e.g., "environments.0.key" for the single environment).
+        response = http_get(
+            os.path.join(
+                str(parsed_opts.testing_farm_endpoint.api_endpoint_url),
+                request_uuid,
+            ),
+            timeout=REQUEST_TIMEOUT_DEFAULT,
+        )
+        request_details = response.json()
+
+        match_uuid = request_details.get("id")
+        environments = request_details.get("environments_requested", [])
+
+        if len(environments) > 1:
+            from enge.utils.errors import ValidationError
+
+            logger.critical(
+                f"Rerun of multi-environment requests is not supported. "
+                f"Request {match_uuid} has {len(environments)} environments."
+            )
+            logger.critical(
+                "Please rerun requests with only a single environment, "
+                "or schedule a job for each environment separately."
+            )
+            raise ValidationError(
+                f"Multi-environment rerun not supported: request {match_uuid} "
+                f"has {len(environments)} environments"
+            )
+
+        if len(environments) == 0:
+            logger.warning(f"No environments found in request {match_uuid}, skipping")
+            return None
+
+        return request_details
+
+    @staticmethod
+    def _apply_rerun_filters(
+        request_details: dict,
+        processed_entry: Optional[tuple],
+        has_specific_plans: bool,
+    ) -> bool:
+        """Apply plan/test filters to *request_details* in place.
+
+        Returns ``False`` when the request should be skipped entirely.
         """
-        keys = key_path.split(".")
-        current = payload
+        match_uuid = request_details.get("id")
 
-        for i, key in enumerate(keys[:-1]):
-            # Handle array index
-            if key.isdigit():
-                idx = int(key)
-                if isinstance(current, list) and 0 <= idx < len(current):
-                    current = current[idx]
-                else:
-                    return  # Invalid index
-            else:
-                # Regular dict key
-                if key not in current or not isinstance(current[key], (dict, list)):
-                    # Create dict if next key is not a digit (not an array index)
-                    if i + 1 < len(keys) - 1 and not keys[i + 1].isdigit():
-                        current[key] = {}
-                    else:
-                        return  # Can't create array
-                current = current[key]
+        if not has_specific_plans:
+            state = request_details.get("state", "").lower()
+            if state in ["queued", "running"]:
+                logger.warning(f"Request {match_uuid} is {state}, skipping rerun.")
+                return False
 
-        # Set the final value
-        final_key = keys[-1]
-        if isinstance(current, dict):
-            current[final_key] = value
+            logger.info(
+                f"Request {match_uuid} has no parseable results (state: {state}). "
+                "Rerunning with original plan filter (fallback)."
+            )
+            return True
+
+        if processed_entry:
+            request_details.setdefault("test", {}).setdefault("fmf", {})
+
+            request_details["test"]["fmf"]["name"] = processed_entry[0]
+            request_details["test"]["fmf"]["plan_filter"] = None
+
+            if len(processed_entry) > 2 and processed_entry[2]:
+                all_failed_tests = []
+                for test_names in processed_entry[2].values():
+                    all_failed_tests.extend(test_names)
+                if all_failed_tests:
+                    request_details["test"]["fmf"]["test_name"] = "|".join(
+                        all_failed_tests
+                    )
+
+        return True
+
+    def _clean_payload(
+        self,
+        request_details: dict,
+        match_uuid: str,
+        source_path: Optional[str],
+    ) -> dict:
+        """Strip API-only keys and prepare payload for resubmission."""
+        filtered = {
+            k: v
+            for k, v in request_details.items()
+            if k not in self._PAYLOAD_KEYS_TO_REMOVE
+        }
+        filtered["_enge_source_path"] = source_path
+        filtered["_original_uuid"] = match_uuid
+        filtered["environments"] = filtered.pop("environments_requested")
+        return filtered
 
     def build_rerun_payloads(self, uuids):
-        """
-        Build re-run payloads for the qualifying tasks by retrieving detailed information
-        from the Testing Farm API.
-
-        Args:
-            uuids (list): List of UUIDs for tasks that qualify for re-run.
+        """Build rerun payloads for qualifying tasks.
 
         Returns:
-            list: A list of filtered payloads ready for re-submission.
-
-        Raises:
-            ValidationError: If any request has multiple environments (not supported for rerun).
+            list: Filtered payloads ready for re-submission.
         """
         self.rerun_payloads = []
 
-        for request in uuids:
-            # Fetch the task details from the API
-            response = http_get(
-                os.path.join(
-                    str(parsed_opts.testing_farm_endpoint.api_endpoint_url), request
-                ),
-                timeout=REQUEST_TIMEOUT_DEFAULT,
-            )
-            request_details = response.json()
-
-            match_uuid = request_details.get("id")
-            environments_requested = request_details.get("environments_requested", [])
-
-            # Fail fast if multiple environments detected
-            if len(environments_requested) > 1:
-                from enge.utils.errors import ValidationError
-
-                logger.critical(
-                    f"Rerun of multi-environment requests is not supported. "
-                    f"Request {match_uuid} has {len(environments_requested)} environments."
-                )
-                logger.critical(
-                    "Please rerun requests with only a single environment, or schedule a job for each environment separately."
-                )
-                raise ValidationError(
-                    f"Multi-environment rerun not supported: request {match_uuid} has {len(environments_requested)} environments"
-                )
-
-            if len(environments_requested) == 0:
-                logger.warning(
-                    f"No environments found in request {match_uuid}, skipping"
-                )
+        for request_uuid in uuids:
+            request_details = self._fetch_and_validate_request(request_uuid)
+            if request_details is None:
                 continue
 
+            match_uuid = request_details.get("id")
             processed_entry = self.processed_data.get(match_uuid)
+
             undefined_plan_filters: List[str] = []
             source_path = None
             has_specific_plans = False
 
             if processed_entry:
-                if processed_entry[0] is not None:
-                    has_specific_plans = True
+                has_specific_plans = processed_entry[0] is not None
                 if len(processed_entry) > 3 and processed_entry[3]:
                     undefined_plan_filters = processed_entry[3]
                 if len(processed_entry) > 4:
                     source_path = processed_entry[4]
 
-            # Handle Fallback vs Specific Rerun
-            if not has_specific_plans:
-                state = request_details.get("state", "").lower()
-                if state in ["queued", "running"]:
-                    logger.warning(f"Request {match_uuid} is {state}, skipping rerun.")
-                    continue
+            if not self._apply_rerun_filters(
+                request_details, processed_entry, has_specific_plans
+            ):
+                continue
 
-                logger.info(
-                    f"Request {match_uuid} has no parseable results (state: {state}). "
-                    "Rerunning with original plan filter (fallback)."
-                )
-                # Fallback: Use original payload as is (no specific plan/test filter)
-
-            elif processed_entry:
-                # Update plan name and test name with filtered data for rerun
-                # Ensure test.fmf structure exists
-                if "test" not in request_details:
-                    request_details["test"] = {}
-                if "fmf" not in request_details["test"]:
-                    request_details["test"]["fmf"] = {}
-
-                request_details["test"]["fmf"]["name"] = processed_entry[0]
-
-                # Ensure plan_filter is removed so that specific plan selection works
-                request_details["test"]["fmf"]["plan_filter"] = None
-
-                # Set test_name if we have failed test names from xunit results
-                if len(processed_entry) > 2 and processed_entry[2]:
-                    suite_test_mapping = processed_entry[2]
-                    # Collect all failed test names from all suites
-                    all_failed_tests = []
-                    for suite_name, test_names in suite_test_mapping.items():
-                        all_failed_tests.extend(test_names)
-                    if all_failed_tests:
-                        request_details["test"]["fmf"]["test_name"] = "|".join(
-                            all_failed_tests
-                        )
-
-            # Remove unnecessary keys from the payload
-            keys_to_remove = {
-                "id",
-                "user_id",
-                "token_id",
-                "notes",
-                "result",
-                "run",
-                "user",
-                "queued_time",
-                "run_time",
-                "created",
-                "updated",
-                "state",
-            }
-            filtered_payload = {
-                k: v for k, v in request_details.items() if k not in keys_to_remove
-            }
-            filtered_payload["_enge_source_path"] = source_path
-            filtered_payload["_original_uuid"] = match_uuid
-
-            # Update environment key for re-run compatibility
-            filtered_payload["environments"] = filtered_payload.pop(
-                "environments_requested"
+            filtered_payload = self._clean_payload(
+                request_details, match_uuid, source_path
             )
-
-            # Append the filtered payload for re-run
             self.rerun_payloads.append(filtered_payload)
 
             # Add a plan-only rerun when UNDEFINED plans would be skipped
@@ -752,20 +617,104 @@ def _create_rerun_launch_for_payload(
             return None
 
 
+def _inject_reportportal_vars(payload: Dict[str, Any], launch_uuid: str) -> None:
+    """Set ReportPortal env vars on *payload* for an already-created launch."""
+    from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+    from enge.utils.source_target_parser import (
+        generate_reportportal_environment_variables,
+    )
+
+    effective_uuid = (
+        "00000000-0000-0000-0000-000000000000"
+        if launch_uuid == "dryrun_placeholder"
+        else launch_uuid
+    )
+
+    set_nested_key(payload, "environments.0.tmt.context.uniq_id", effective_uuid)
+
+    rp_config_vars = generate_reportportal_environment_variables(
+        config=parsed_opts.config,
+        cli_args=parsed_opts.cli_args,
+    )
+
+    # Keep only base vars — strip LAUNCH and LAUNCH_DESCRIPTION
+    rp_base_vars = {
+        k: v
+        for k, v in rp_config_vars.items()
+        if not (k.endswith("LAUNCH") or k.endswith("LAUNCH_DESCRIPTION"))
+    }
+
+    upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
+    rp_base_vars[upload_key] = effective_uuid
+
+    environments = payload.get("environments", [])
+    if environments:
+        env = environments[0]
+        env.setdefault("tmt", {})["environment"] = rp_base_vars
+
+
+def _strip_dollar_join(raw: str) -> str:
+    """Split a ``|``-delimited string, strip ``$`` suffixes, and rejoin with ``', '``."""
+    parts = [p.rstrip("$") for p in raw.split("|") if p.rstrip("$")]
+    return ", ".join(parts) if parts else raw.rstrip("$")
+
+
+def _extract_request_data_from_payload(payload: Dict[str, Any]) -> dict:
+    """Build a *request_data* dict from a rerun payload for summary display."""
+    request_data: Dict[str, Any] = {}
+
+    test_fmf = payload.get("test", {}).get("fmf", {})
+    if test_fmf:
+        plan_name = test_fmf.get("name", "")
+        if plan_name:
+            request_data["plan"] = _strip_dollar_join(plan_name)
+        test_name = test_fmf.get("test_name", "")
+        if test_name:
+            request_data["test_name"] = _strip_dollar_join(test_name)
+
+        request_data["planfilter"] = test_fmf.get("plan_filter")
+        request_data["testfilter"] = test_fmf.get("test_filter")
+        request_data["tests_git_url"] = test_fmf.get("url")
+        request_data["tests_git_ref"] = test_fmf.get("ref")
+
+    environments = payload.get("environments", [])
+    if environments:
+        env = environments[0]
+        compose = env.get("os", {}).get("compose")
+        if compose:
+            request_data["compose"] = compose
+        artifacts = env.get("artifacts", [])
+        if artifacts:
+            request_data["artifacts"] = artifacts
+        arch = env.get("arch")
+        if arch:
+            request_data["architectures"] = [arch]
+        tmt = env.get("tmt", {})
+        if tmt:
+            request_data["tmt_context"] = tmt.get("context", {})
+            request_data["environment_variables"] = env.get("variables", {})
+
+    return request_data
+
+
+def _resolve_rerun_tags(payload: Dict[str, Any], base_tags: List[str]) -> List[str]:
+    """Determine the combined tag list for a single rerun payload."""
+    source_path = payload.pop("_enge_source_path", None)
+    if source_path:
+        extracted = _extract_tags_from_filename(Path(source_path))
+        current_tags = extracted + [_get_next_rerun_tag(extracted)]
+    else:
+        current_tags = ["rerun"]
+    return _unique_preserve([*base_tags, *current_tags])
+
+
 def main():
-    """
-    Main function to qualify tasks for re-run, build their re-run payloads,
-    and submit the requests via the Testing Farm API.
-    """
+    """Qualify tasks for re-run, build payloads, and submit via the Testing Farm API."""
     jobs = RerunJobs()
-
-    # Qualify tasks for re-run
     jobs.qualify_results()
-
-    # Build re-run payloads (extract data from original requests)
     jobs.build_rerun_payloads(jobs.rerun_uuids)
 
-    # Common payload cleanup before processing
+    # Common payload cleanup
     jobs.overwrite_payload_values(
         {
             "environments.0.tmt.context.initiator": "enge",
@@ -776,154 +725,34 @@ def main():
     jobs.drop_payload_keys_by_pattern("environments.0.variables", "CI_*")
     jobs.drop_payload_keys(["environments.0.tmt.context.uniq_id"])
 
-    # Set up the submitter (only for API key and headers)
+    # Submitter setup
     submit = SubmitTest()
     base_tags = submit.set_tag or []
-
     submit.api_key = parsed_opts.testing_farm.get("api_key")
-
-    # Build authorization header
     req_header = {"Authorization": f"Bearer {submit.api_key}"}
-
     is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
 
-    # Send each rerun request using the filtered original payload
     for i, payload in enumerate(jobs.rerun_payloads):
-        # Add rerun_of to tmt.context
         original_uuid = payload.pop("_original_uuid", None)
         if original_uuid:
-            jobs._set_nested_key(
+            set_nested_key(
                 payload, "environments.0.tmt.context.rerun_of", original_uuid
             )
 
-        # Create launch per request
         launch_uuid = _create_rerun_launch_for_payload(payload, is_dryrun)
-
-        # Set uniq_id if launch exists (or dryrun placeholder)
         if launch_uuid:
-            if launch_uuid == "dryrun_placeholder":
-                uniq_id_value = "00000000-0000-0000-0000-000000000000"
-            else:
-                uniq_id_value = launch_uuid
+            _inject_reportportal_vars(payload, launch_uuid)
 
-            jobs._set_nested_key(
-                payload, "environments.0.tmt.context.uniq_id", uniq_id_value
-            )
-
-            # Add ReportPortal env vars
-            from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
-            from enge.utils.source_target_parser import (
-                generate_reportportal_environment_variables,
-            )
-
-            # Get base ReportPortal config vars
-            rp_config_vars = generate_reportportal_environment_variables(
-                config=parsed_opts.config,
-                cli_args=parsed_opts.cli_args,
-            )
-
-            # Filter out LAUNCH and LAUNCH_DESCRIPTION, keep only base vars
-            rp_base_vars = {
-                k: v
-                for k, v in rp_config_vars.items()
-                if not (k.endswith("LAUNCH") or k.endswith("LAUNCH_DESCRIPTION"))
-            }
-
-            # Add UPLOAD_TO_LAUNCH
-            upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
-            if launch_uuid == "dryrun_placeholder":
-                rp_base_vars[upload_key] = "00000000-0000-0000-0000-000000000000"
-            else:
-                rp_base_vars[upload_key] = launch_uuid
-
-            # Add to payload
-            if payload.get("environments") and len(payload["environments"]) > 0:
-                env = payload["environments"][0]
-                if "tmt" not in env:
-                    env["tmt"] = {}
-                env["tmt"]["environment"] = rp_base_vars
-
-        # Determine tags for this request based on its source file
-        source_path = payload.pop("_enge_source_path", None)
-        current_tags = []
-        if source_path:
-            extracted = _extract_tags_from_filename(Path(source_path))
-            next_tag = _get_next_rerun_tag(extracted)
-            current_tags = extracted + [next_tag]
-        else:
-            current_tags = ["rerun"]
-
-        combined_tags = _unique_preserve([*base_tags, *current_tags])
+        combined_tags = _resolve_rerun_tags(payload, base_tags)
         submit.set_tag = combined_tags
-
         logger.info(
             "Archiving rerun task %d/%d with tags: %s",
             i + 1,
             len(jobs.rerun_payloads),
             ", ".join(combined_tags),
         )
-        # Extract data from payload to populate SubmitTest for proper summary display
-        request_data = {}
 
-        # Extract test/fmf data
-        test_fmf = payload.get("test", {}).get("fmf", {})
-        if test_fmf:
-            # Plan name: remove $ suffix and join multiple plans with ', '
-            plan_name = test_fmf.get("name", "")
-            if plan_name:
-                # Split by |, remove $ suffix from each, and join with ', '
-                plan_parts = [
-                    p.rstrip("$") for p in plan_name.split("|") if p.rstrip("$")
-                ]
-                request_data["plan"] = (
-                    ", ".join(plan_parts) if plan_parts else plan_name.rstrip("$")
-                )
-
-            # Test name: remove $ suffix and join multiple tests with ', '
-            test_name = test_fmf.get("test_name", "")
-            if test_name:
-                # Split by |, remove $ suffix from each, and join with ', '
-                test_parts = [
-                    t.rstrip("$") for t in test_name.split("|") if t.rstrip("$")
-                ]
-                request_data["test_name"] = (
-                    ", ".join(test_parts) if test_parts else test_name.rstrip("$")
-                )
-
-            request_data["planfilter"] = test_fmf.get("plan_filter")
-            request_data["testfilter"] = test_fmf.get("test_filter")
-            request_data["tests_git_url"] = test_fmf.get("url")
-            request_data["tests_git_ref"] = test_fmf.get("ref")
-
-        # Extract environment data (assuming single environment)
-        if payload.get("environments") and len(payload["environments"]) > 0:
-            env = payload["environments"][0]
-
-            # Source compose
-            compose = env.get("os", {}).get("compose")
-            if compose:
-                request_data["compose"] = compose
-
-            # Artifacts
-            artifacts = env.get("artifacts", [])
-            if artifacts:
-                request_data["artifacts"] = artifacts
-
-            # Architecture
-            arch = env.get("arch")
-            if arch:
-                request_data["architectures"] = [arch]
-
-            # TMT context and environment variables
-            tmt = env.get("tmt", {})
-            if tmt:
-                request_data["tmt_context"] = tmt.get("context", {})
-                request_data["environment_variables"] = env.get("variables", {})
-
-        # Populate SubmitTest instance with extracted data
-        submit.populate_from_request_data(request_data)
-
-        # Send the request
+        submit.populate_from_request_data(_extract_request_data_from_payload(payload))
         submit.send_request(payload, req_header)
 
 
