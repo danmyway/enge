@@ -67,7 +67,6 @@ class SubmitTest:
         self.request_status: Optional[str] = None
         self.log_artifact_url: Optional[str] = None
         self.dispatch_summary: Optional[str] = None
-        self.print_header: bool = True
         self.set_tag: Optional[List[str]] = getattr(
             parsed_opts.cli_args, "set_tag", None
         )
@@ -440,84 +439,75 @@ class SubmitTest:
                 print(self.dispatch_summary)
                 break
 
-    def assess_summary_message(self):
-        # Always show a clear summary separator for consistency
-        if self.print_header:
-            # First request - show full context
-            summary_header = "\n~ REQUEST SUMMARY ~"
-        else:
-            # Subsequent requests - show simpler separator
-            summary_header = "\n~ SUMMARY ~"
+    def _format_artifacts(self) -> str:
+        """Format artifact information for the summary display."""
+        if not self.artifacts:
+            return "Using compose artifacts"
 
-        # Build artifact information display
-        artifact_info = ""
-        if self.artifacts:
-            artifact_info = (
-                f"   Artifacts:        {len(self.artifacts)} build(s) included\n"
+        lines = [f"{len(self.artifacts)} build(s) included"]
+        for artifact in self.artifacts:
+            packages = (
+                artifact.get("packages", [])
+                if artifact.get("packages")
+                else [
+                    f"artifact type: {artifact.get('type', None)}, "
+                    f"artifact id: {artifact.get('id', None)}"
+                ]
             )
-            for artifact in self.artifacts:
-                # Show NVR and packages
-                packages = (
-                    artifact.get("packages", [])
-                    if artifact.get("packages")
-                    else [
-                        f"artifact type: {artifact.get('type', None)}, artifact id: {artifact.get('id', None)}"
-                    ]
-                )
-                pkg_count = len(packages)
+            pkg_count = len(packages)
 
-                if artifact.get("nvr"):
-                    artifact_info += f"                     • {artifact['type']}: {artifact['id']} ({artifact['nvr']})\n"
-                else:
-                    pkg_str = (
-                        f"{pkg_count} package(s)"
-                        if pkg_count > 1
-                        else (packages[0] if packages else "no packages")
-                    )
-                    artifact_info += f"                     • {artifact['type']}: {artifact['id']} ({pkg_str})\n"
+            if artifact.get("nvr"):
+                detail = artifact["nvr"]
+            elif pkg_count > 1:
+                detail = f"{pkg_count} package(s)"
+            else:
+                detail = packages[0] if packages else "no packages"
 
-                # Always show package list if multiple packages
-                if pkg_count > 1:
-                    for pkg in packages:
-                        artifact_info += f"                       - {pkg}\n"
-        else:
-            artifact_info = "   Artifacts:        Using compose artifacts\n"
+            lines.append(
+                f"                     \u2022 {artifact['type']}: {artifact['id']} ({detail})"
+            )
 
-        # Format plan information
-        plan_info = f"   Plan:             {self.plan if self.plan else 'Auto-selected via plan filter'}\n"
-        if self.test_name:
-            plan_info += f"   Test name:        {self.test_name}\n"
-        if self.planfilter:
-            plan_info += f"   Plan filter:      {self.planfilter}\n"
-        if self.testfilter:
-            plan_info += f"   Test filter:      {self.testfilter}\n"
+            if pkg_count > 1:
+                for pkg in packages:
+                    lines.append(f"                       - {pkg}")
 
-        # Format architecture information - use set-specific data if available
+        return "\n".join(lines)
+
+    def _format_architectures(self) -> str:
+        """Format architecture list, using singular/plural label."""
         architectures = (
             self.set_architectures
             if self.set_architectures is not None
             else getattr(parsed_opts, "architectures", [])
         )
         if len(architectures) == 1:
-            arch_info = f"   Architecture:     {architectures[0]}\n"
-        else:
-            arch_info = f"   Architectures:    {', '.join(architectures)}\n"
+            return architectures[0]
+        return ", ".join(architectures)
 
-        # Format target compose information
-        target_compose_info = ""
-        if self.target_compose:
-            target_compose_info = f"   Target compose:   {self.target_compose}\n"
+    def assess_summary_message(self):
+        LABEL_WIDTH = 20
+        SEPARATOR = "~" * 50
 
-        self.dispatch_summary = (
-            FormatText.format_text(f"{summary_header}\n", bold=True)
-            + f"   Source compose:   {self.compose}\n"
-            + target_compose_info
-            + plan_info
-            + arch_info
-            + artifact_info
-            + f"   Test results:     {self.log_artifact_url}\n"
-            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+        fields = [
+            ("Source compose", self.compose),
+            ("Target compose", self.target_compose),
+            ("Plan", self.plan or "Auto-selected via plan filter"),
+            ("Test name", self.test_name),
+            ("Plan filter", self.planfilter),
+            ("Test filter", self.testfilter),
+            ("Architecture", self._format_architectures()),
+            ("Artifacts", self._format_artifacts()),
+            ("Test results", self.log_artifact_url),
+        ]
+
+        body = "\n".join(
+            f"   {label + ':':<{LABEL_WIDTH}s}{value}"
+            for label, value in fields
+            if value
         )
+
+        header = FormatText.format_text("\n~ REQUEST SUMMARY ~\n", bold=True)
+        self.dispatch_summary = f"{header}{body}\n{SEPARATOR}\n"
 
         def _handle_dry_run():
             from pygments import highlight, lexers, formatters

@@ -114,7 +114,6 @@ def setup_submit_test(shared_archive_filename: Optional[str] = None) -> SubmitTe
         )
 
         submit_test.parallel_limit = getattr(parsed_opts, "parallel_limit", None)
-        submit_test.print_header = True
 
         # Validate essential fields
         if not submit_test.api_key:

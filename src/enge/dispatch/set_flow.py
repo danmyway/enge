@@ -241,8 +241,6 @@ def process_request_spec(
         or getattr(resolved_opts, "parallel_limit", None)
         or resolved_opts.tests.get("parallel_limit")
     )
-    submit_test.print_header = idx == 1
-
     # Auto tags if enabled
     submit_test.set_auto_tags(
         set_name=set_name,

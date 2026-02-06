@@ -780,7 +780,6 @@ def main():
     submit = SubmitTest()
     base_tags = submit.set_tag or []
 
-    submit.print_header = True
     submit.api_key = parsed_opts.testing_farm.get("api_key")
 
     # Build authorization header
@@ -926,7 +925,6 @@ def main():
 
         # Send the request
         submit.send_request(payload, req_header)
-        submit.print_header = False
 
 
 if __name__ == "__main__":
