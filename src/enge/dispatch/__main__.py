@@ -128,183 +128,106 @@ def setup_submit_test(shared_archive_filename: Optional[str] = None) -> SubmitTe
         raise ConfigurationError("Failed to initialize SubmitTest") from e
 
 
+def _resolve_package_name(api_config: Dict[str, Any]) -> str:
+    """Resolve the package name from API config or project config."""
+    return api_config.get("package") or parsed_opts.project.get("name") or ""
+
+
+def _normalize_reference(ref) -> list:
+    """Ensure a reference value is a list."""
+    if ref is None:
+        return []
+    return ref if isinstance(ref, list) else [ref]
+
+
+def _collect_artifact_entries(compose_name: str) -> Optional[List[tuple]]:
+    """
+    Collect (artifact_object, reference, extra_kwargs) tuples from all sources.
+
+    Returns None when no build artifacts are needed (compose-only mode).
+    Priority: CLI artifacts > config references > compose fallback.
+    """
+    from enge.utils.tf_artifact import CoprRef, BrewRef
+
+    copr_cli = getattr(parsed_opts.cli_args, "copr", None)
+    brew_cli = getattr(parsed_opts.cli_args, "brew", None)
+
+    entries = []
+
+    # --- CLI artifacts (already instantiated) ---
+    if copr_cli:
+        LOGGER.debug("Getting COPR artifact information from CLI")
+        pkg_name = _resolve_package_name(parsed_opts.copr_api)
+        repo = parsed_opts.copr_api.get("repository") or pkg_name or ""
+        for artifact in copr_cli if isinstance(copr_cli, list) else [copr_cli]:
+            ref = _normalize_reference(getattr(artifact, "ref", None))
+            entries.append((artifact, ref, {"repo": repo, "packages": pkg_name}))
+        return entries
+
+    if brew_cli:
+        LOGGER.debug("Getting brew artifact information from CLI")
+        pkg_name = _resolve_package_name(parsed_opts.brew_api)
+        for artifact in brew_cli if isinstance(brew_cli, list) else [brew_cli]:
+            ref = _normalize_reference(getattr(artifact, "ref", None))
+            entries.append((artifact, ref, {"packages": pkg_name}))
+        return entries
+
+    # --- Config references (need artifact class instantiation) ---
+    copr_refs = getattr(parsed_opts, "copr_references", [])
+    brew_refs = getattr(parsed_opts, "brew_references", [])
+
+    if copr_refs:
+        LOGGER.debug("Getting COPR artifact information from configuration")
+        pkg_name = _resolve_package_name(parsed_opts.copr_api)
+        repo = parsed_opts.copr_api.get("repository") or pkg_name or ""
+        for ref in copr_refs:
+            entries.append(
+                (CoprRef([ref]), [ref], {"repo": repo, "packages": pkg_name})
+            )
+        return entries
+
+    if brew_refs:
+        LOGGER.debug("Getting brew artifact information from configuration")
+        pkg_name = _resolve_package_name(parsed_opts.brew_api)
+        for ref in brew_refs:
+            entries.append((BrewRef([ref]), [ref], {"packages": pkg_name}))
+        return entries
+
+    # --- No build artifacts — compose-only mode ---
+    return None
+
+
 def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
     """Get artifact information based on the artifact type."""
     try:
-        copr_artifacts = getattr(parsed_opts.cli_args, "copr", None)
-        brew_artifacts = getattr(parsed_opts.cli_args, "brew", None)
+        entries = _collect_artifact_entries(compose_name)
 
-        all_builds = []
-
-        if copr_artifacts:
-            LOGGER.debug("Getting COPR artifact information from CLI")
-            # Handle multiple COPR artifacts from CLI
-            if not isinstance(copr_artifacts, list):
-                copr_artifacts = [copr_artifacts]
-
-            for copr_artifact in copr_artifacts:
-                # Extract reference from the artifact object itself
-                artifact_reference = getattr(copr_artifact, "ref", None)
-                if artifact_reference is None:
-                    artifact_reference = (
-                        [parsed_opts.copr_reference]
-                        if parsed_opts.copr_reference
-                        else []
-                    )
-                elif not isinstance(artifact_reference, list):
-                    artifact_reference = [artifact_reference]
-
-                copr_pkg_name = (
-                    parsed_opts.copr_api.get("package")
-                    or parsed_opts.project.get("name")
-                    or ""
-                )
-                copr_repo = (
-                    parsed_opts.copr_api.get("repository") or copr_pkg_name or ""
-                )
-                builds = copr_artifact.get_info(
-                    packages=copr_pkg_name,
-                    repo=copr_repo,
-                    reference=artifact_reference,
-                    composes=[compose_name],
-                    options=parsed_opts,
-                )
-                if builds:
-                    all_builds.extend(builds)
-
-        elif brew_artifacts:
-            LOGGER.debug("Getting brew artifact information from CLI")
-            # Handle multiple Brew artifacts from CLI
-            if not isinstance(brew_artifacts, list):
-                brew_artifacts = [brew_artifacts]
-
-            for brew_artifact in brew_artifacts:
-                # Extract reference from the artifact object itself
-                artifact_reference = getattr(brew_artifact, "ref", None)
-                if artifact_reference is None:
-                    artifact_reference = (
-                        [parsed_opts.brew_reference]
-                        if parsed_opts.brew_reference
-                        else []
-                    )
-                elif not isinstance(artifact_reference, list):
-                    artifact_reference = [artifact_reference]
-                brew_pkg_name = (
-                    parsed_opts.brew_api.get("package")
-                    or parsed_opts.project.get("name")
-                    or ""
-                )
-                builds = brew_artifact.get_info(
-                    packages=brew_pkg_name,
-                    reference=artifact_reference,
-                    composes=[compose_name],
-                    options=parsed_opts,
-                )
-                if builds:
-                    all_builds.extend(builds)
-        elif getattr(parsed_opts, "copr_references", []):
-            LOGGER.debug("Getting COPR artifact information from configuration")
-            # Handle COPR references from test set or config (no CLI artifacts)
-            from enge.utils.tf_artifact import CoprRef
-
-            for copr_ref in parsed_opts.copr_references:
-                copr_pkg_name = (
-                    parsed_opts.copr_api.get("package")
-                    or parsed_opts.project.get("name")
-                    or ""
-                )
-                copr_repo = (
-                    parsed_opts.copr_api.get("repository") or copr_pkg_name or ""
-                )
-                copr_artifact = CoprRef([copr_ref])
-                builds = copr_artifact.get_info(
-                    packages=copr_pkg_name,
-                    repo=copr_repo,
-                    reference=[copr_ref],
-                    composes=[compose_name],
-                    options=parsed_opts,
-                )
-                if builds:
-                    all_builds.extend(builds)
-        elif getattr(parsed_opts, "brew_references", []):
-            LOGGER.debug("Getting brew artifact information from configuration")
-            # Handle Brew references from test set or config (no CLI artifacts)
-            from enge.utils.tf_artifact import BrewRef
-
-            for brew_ref in parsed_opts.brew_references:
-                brew_pkg_name = (
-                    parsed_opts.brew_api.get("package")
-                    or parsed_opts.project.get("name")
-                    or ""
-                )
-                brew_artifact = BrewRef([brew_ref])
-                builds = brew_artifact.get_info(
-                    packages=brew_pkg_name,
-                    reference=[brew_ref],
-                    composes=[compose_name],
-                    options=parsed_opts,
-                )
-                if builds:
-                    all_builds.extend(builds)
-        elif parsed_opts.copr_reference:
+        if entries is None:
             LOGGER.debug(
-                "Getting COPR artifact information from configuration (legacy)"
+                "Using artifact installed from the source compose"
+                " - no build artifacts in payload"
             )
-            # Backward compatibility for single reference
-            from enge.utils.tf_artifact import CoprRef
-
-            copr_pkg_name = (
-                parsed_opts.copr_api.get("package")
-                or parsed_opts.project.get("name")
-                or ""
-            )
-            copr_repo = parsed_opts.copr_api.get("repository") or copr_pkg_name or ""
-            copr_artifact = CoprRef([parsed_opts.copr_reference])
-            builds = copr_artifact.get_info(
-                packages=copr_pkg_name,
-                repo=copr_repo,
-                reference=[parsed_opts.copr_reference],
-                composes=[compose_name],
-                options=parsed_opts,
-            )
-            if builds:
-                all_builds.extend(builds)
-        elif parsed_opts.brew_reference:
-            LOGGER.debug(
-                "Getting brew artifact information from configuration (legacy)"
-            )
-            # Backward compatibility for single reference
-            from enge.utils.tf_artifact import BrewRef
-
-            brew_pkg_name = (
-                parsed_opts.brew_api.get("package")
-                or parsed_opts.project.get("name")
-                or ""
-            )
-            brew_artifact = BrewRef([parsed_opts.brew_reference])
-            builds = brew_artifact.get_info(
-                packages=brew_pkg_name,
-                reference=[parsed_opts.brew_reference],
-                composes=[compose_name],
-                options=parsed_opts,
-            )
-            if builds:
-                all_builds.extend(builds)
-        else:
-            # Handle compose artifact type - no build artifacts needed
-            LOGGER.debug(
-                "Using artifact installed from the source compose - no build artifacts in payload"
-            )
-            all_builds = [
+            return [
                 {
                     "compose": compose_name,
-                    "build_id": None,  # No build_id for compose artifacts
+                    "build_id": None,
                     "distro": parsed_opts.tmt_context.get(
                         "distro",
                         f"rhel-{parsed_opts.source_spec['major']}.{parsed_opts.source_spec['minor']}",
                     ),
                 }
             ]
+
+        all_builds = []
+        for artifact, reference, extra_kwargs in entries:
+            builds = artifact.get_info(
+                reference=reference,
+                composes=[compose_name],
+                options=parsed_opts,
+                **extra_kwargs,
+            )
+            if builds:
+                all_builds.extend(builds)
 
         return all_builds
 

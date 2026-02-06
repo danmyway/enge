@@ -926,10 +926,6 @@ class ParsedOpts:
                 else:
                     self.brew_references.append(config_ref)
 
-        # Keep single reference attributes for backward compatibility
-        self.copr_reference = self.copr_references[0] if self.copr_references else None
-        self.brew_reference = self.brew_references[0] if self.brew_references else None
-
         # Handle git URL and ref with effective values
         self.tests_git_url = (
             getattr(self.cli_args, "git_url", None)

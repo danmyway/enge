@@ -305,8 +305,6 @@ def process_request_spec(
             self.project = None
             self.copr_references = []
             self.brew_references = []
-            self.copr_reference = None
-            self.brew_reference = None
             self.cli_args = None
             self.architectures = []
             self.copr_api = {}
@@ -321,8 +319,6 @@ def process_request_spec(
         "project",
         "copr_references",
         "brew_references",
-        "copr_reference",
-        "brew_reference",
         "cli_args",
         "copr_api",
         "brew_api",
