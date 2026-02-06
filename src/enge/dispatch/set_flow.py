@@ -15,7 +15,12 @@ from enge.utils.source_target_parser import (
 )
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.dispatch.artifacts import ArtifactResolver
-from enge.utils.reportportal_helper import create_launch as rp_create_launch
+from enge.utils.reportportal_helper import (
+    create_launch as rp_create_launch,
+    filter_rp_launch_env_vars,
+    DRYRUN_PLACEHOLDER,
+    DRYRUN_UUID,
+)
 from enge.utils.globals import RP_COMPATIBLE_EVENT
 
 
@@ -407,29 +412,14 @@ def _maybe_create_rp_launch_for_spec(
             dryrun=is_dryrun,
         )
 
-        if launch_uuid or is_dryrun:
-            if is_dryrun:
-                placeholder_uuid = "00000000-0000-0000-0000-000000000000"
-                complete_tmt_context["uniq_id"] = placeholder_uuid
-            else:
-                complete_tmt_context["uniq_id"] = launch_uuid
+        if launch_uuid:
+            effective_uuid = (
+                DRYRUN_UUID if launch_uuid == DRYRUN_PLACEHOLDER else launch_uuid
+            )
+            complete_tmt_context["uniq_id"] = effective_uuid
+            submit_test.set_launch_uuid(effective_uuid)
 
-            launch_uuid_effective = launch_uuid or placeholder_uuid
-            submit_test.set_launch_uuid(launch_uuid_effective)
-
-            from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
-
-            rp_env = {
-                k: v
-                for (k, v) in merged_env_vars.items()
-                if not (
-                    k.startswith(TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX)
-                    and (k.endswith("LAUNCH") or k.endswith("LAUNCH_DESCRIPTION"))
-                )
-            }
-            upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
-            rp_env[upload_key] = launch_uuid_effective
-
+            rp_env = filter_rp_launch_env_vars(merged_env_vars, effective_uuid)
             submit_test.set_specific_data([spec.arch], rp_env, complete_tmt_context)
     except Exception as e:
         LOGGER.error(f"Failed to create ReportPortal launch for request {idx}: {e}")
