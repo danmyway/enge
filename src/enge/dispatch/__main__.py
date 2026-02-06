@@ -27,7 +27,6 @@ from typing import List, Dict, Any, Optional
 
 from enge.utils.globals import ARTIFACT_MAPPING
 from enge.utils.opt_manager import parsed_opts
-from .tf_send_request import SubmitTest
 from .set_flow import expand_set_requests, process_request_spec
 from .artifacts import ArtifactResolver
 from enge.utils.validators import (
@@ -82,48 +81,6 @@ def validate_plan_filters(plans_list: List[str]) -> None:
     validate_plan_filters_util(
         plans_list, cli_planfilter, generated_planfilter, cli_testfilter, cli_test_name
     )
-
-
-def setup_submit_test(shared_archive_filename: Optional[str] = None) -> SubmitTest:
-    """Initialize and configure the SubmitTest instance."""
-    try:
-        submit_test = SubmitTest(shared_archive_filename=shared_archive_filename)
-
-        submit_test.api_key = parsed_opts.testing_farm.get("api_key")
-        submit_test.tests_git_url = (
-            getattr(parsed_opts.cli_args, "git_url", None)
-            or parsed_opts.tests.get("git_url")
-            or parsed_opts.project.get("repo_url")
-        )
-        submit_test.tests_git_ref = getattr(
-            parsed_opts.cli_args, "git_ref", None
-        ) or parsed_opts.tests.get("git_ref")
-        # Use CLI planfilter if provided, otherwise use generated plan_filter
-        cli_planfilter = getattr(parsed_opts.cli_args, "planfilter", None)
-        submit_test.planfilter = cli_planfilter or getattr(
-            parsed_opts, "plan_filter", None
-        )
-        submit_test.testfilter = getattr(parsed_opts.cli_args, "testfilter", None)
-        submit_test.test_name = getattr(parsed_opts.cli_args, "test", None)
-
-        # Note: Architecture handling is done in build_payload() method with full list support
-        submit_test.business_unit_tag = parsed_opts.testing_farm.get(
-            "cloud_resources_tag"
-        )
-
-        submit_test.parallel_limit = getattr(parsed_opts, "parallel_limit", None)
-
-        # Validate essential fields
-        if not submit_test.api_key:
-            raise ValueError("Testing Farm API key is required")
-
-        return submit_test
-
-    except Exception as e:
-        LOGGER.critical(f"Failed to initialize SubmitTest: {e}")
-        from enge.utils.errors import ConfigurationError
-
-        raise ConfigurationError("Failed to initialize SubmitTest") from e
 
 
 def _resolve_package_name(api_config: Dict[str, Any]) -> str:
@@ -326,15 +283,6 @@ def main() -> int:
 
         else:
             # Fall back to original logic for non-test-set requests
-            submit_test = setup_submit_test(
-                shared_archive_filename=shared_archive_filename
-            )
-
-            # Import tier generation function if needed
-            if tiers:
-                tier_config = parsed_opts.tests.get("tier", {})
-                upgrade_path = parsed_opts.upgrade_path_alias
-
             # Calculate total requests to show progress - now we combine tiers with plans
             if tiers:
                 # When we have tiers, we process one request per tier (or tier+plan combination)
