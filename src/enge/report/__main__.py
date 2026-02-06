@@ -1,7 +1,6 @@
 import logging
 import os
 import re
-import sys
 import uuid
 
 from prettytable import PrettyTable
@@ -10,19 +9,7 @@ from enge.utils.errors import ValidationError
 from enge.utils import FormatText
 from enge.utils.opt_manager import parsed_opts
 
-RETURN_VALUE = None
-"""
- 0 - All pass
- 1 - Python exception or bailout
- 2 - No error at least one fail
- 3 - At least one error
- 4 - No result
- everything else - consult with enge maintainer(s)
-"""
 ALL_PASS = 0
-FAIL_HERE = 2
-ERROR_HERE = 3
-NO_RESULT = 4
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,12 +17,6 @@ LOGGER = logging.getLogger(__name__)
 def _latest_tasks_file():
     # Defer property resolution until used to avoid side effects at import time
     return parsed_opts.archive_tasks_latest
-
-
-def update_retval(new_value):
-    global RETURN_VALUE
-    if RETURN_VALUE is None or new_value > RETURN_VALUE:
-        RETURN_VALUE = new_value
 
 
 def _parse_tasks_impl():
@@ -317,7 +298,6 @@ def build_table():
 
     # For multiple UUIDs, we'll create separate tables
     tables_list = []
-    uuid_url_mapping = {}
 
     planname_split_index = 0
     testname_split_index = 0
@@ -504,9 +484,6 @@ def main(result_table=None):
         LOGGER.info("Nothing to report!")
 
     # Get return value from concurrent parser
-    try:
-        from enge.report.concurrent_parser import get_return_value
+    from enge.report.concurrent_parser import get_return_value
 
-        return get_return_value()
-    except ImportError:
-        return RETURN_VALUE
+    return get_return_value()

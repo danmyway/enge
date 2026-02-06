@@ -16,7 +16,7 @@ def build_tier_plan_specs(
     target_spec = resolved_opts.target_spec
     upgrade_path = resolved_opts.upgrade_path_alias
 
-    arches = resolved_opts.architectures or [""]
+    arches = resolved_opts.architectures
 
     if tiers:
         if plans:

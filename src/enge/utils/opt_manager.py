@@ -119,17 +119,9 @@ class ParsedOpts:
             if not patterns:
                 return
 
-            tests_section = (
-                self.config.get("tests", {}) if hasattr(self.config, "get") else {}
-            )
-            available_sets_dict = (
-                tests_section.get("set", {}) if isinstance(tests_section, dict) else {}
-            )
-            available_sets = (
-                list(available_sets_dict.keys())
-                if isinstance(available_sets_dict, dict)
-                else []
-            )
+            tests_section = self.config.get("tests", {})
+            available_sets_dict = tests_section.get("set", {})
+            available_sets = list(available_sets_dict.keys())
 
             if not available_sets:
                 raise ValidationError(
@@ -229,24 +221,6 @@ class ParsedOpts:
             for error in errors:
                 logger.critical(f"  - {error}")
             raise ConfigurationError("Effective configuration invalid")
-
-    def _collect_set_value(self, key: str) -> Optional[Any]:
-        """Collect a value for a given key from all referenced sets; return the first non-empty.
-
-        This mirrors "validate at the end" by checking resolved sources beyond top-level config.
-        """
-        cli_sets = getattr(self.cli_args, "set", None)
-        if not cli_sets:
-            return None
-        try:
-            sets_cfg = self.config.get("tests", {}).get("set", {})
-            for set_name in cli_sets:
-                val = sets_cfg.get(set_name, {}).get(key)
-                if val:
-                    return val
-        except Exception:
-            return None
-        return None
 
     def _validate_operational_defaults(self):
         """Validate operational defaults are present."""
@@ -453,9 +427,7 @@ class ParsedOpts:
             errors.append("Tests repository URL not configured!")
 
         # Validate [tests].context type if present
-        tests_section = (
-            self.config.get("tests", {}) if hasattr(self.config, "get") else {}
-        )
+        tests_section = self.config.get("tests", {})
         if (
             tests_section
             and "context" in tests_section
@@ -1228,10 +1200,9 @@ class ParsedOpts:
 
     def __getattr__(self, item):
         """Allow direct access to options as attributes, prioritizing nested sections."""
-        if hasattr(self.config, "get"):
-            # Try to get the section directly
-            if item in self.config:
-                return self.config[item]
+        # Try to get the section directly
+        if item in self.config:
+            return self.config[item]
 
         # Fall back to searching in options structure
         if hasattr(self, "options"):

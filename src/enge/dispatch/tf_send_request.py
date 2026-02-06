@@ -147,40 +147,24 @@ class SubmitTest:
 
     def set_auto_tags(
         self,
-        set_name: Optional[str] = None,
-        architecture: Optional[str] = None,
-        tier: Optional[str] = None,
+        set_name: str,
+        architecture: str,
+        tier: str,
         upgrade_path_tag: Optional[str] = None,
     ):
         """
         Set auto-generated tags based on set name, architecture, tier, and detailed upgrade path.
 
         Args:
-            set_name: Name of the test set (optional)
-            architecture: Target architecture (optional)
-            tier: Test tier (optional)
+            set_name: Name of the test set
+            architecture: Target architecture
+            tier: Test tier
             upgrade_path_tag: Detailed upgrade path alias (e.g., "98to102")
         """
         if not self.auto_tag_enabled:
             return
 
-        auto_tags = []
-
-        # Generate the most specific combined tag possible, avoiding duplicates
-        if set_name and architecture and tier:
-            # All three components - use combined tag only
-            auto_tags.append(f"{set_name}.{tier}.{architecture}")
-        elif architecture and tier:
-            # Two components - use combined tag only
-            auto_tags.append(f"{architecture}.{tier}")
-        else:
-            # Individual components when we don't have enough for a meaningful combination
-            if set_name:
-                auto_tags.append(set_name)
-            if architecture:
-                auto_tags.append(architecture)
-            if tier:
-                auto_tags.append(tier)
+        auto_tags = [f"{set_name}.{tier}.{architecture}"]
 
         if upgrade_path_tag:
             auto_tags.append(upgrade_path_tag)

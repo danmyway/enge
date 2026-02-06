@@ -465,8 +465,7 @@ def process_request_spec(
             complete_tmt_context = submit_test.get_complete_tmt_context()
             complete_tmt_context.update(temp_opts.tmt_context)
             # Ensure architecture is part of launch attributes
-            if arch:
-                complete_tmt_context["arch"] = arch
+            complete_tmt_context["arch"] = arch
 
             launch_uuid = rp_create_launch(
                 context=rp_request_context,
