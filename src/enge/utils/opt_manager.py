@@ -769,48 +769,33 @@ class ParsedOpts:
             return False
         return True
 
-    def _initialize_test_attributes(self):
-        """Initialize test-specific attributes after validation."""
-        # Handle test sets first
+    # ------------------------------------------------------------------
+    # _initialize_test_attributes and its helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_test_sets(self) -> dict:
+        """Resolve test sets and effective values; set ``parallel_limit``.
+
+        Returns the *effective_values* dict used by subsequent helpers.
+        """
         cli_sets = getattr(self.cli_args, "set", None)
+
         if cli_sets:
-            # Test sets were already validated in _validate_option_dependencies
-            # Process each test set independently (don't merge)
             try:
                 self.individual_test_sets = []
                 for set_name in cli_sets:
                     set_config = self.config["tests"]["set"][set_name]
                     logger.debug(f"Processing test set '{set_name}': {set_config}")
 
-                    # Resolve effective values for this specific set (CLI > Set > Config)
                     effective_values = resolve_effective_values(
                         self.cli_args, set_config, self.config
                     )
 
-                    # Warn if CLI architectures override set-defined architectures
-                    cli_arch = getattr(self.cli_args, "architectures", None)
-                    set_arch = set_config.get("architectures")
-                    if cli_arch and set_arch:
-                        try:
-                            # Normalize to sets of strings for comparison
-                            cli_arch_set = set([str(a).strip() for a in cli_arch if a])
-                            set_arch_set = set([str(a).strip() for a in set_arch if a])
-                            if (
-                                cli_arch_set
-                                and set_arch_set
-                                and cli_arch_set != set_arch_set
-                            ):
-                                logger.warning(
-                                    "CLI --architectures overrides [tests.set.%s].architectures (values differ: %s != %s)",
-                                    set_name,
-                                    sorted(list(set_arch_set)),
-                                    sorted(list(cli_arch_set)),
-                                )
-                        except Exception:
-                            # Be safe; do not break on malformed inputs
-                            pass
+                    self._warn_arch_override(
+                        set_config.get("architectures"),
+                        label=f"[tests.set.{set_name}].architectures",
+                    )
 
-                    # Store the set with its effective values for dispatch
                     self.individual_test_sets.append(
                         {
                             "name": set_name,
@@ -818,115 +803,113 @@ class ParsedOpts:
                             "effective_values": effective_values,
                         }
                     )
-
                 logger.info(f"Loaded test sets: {', '.join(cli_sets)}")
             except ValueError as e:
                 logger.critical(f"Failed to load test sets: {e}")
                 raise ConfigurationError("Failed to load test sets") from e
 
-            # Use the first test set's values for backward compatibility with global attributes
-            first_set_values = self.individual_test_sets[0]["effective_values"]
-            effective_values = first_set_values
-
+            effective_values = self.individual_test_sets[0]["effective_values"]
         else:
             self.individual_test_sets = []
-            # No test sets, use regular config resolution
             effective_values = resolve_effective_values(self.cli_args, {}, self.config)
+            self._warn_arch_override(
+                self.tests.get("architectures"),
+                label="[tests].architectures",
+            )
 
-        # Warn if CLI architectures override [tests].architectures when not using sets
-        cli_arch = getattr(self.cli_args, "architectures", None)
-        if not cli_sets and cli_arch is not None:
-            cfg_arch = self.tests.get("architectures")
-            if cfg_arch:
-                try:
-                    cli_arch_set = set([str(a).strip() for a in cli_arch if a])
-                    cfg_arch_set = set([str(a).strip() for a in cfg_arch if a])
-                    if cli_arch_set and cfg_arch_set and cli_arch_set != cfg_arch_set:
-                        logger.warning(
-                            "CLI --architectures overrides [tests].architectures (values differ: %s != %s)",
-                            sorted(list(cfg_arch_set)),
-                            sorted(list(cli_arch_set)),
-                        )
-                except Exception:
-                    pass
-
-        # Set parallel limit with priority:
-        # CLI (--parallel-limit via effective_values) > merged config > hardcoded default
         self.parallel_limit = (
             effective_values.get("parallel_limit")
             or self.tests.get("parallel_limit")
             or PARALLEL_LIMIT_DEFAULT
         )
 
-        # Handle artifact references with safe attribute access
-        copr_artifact = getattr(self.cli_args, "copr", None)
-        brew_artifact = getattr(self.cli_args, "brew", None)
+        return effective_values
 
-        # Handle artifact references with test set override support
-        set_copr_api = effective_values.get("copr_api", {})
-        set_brew_api = effective_values.get("brew_api", {})
+    def _warn_arch_override(self, config_arch: Optional[Any], *, label: str) -> None:
+        """Log a warning when CLI ``--architectures`` differs from *config_arch*."""
+        cli_arch = getattr(self.cli_args, "architectures", None)
+        if not cli_arch or not config_arch:
+            return
+        try:
+            cli_set = {str(a).strip() for a in cli_arch if a}
+            cfg_set = {str(a).strip() for a in config_arch if a}
+            if cli_set and cfg_set and cli_set != cfg_set:
+                logger.warning(
+                    "CLI --architectures overrides %s (values differ: %s != %s)",
+                    label,
+                    sorted(cfg_set),
+                    sorted(cli_set),
+                )
+        except Exception:
+            pass
 
-        # Collect all COPR references (CLI has priority, then test set, then config)
-        self.copr_references = []
-        if copr_artifact:
-            # CLI artifacts (can be multiple from --copr arg1 --copr arg2)
-            if isinstance(copr_artifact, list):
-                for artifact in copr_artifact:
-                    if hasattr(artifact, "ref") and artifact.ref:
-                        self.copr_references.extend(
-                            artifact.ref
-                            if isinstance(artifact.ref, list)
-                            else [artifact.ref]
-                        )
-            else:
-                if hasattr(copr_artifact, "ref") and copr_artifact.ref:
-                    self.copr_references.extend(
-                        copr_artifact.ref
-                        if isinstance(copr_artifact.ref, list)
-                        else [copr_artifact.ref]
-                    )
+    @staticmethod
+    def _collect_refs_from_cli(cli_artifact) -> List[str]:
+        """Extract build references from a CLI artifact argument (single or list)."""
+        refs: List[str] = []
+        artifacts = cli_artifact if isinstance(cli_artifact, list) else [cli_artifact]
+        for artifact in artifacts:
+            if hasattr(artifact, "ref") and artifact.ref:
+                if isinstance(artifact.ref, list):
+                    refs.extend(artifact.ref)
+                else:
+                    refs.append(artifact.ref)
+        return refs
+
+    def _collect_artifact_references(self, effective_values: dict) -> None:
+        """Populate ``copr_references`` and ``brew_references``."""
+        copr_cli = getattr(self.cli_args, "copr", None)
+        brew_cli = getattr(self.cli_args, "brew", None)
+
+        self.copr_references = self._collect_refs_for_type(
+            copr_cli,
+            effective_values.get("copr_api", {}),
+            self.copr_api,
+        )
+        self.brew_references = self._collect_refs_for_type(
+            brew_cli,
+            effective_values.get("brew_api", {}),
+            self.brew_api,
+        )
+
+    @staticmethod
+    def _collect_refs_for_type(
+        cli_artifact, set_api: dict, config_api: dict
+    ) -> List[str]:
+        """Collect build references for a single artifact type (COPR or Brew)."""
+        refs: List[str] = []
+        if cli_artifact:
+            artifacts = (
+                cli_artifact if isinstance(cli_artifact, list) else [cli_artifact]
+            )
+            for artifact in artifacts:
+                if hasattr(artifact, "ref") and artifact.ref:
+                    if isinstance(artifact.ref, list):
+                        refs.extend(artifact.ref)
+                    else:
+                        refs.append(artifact.ref)
         else:
-            # Test set or config references
-            config_ref = set_copr_api.get("build_references") or self.copr_api.get(
+            config_ref = set_api.get("build_references") or config_api.get(
                 "build_references"
             )
             if config_ref:
                 if isinstance(config_ref, list):
-                    self.copr_references.extend(config_ref)
+                    refs.extend(config_ref)
                 else:
-                    self.copr_references.append(config_ref)
+                    refs.append(config_ref)
+        return refs
 
-        # Collect all Brew references (CLI has priority, then test set, then config)
-        self.brew_references = []
-        if brew_artifact:
-            # CLI artifacts (can be multiple from --brew arg1 --brew arg2)
-            if isinstance(brew_artifact, list):
-                for artifact in brew_artifact:
-                    if hasattr(artifact, "ref") and artifact.ref:
-                        self.brew_references.extend(
-                            artifact.ref
-                            if isinstance(artifact.ref, list)
-                            else [artifact.ref]
-                        )
-            else:
-                if hasattr(brew_artifact, "ref") and brew_artifact.ref:
-                    self.brew_references.extend(
-                        brew_artifact.ref
-                        if isinstance(brew_artifact.ref, list)
-                        else [brew_artifact.ref]
-                    )
-        else:
-            # Test set or config references
-            config_ref = set_brew_api.get("build_references") or self.brew_api.get(
-                "build_references"
-            )
-            if config_ref:
-                if isinstance(config_ref, list):
-                    self.brew_references.extend(config_ref)
-                else:
-                    self.brew_references.append(config_ref)
+    def _resolve_source_and_environment(self, effective_values: dict) -> tuple:
+        """Parse source/target specs and merge environment variables.
 
-        # Handle git URL and ref with effective values
+        Sets ``tests_git_url``, ``tests_git_ref``, ``plans``, ``source_spec``,
+        ``target_spec``, ``upgrade_path_alias``, ``environment_variables``,
+        ``architectures``, and ``effective_tiers``.
+
+        Returns ``(cli_env_vars, auto_env_vars, set_env_vars)`` for use by
+        downstream helpers and logging.
+        """
+        # Git URL / ref / plans
         self.tests_git_url = (
             getattr(self.cli_args, "git_url", None)
             or self.tests.get("git_url")
@@ -935,201 +918,189 @@ class ParsedOpts:
         self.tests_git_ref = effective_values.get("git_ref") or self.tests.get(
             "git_ref"
         )
-
-        # Handle plans with proper fallback
         cli_plans = getattr(self.cli_args, "plan", None)
-        config_plans = self.tests.get("plans", [])
-        self.plans = cli_plans or config_plans or []
+        self.plans = cli_plans or self.tests.get("plans", []) or []
 
-        # Handle source/target configuration with effective values
+        # Source / target parsing
         source_value = effective_values.get("source")
         target_value = effective_values.get("target")
-
-        # Source validation - centralized from scattered checks
         if not source_value:
             logger.critical("Source compose specification is required!")
             raise ValidationError("Source compose specification is required")
 
+        self.source_spec, self.target_spec = parse_source_target_config(
+            source_value, target_value, self.config
+        )
+        self.upgrade_path_alias = generate_upgrade_path_alias(
+            self.source_spec, self.target_spec
+        )
+
+        # Environment variables
+        copr_artifact = getattr(self.cli_args, "copr", None)
+        brew_artifact = getattr(self.cli_args, "brew", None)
+        auto_env_vars = generate_environment_variables(
+            self.source_spec,
+            self.target_spec,
+            has_copr=bool(copr_artifact or self.copr_references),
+            has_brew=bool(brew_artifact or self.brew_references),
+        )
+        cli_env_vars = parse_environment_variables(
+            getattr(self.cli_args, "environment", None)
+        )
+        set_env_vars = effective_values.get("environment", {})
+
+        self.environment_variables = merge_set_environment_variables(
+            auto_env_vars,
+            set_env_vars,
+            cli_env_vars,
+            self.config,
+            self.cli_args,
+            effective_values.get("reportportal", {}),
+            None,
+            None,
+            None,
+            auto_env_vars.get("SOURCE_RELEASE"),
+            auto_env_vars.get("TARGET_RELEASE"),
+            self.source_spec["compose_name"],
+            self.target_spec["compose_name"],
+            event=effective_values.get("event"),
+        )
+
+        # Architectures
+        arch_input = effective_values.get("architectures")
+        if not arch_input:
+            logger.critical("No architectures specified in CLI or config!")
+            raise ValidationError("No architectures specified in CLI or config")
+        self.architectures = parse_architectures(arch_input)
+
+        # Tiers
+        self.effective_tiers = effective_values.get("tiers")
+
+        return cli_env_vars, auto_env_vars, set_env_vars
+
+    def _resolve_tmt_context_and_flags(self, effective_values: dict, cli_sets) -> None:
+        """Build TMT context, apply overrides (CentOS, RHSM), and set plan filter."""
+        first_tier = self.effective_tiers[0] if self.effective_tiers else None
+        self.tmt_context = generate_tmt_context(
+            self.source_spec,
+            self.target_spec,
+            event=effective_values.get("event"),
+            tier=first_tier,
+        )
+        self.tmt_context = apply_centos_context_overrides(
+            self.tmt_context,
+            self.source_spec,
+            self.target_spec,
+            self.environment_variables,
+        )
+
+        # Non-set mode: apply config context then CLI overrides
+        if not cli_sets:
+            config_context = effective_values.get("context", {}) or {}
+            if config_context:
+                self.tmt_context = merge_tmt_context(self.tmt_context, config_context)
+            try:
+                cli_context = parse_tmt_context(getattr(self.cli_args, "context", None))
+                if cli_context:
+                    self.tmt_context = merge_tmt_context(self.tmt_context, cli_context)
+            except ValueError as e:
+                logger.critical(f"Failed to parse --context: {e}")
+                raise ValidationError("Invalid --context format") from e
+
+        # RHSM stage CDN flag
+        if getattr(self.cli_args, "only_rhsm_stage_cdn", False):
+            self.environment_variables["RHSM_MODE"] = "stage"
+            logger.info(
+                "Added RHSM_MODE=stage to environment variables (--only-rhsm-stage-cdn)"
+            )
+            self.tmt_context["product_phase"] = "rc"
+            logger.info("Added product_phase=rc to TMT context (--only-rhsm-stage-cdn)")
+
+        # Plan filter
+        cli_planfilter = getattr(self.cli_args, "planfilter", None)
+        if cli_planfilter:
+            self.plan_filter = cli_planfilter
+            logger.info(f"Using CLI plan filter: {self.plan_filter}")
+        else:
+            self.plan_filter = None
+
+        self.test_set_config = {}
+
+    @staticmethod
+    def _log_initialization_summary(
+        cli_env_vars: dict,
+        auto_env_vars: dict,
+        set_env_vars: dict,
+        source_spec: dict,
+        upgrade_path_alias: str,
+        architectures: list,
+        effective_tiers: Optional[list],
+    ) -> None:
+        """Log a summary of the resolved configuration."""
+        logger.info(f"Source: {source_spec['compose_name']}")
+        logger.info(f"Upgrade path: {upgrade_path_alias}")
+
+        if len(architectures) == 1:
+            logger.info(f"Architecture: {architectures[0]}")
+        else:
+            logger.info(f"Architectures: {', '.join(architectures)}")
+
+        if effective_tiers:
+            logger.info(f"Tiers: {', '.join(effective_tiers)}")
+
+        if "TARGET_COMPOSE_URL" in cli_env_vars:
+            from enge.utils.source_target_parser import (
+                parse_target_compose_from_url,
+            )
+
+            logger.debug("Target compose URL specified.")
+            target_compose_url = cli_env_vars["TARGET_COMPOSE_URL"]
+            target_compose = parse_target_compose_from_url(target_compose_url)
+            if target_compose:
+                logger.info(f"Target compose: {target_compose}")
+            else:
+                logger.info(
+                    f"Target compose: {os.path.basename(target_compose_url.strip('/'))}"
+                )
+
+        for var_name, cli_value in cli_env_vars.items():
+            if var_name in auto_env_vars and auto_env_vars[var_name] != cli_value:
+                logger.warning(
+                    f"Environment variable {var_name} overridden: "
+                    f"{auto_env_vars[var_name]} -> {cli_value}"
+                )
+
+        if set_env_vars:
+            logger.debug(f"Test set environment variables: {set_env_vars}")
+            for var_name, set_value in set_env_vars.items():
+                if var_name in auto_env_vars and auto_env_vars[var_name] != set_value:
+                    logger.info(
+                        f"Environment variable {var_name} overridden by test set: "
+                        f"{auto_env_vars[var_name]} -> {set_value}"
+                    )
+
+    def _initialize_test_attributes(self):
+        """Initialize test-specific attributes after validation."""
+        effective_values = self._resolve_test_sets()
+        self._collect_artifact_references(effective_values)
+
         try:
-            # Parse source and target specifications
-            self.source_spec, self.target_spec = parse_source_target_config(
-                source_value, target_value, self.config
+            cli_env_vars, auto_env_vars, set_env_vars = (
+                self._resolve_source_and_environment(effective_values)
             )
-
-            # Generate derived values
-            self.upgrade_path_alias = generate_upgrade_path_alias(
-                self.source_spec, self.target_spec
+            self._resolve_tmt_context_and_flags(
+                effective_values,
+                getattr(self.cli_args, "set", None),
             )
-
-            # Generate automatic environment variables
-            # Check CLI args directly, not just references list (which could be empty)
-            copr_artifact = getattr(self.cli_args, "copr", None)
-            brew_artifact = getattr(self.cli_args, "brew", None)
-            auto_env_vars = generate_environment_variables(
-                self.source_spec,
-                self.target_spec,
-                has_copr=bool(copr_artifact or self.copr_references),
-                has_brew=bool(brew_artifact or self.brew_references),
-            )
-
-            # Parse CLI environment variables
-            cli_env_args = getattr(self.cli_args, "environment", None)
-            cli_env_vars = parse_environment_variables(cli_env_args)
-
-            # Get environment variables from test sets
-            set_env_vars = effective_values.get("environment", {})
-
-            # Merge environment variables (CLI > Test Set > Automatic)
-            self.environment_variables = merge_set_environment_variables(
+            self._log_initialization_summary(
+                cli_env_vars,
                 auto_env_vars,
                 set_env_vars,
-                cli_env_vars,
-                self.config,
-                self.cli_args,
-                effective_values.get("reportportal", {}),
-                None,
-                None,
-                None,
-                auto_env_vars.get("SOURCE_RELEASE"),
-                auto_env_vars.get("TARGET_RELEASE"),
-                self.source_spec["compose_name"],
-                self.target_spec["compose_name"],
-                event=effective_values.get("event"),
-            )
-
-            # Parse architectures with effective values
-            arch_input = effective_values.get("architectures")
-
-            # Architecture validation - centralized from scattered checks
-            if not arch_input:
-                logger.critical("No architectures specified in CLI or config!")
-                raise ValidationError("No architectures specified in CLI or config")
-
-            self.architectures = parse_architectures(arch_input)
-
-            # Store effective tiers for use in dispatch and context generation
-            self.effective_tiers = effective_values.get("tiers")
-
-            # Generate TMT context (architecture will be set per environment)
-            # Use first tier from effective_tiers if available
-            first_tier = None
-            if self.effective_tiers and len(self.effective_tiers) > 0:
-                first_tier = self.effective_tiers[0]
-            self.tmt_context = generate_tmt_context(
                 self.source_spec,
-                self.target_spec,
-                event=effective_values.get("event"),
-                tier=first_tier,
+                self.upgrade_path_alias,
+                self.architectures,
+                self.effective_tiers,
             )
-
-            self.tmt_context = apply_centos_context_overrides(
-                self.tmt_context,
-                self.source_spec,
-                self.target_spec,
-                self.environment_variables,
-            )
-
-            # Merge context based on mode:
-            # - Non-set mode: apply config context then CLI overrides
-            # - Set mode: defer both config and CLI context to per-set handling in dispatch
-            if not cli_sets:
-                config_context = effective_values.get("context", {}) or {}
-                if config_context:
-                    self.tmt_context = merge_tmt_context(
-                        self.tmt_context, config_context
-                    )
-
-                try:
-                    cli_context_args = getattr(self.cli_args, "context", None)
-                    cli_context = parse_tmt_context(cli_context_args)
-                    if cli_context:
-                        self.tmt_context = merge_tmt_context(
-                            self.tmt_context, cli_context
-                        )
-                except ValueError as e:
-                    logger.critical(f"Failed to parse --context: {e}")
-                    raise ValidationError("Invalid --context format") from e
-
-            # Handle RHSM-related flags
-            only_rhsm_stage_cdn = getattr(self.cli_args, "only_rhsm_stage_cdn", False)
-            if only_rhsm_stage_cdn:
-                # Add RHSM_MODE=stage to environment variables
-                self.environment_variables["RHSM_MODE"] = "stage"
-                logger.info(
-                    "Added RHSM_MODE=stage to environment variables (--only-rhsm-stage-cdn)"
-                )
-
-                # Add product_phase=rc to TMT context
-                self.tmt_context["product_phase"] = "rc"
-                logger.info(
-                    "Added product_phase=rc to TMT context (--only-rhsm-stage-cdn)"
-                )
-
-            # Handle CLI planfilter (tier-based filtering is handled in dispatch)
-            cli_planfilter = getattr(self.cli_args, "planfilter", None)
-
-            if cli_planfilter:
-                # CLI planfilter overrides everything
-                self.plan_filter = cli_planfilter
-                logger.info(f"Using CLI plan filter: {self.plan_filter}")
-            else:
-                self.plan_filter = None
-
-            # Store test set config for potential use in dispatch
-            self.test_set_config = (
-                {}
-            )  # No longer needed as test sets are processed individually
-
-            logger.info(f"Source: {self.source_spec['compose_name']}")
-            logger.info(f"Upgrade path: {self.upgrade_path_alias}")
-
-            # Log architectures
-            if len(self.architectures) == 1:
-                logger.info(f"Architecture: {self.architectures[0]}")
-            else:
-                logger.info(f"Architectures: {', '.join(self.architectures)}")
-
-            # Log effective tiers if set
-            if self.effective_tiers:
-                logger.info(f"Tiers: {', '.join(self.effective_tiers)}")
-
-            # Log target compose if TARGET_COMPOSE_URL is specified via --environment
-            if "TARGET_COMPOSE_URL" in cli_env_vars:
-                from enge.utils.source_target_parser import (
-                    parse_target_compose_from_url,
-                )
-
-                logger.debug("Target compose URL specified.")
-                target_compose_url = cli_env_vars["TARGET_COMPOSE_URL"]
-                target_compose = parse_target_compose_from_url(target_compose_url)
-
-                if target_compose:
-                    logger.info(f"Target compose: {target_compose}")
-                else:
-                    # Fallback to basename if pattern not found
-                    logger.info(
-                        f"Target compose: {os.path.basename(target_compose_url.strip('/'))}"
-                    )
-
-            # Log any overridden automatic variables
-            for var_name, cli_value in cli_env_vars.items():
-                if var_name in auto_env_vars and auto_env_vars[var_name] != cli_value:
-                    logger.warning(
-                        f"Environment variable {var_name} overridden: {auto_env_vars[var_name]} -> {cli_value}"
-                    )
-
-            # Log test set environment variables if any
-            if set_env_vars:
-                logger.debug(f"Test set environment variables: {set_env_vars}")
-                for var_name, set_value in set_env_vars.items():
-                    if (
-                        var_name in auto_env_vars
-                        and auto_env_vars[var_name] != set_value
-                    ):
-                        logger.info(
-                            f"Environment variable {var_name} overridden by test set: {auto_env_vars[var_name]} -> {set_value}"
-                        )
-
         except ValueError as e:
             logger.critical(f"Failed to parse source/target configuration: {e}")
             raise ValidationError("Failed to parse source/target configuration") from e
