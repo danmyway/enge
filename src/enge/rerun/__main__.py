@@ -1,7 +1,6 @@
 import copy
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Optional, Dict, Any, Iterable, List
 from datetime import datetime
@@ -9,6 +8,7 @@ from datetime import datetime
 from enge.utils.http_client import http_get
 from prettytable import PrettyTable
 
+from enge.dispatch.pin_compose import repin_compose
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks_with_map, parse_request_xunit
 from enge.utils.opt_manager import parsed_opts
@@ -597,6 +597,14 @@ class RerunJobs:
             filtered_payload["environments"] = filtered_payload.pop(
                 "environments_requested"
             )
+
+            # Re-pin compose to the latest available nightly
+            env = filtered_payload["environments"][0]
+            original_compose = env.get("os", {}).get("compose")
+            composes_prod_url = parsed_opts.config.get("testing_farm", {}).get(
+                "composes_prod_url", ""
+            )
+            env["os"]["compose"] = repin_compose(original_compose, composes_prod_url)
 
             # Append the filtered payload for re-run
             self.rerun_payloads.append(filtered_payload)

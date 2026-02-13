@@ -96,9 +96,9 @@ def parse_compose_spec(
                 compose_name = translated_compose
             except Exception as e:
                 LOGGER.warning(
-                    f"Failed to translate compose for {major}.{minor}: {e}. Using fallback."
+                    f"Failed to translate compose for {major}.{minor}: {e}. "
+                    "Using symbolic compose name, the provisioner will resolve it."
                 )
-                # Fallback to standard format
                 compose_name = f"RHEL-{major}.{minor}.0-Nightly"
         else:
             LOGGER.debug(
@@ -117,29 +117,15 @@ def parse_compose_spec(
         }
 
     # Try parsing as full compose name (e.g., "RHEL-8.10.0-Nightly")
-    compose_match = re.match(r"^RHEL-(\d+)\.(\d+)\.(\d+)-(.+)$", spec.strip())
+    compose_match = re.match(r"^RHEL-(\d+)\.(\d+)(?:\.(\d+))?-(.+)$", spec.strip())
     if compose_match:
         major = int(compose_match.group(1))
         minor = int(compose_match.group(2))
-        # For compose names, validate them against COMPOSES_PROD_URL
 
-        from enge.dispatch.pin_compose import _pin_compose
+        from enge.dispatch.pin_compose import repin_compose
 
-        compose_name = spec.strip()
         composes_prod_url = config.get("testing_farm", {}).get("composes_prod_url", "")
-
-        if composes_prod_url:
-            try:
-                # Use _pin_compose for validation - it will exit if compose is not found
-                validated_compose = _pin_compose(compose_name, composes_prod_url)
-                LOGGER.debug(
-                    f"Validated compose {compose_name} against COMPOSES_PROD_URL"
-                )
-                compose_name = validated_compose
-            except Exception as e:
-                LOGGER.warning(
-                    f"Failed to validate compose {compose_name}: {e}. Using as provided."
-                )
+        compose_name = repin_compose(spec.strip(), composes_prod_url)
 
         return {
             "major": major,

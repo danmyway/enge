@@ -385,3 +385,68 @@ def _pin_compose(compose_arg, composes_prod_url):
         _show_compose_not_found_error(attempted_composes, data, major, minor)
 
     return compose_arg if compose_arg in (data.get("COMPOSES") or []) else compose
+
+
+_repin_cache = {}
+
+
+def repin_compose(compose_name, composes_prod_url):
+    """
+    Re-pin a compose name to the latest available nightly version.
+
+    Extracts major.minor from the original compose name and resolves it
+    to the current nightly compose via the Testing Farm composes API.
+
+    Results are cached per (compose_name, composes_prod_url) to avoid
+    duplicate API requests and warnings when the same compose is validated
+    multiple times (e.g., opt_manager + set_flow).
+
+    Non-RHEL composes (e.g., CentOS-Stream-9) are returned as-is since
+    they are already symbolic and don't require re-pinning.
+
+    Parameters:
+    - compose_name (str): Original compose name (e.g., "RHEL-8.10.0-20241215.1")
+    - composes_prod_url (str): URL to fetch compose data from.
+
+    Returns:
+    - str: Updated compose name for RHEL composes, or the original name for non-RHEL.
+
+    Raises:
+    - ValueError: If composes_prod_url is not configured or compose name cannot be parsed.
+    - ValidationError: If the compose cannot be resolved to an available nightly
+      (propagated from _pin_compose_with_fallback).
+    """
+    cache_key = (compose_name, composes_prod_url)
+    if cache_key in _repin_cache:
+        return _repin_cache[cache_key]
+
+    if not compose_name:
+        raise ValueError("Compose name is empty, cannot re-pin")
+
+    # Non-RHEL composes (e.g., CentOS-Stream-9) are already symbolic
+    if not compose_name.startswith("RHEL-"):
+        LOGGER.debug("Non-RHEL compose does not require re-pinning: %s", compose_name)
+        _repin_cache[cache_key] = compose_name
+        return compose_name
+
+    # Extract major.minor from compose name
+    # Handles both RHEL-8.10.0-suffix and RHEL-10.1-suffix formats
+    match = re.match(r"^RHEL-(\d+)\.(\d+)(?:\.\d+)?-(.+)$", compose_name)
+    if not match:
+        raise ValueError(f"Could not parse compose name for re-pinning: {compose_name}")
+
+    major = int(match.group(1))
+    minor = int(match.group(2))
+
+    if not composes_prod_url:
+        raise ValueError(
+            "composes_prod_url is not configured, cannot validate compose availability"
+        )
+
+    result = _pin_compose_with_fallback(major, minor, composes_prod_url)
+    if result != compose_name:
+        LOGGER.warning("Compose re-pinned: %s -> %s", compose_name, result)
+    else:
+        LOGGER.debug("Compose validated: %s", compose_name)
+    _repin_cache[cache_key] = result
+    return result
