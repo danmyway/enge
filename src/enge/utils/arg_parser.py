@@ -458,13 +458,43 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Test ReportPortal connection and show sample data for debugging.",
     )
 
-    # Input sources (for --finish action)
+    rp_action.add_argument(
+        "--delete-logs",
+        action="store_true",
+        help="Delete all log entries from a ReportPortal launch. "
+        "Uses the report module to find the matching launch via TMT context.",
+    )
+
+    # Log enrichment (can be combined with --finish to enrich then finish)
+    reportportal.add_argument(
+        "--enrich-logs",
+        action="store_true",
+        help="Fetch all available artifacts from the Testing Farm artifact endpoint "
+        "and upload them as logs to the corresponding ReportPortal launch. "
+        "Can be combined with --finish to enrich logs before finishing the launch. "
+        "With --all-launches: enriches launches directly from RP test-item descriptions "
+        "(no TF task input needed). Already-enriched launches are skipped.",
+    )
+
+    # Operate on all IN_PROGRESS launches without providing task input
+    reportportal.add_argument(
+        "--all-launches",
+        action="store_true",
+        help="Operate on launches in the ReportPortal project without "
+        "providing Testing Farm task input. "
+        "Supported with --finish, --enrich-logs, and --delete-logs. "
+        "With --enrich-logs alone: enriches all launches (any status). "
+        "With --finish --enrich-logs: enriches then finishes IN_PROGRESS launches. "
+        "Launches already enriched by enge are skipped automatically.",
+    )
+
+    # Input sources (for --finish and --enrich-logs actions)
     _add_input_source_args(reportportal)
 
     # ReportPortal control options
     _add_dryrun_arg(
         reportportal,
-        help_text="Show what would be sent to ReportPortal without actually finishing launches.",
+        help_text="Show what would be sent to ReportPortal without actually sending it.",
     )
 
     # ==================== CANCEL SUBCOMMAND ====================
