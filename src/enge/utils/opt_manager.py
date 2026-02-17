@@ -57,6 +57,10 @@ class ParsedOpts:
         )
         self.config = load_config(paths=config_paths)
 
+        # Fill missing API tokens from environment variables.
+        # Priority: user config > environment variable.
+        self._apply_env_var_fallbacks()
+
         # Expand --set-regex into concrete set names before any validation
         self._expand_set_regex_arguments()
 
@@ -81,6 +85,38 @@ class ParsedOpts:
         # Initialize test-specific attributes if this is a test action
         if getattr(self.cli_args, "action", None) == "test":
             self._initialize_test_attributes()
+
+    def _apply_env_var_fallbacks(self):
+        """Populate missing API tokens from environment variables.
+
+        Priority: user config value > environment variable.
+        Only fills in a value when the config key is empty or missing.
+
+        Supported environment variables:
+            TESTING_FARM_API_TOKEN  -> [testing_farm].api_key
+            REPORTPORTAL_API_TOKEN -> [reportportal].token
+        """
+        _ENV_FALLBACKS = (
+            ("testing_farm", "api_key", "TESTING_FARM_API_TOKEN"),
+            ("reportportal", "token", "REPORTPORTAL_API_TOKEN"),
+        )
+
+        for section, key, env_var in _ENV_FALLBACKS:
+            section_dict = self.config.get(section)
+            if not isinstance(section_dict, dict):
+                continue
+
+            current_value = section_dict.get(key, "")
+            if current_value:
+                # Config already has a value — keep it
+                continue
+
+            env_value = os.environ.get(env_var, "")
+            if env_value:
+                section_dict[key] = env_value
+                logger.info(
+                    f"Using {env_var} environment variable for [{section}].{key}"
+                )
 
     def _validate_all_options(self):
         """Centralized validation entry point - replaces all scattered validation."""

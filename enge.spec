@@ -32,14 +32,14 @@ install -d %{buildroot}%{_sysconfdir}/enge
 install -m 0644 src/enge/utils/enge_default_config.toml %{buildroot}%{_sysconfdir}/enge/enge_default_config.toml
 # Create an empty user config if not present (left for admin to fill in)
 # Ship as noreplace so upgrades do not clobber local changes
-if [ ! -f %{buildroot}%{_sysconfdir}/enge/enge.toml ]; then
-  touch %{buildroot}%{_sysconfdir}/enge/enge.toml
+if [ ! -f %{buildroot}%{_sysconfdir}/enge/enge_user_config.toml ]; then
+  touch %{buildroot}%{_sysconfdir}/enge/enge_user_config.toml
 fi
-chmod 0644 %{buildroot}%{_sysconfdir}/enge/enge.toml
+chmod 0644 %{buildroot}%{_sysconfdir}/enge/enge_user_config.toml
 
 %files -f %{pyproject_files}
 %{_bindir}/enge
-%config(noreplace) %{_sysconfdir}/enge/enge.toml
+%config(noreplace) %{_sysconfdir}/enge/enge_user_config.toml
 %config(noreplace) %{_sysconfdir}/enge/enge_default_config.toml
 
 %changelog
