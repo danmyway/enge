@@ -19,6 +19,7 @@
           2. [Test Sets](#test-sets)
           3. [TMT Context Integration](#tmt-context-integration)
           4. [ReportPortal Integration](#reportportal-integration)
+             1. [ReportPortal Launch Management](#reportportal-launch-management)
           5. [Report](#report)
           6. [Rerun](#rerun)
    3. [Troubleshooting configuration and validation](#troubleshooting-configuration-and-validation)
@@ -546,6 +547,101 @@ When `--rp` is used, enge automatically excludes conflicting variables to preven
 - **Flexible Configuration**: Event names can be customized per test set or via CLI
 - **TMT Integration**: Shortened UUID available in TMT context as `uniq_id` for test scripts
 - **Test Set Focus**: Optimized for the modern test sets approach (legacy approach not supported)
+
+###### ReportPortal Launch Management
+
+The `enge reportportal` subcommand provides tools for managing ReportPortal launches after dispatch — finishing launches, enriching them with artifact logs, and deleting logs.
+
+**Finishing Launches (`--finish`):**
+
+Finish an IN_PROGRESS launch by resolving the Testing Farm task status and setting the appropriate end time and status on the RP launch.
+
+```bash
+# Finish launches resolved from the latest archived tasks
+enge reportportal --finish
+
+# Finish launches for specific Testing Farm task(s)
+enge reportportal --finish -i <tf-task-uuid>
+
+# Finish all IN_PROGRESS launches in the project (no TF input needed)
+enge reportportal --finish --all-launches
+
+# Preview what would be finished
+enge reportportal --finish --all-launches --dryrun
+```
+
+When using `--all-launches`, the status and end time are derived from the RP test items within each launch (not from the current time). The Testing Farm artifacts URL is extracted from test-item descriptions and added to the launch description.
+
+**Enriching Launches with Logs (`--enrich-logs`):**
+
+Download artifact logs from the Testing Farm artifact endpoint and upload them to the corresponding RP launch. Only logs belonging to failed test items are attached — passed and skipped items are excluded to keep the RP interface focused on failures. Suite-level (unmapped) logs are included when at least one item in the launch has failed. Logs are downloaded in memory and uploaded in batches — nothing is written to disk.
+
+```bash
+# Enrich launches from specific TF task(s)
+enge reportportal --enrich-logs -i <tf-task-uuid>
+
+# Enrich then finish in one step
+enge reportportal --enrich-logs --finish -i <tf-task-uuid>
+
+# Enrich all launches regardless of status (carpet bomb)
+enge reportportal --enrich-logs --all-launches
+
+# Enrich IN_PROGRESS launches, then finish them
+enge reportportal --finish --enrich-logs --all-launches
+
+# Preview enrichment
+enge reportportal --enrich-logs --all-launches --dryrun
+```
+
+With `--all-launches`, the artifacts URL is extracted from RP test-item descriptions (set by the TMT plugin), then `results.xml` is fetched to discover artifact files. No Testing Farm task input is needed.
+
+**Deduplication:**
+
+Enge prevents duplicate log uploads through two layers:
+
+1. **Launch attribute** (`logs_attached=true`): After successful enrichment, this attribute is stamped on the launch. Subsequent runs skip launches with this attribute entirely — no API calls needed.
+2. **Message-header matching**: Each uploaded log starts with a `### \`artifact-name\`` header. Before uploading, enge fetches existing logs from the launch's test items and filters out artifacts whose headers already exist.
+
+This means you can safely run `--enrich-logs --all-launches` repeatedly without creating duplicates.
+
+**Deleting Logs (`--delete-logs`):**
+
+Remove all log entries from a launch.
+
+```bash
+# Delete logs from launches resolved from TF task(s)
+enge reportportal --delete-logs -i <tf-task-uuid>
+
+# Delete logs from all IN_PROGRESS launches
+enge reportportal --delete-logs --all-launches
+
+# Preview deletion
+enge reportportal --delete-logs --all-launches --dryrun
+```
+
+**Testing Connection (`--test`):**
+
+Verify your ReportPortal configuration and connectivity.
+
+```bash
+enge reportportal --test
+```
+
+**Input Sources:**
+
+All task-based operations (`--finish`, `--enrich-logs`, `--delete-logs` without `--all-launches`) accept the same input sources as the report module:
+- `-i/--input <uuid>` — Testing Farm task UUID(s)
+- `-f/--file <path>` — file containing task UUIDs
+- `--get-tag <pattern>` — query archived task files by regex
+
+**`--all-launches` Summary:**
+
+| Combination | Scope | Behaviour |
+|---|---|---|
+| `--finish --all-launches` | IN_PROGRESS | Derives status & end time from test items, sets artifacts URL as description |
+| `--enrich-logs --all-launches` | All statuses | Enriches every launch; skips already-enriched (`logs_attached`) |
+| `--finish --enrich-logs --all-launches` | IN_PROGRESS | Enriches first, then finishes |
+| `--delete-logs --all-launches` | IN_PROGRESS | Deletes all logs from each launch |
 
 ##### Report
 With the report command you are able to get the results of the requested jobs straight to the command line.<br>

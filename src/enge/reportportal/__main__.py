@@ -4,20 +4,32 @@ ReportPortal launch management for enge.
 
 This module handles ReportPortal API integration for creating and managing
 test launches through the ReportPortal API.
+
+Standalone utilities (timestamp parsing, XML helpers, dry-run display)
+live in :mod:`enge.reportportal.utils`.  High-level orchestration
+(finish-from-task, enrich, delete, all-launches) lives in
+:mod:`enge.reportportal.operations`.
 """
 
 import logging
-import sys
 import json
-from typing import Optional, Dict, Any, List
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 
-from enge.utils.http_client import http_get, http_post, http_put
+from enge.utils.http_client import http_get, http_post, http_put, http_delete
 from requests.exceptions import RequestException
-import lxml.etree
 
 from enge.utils.opt_manager import parsed_opts
 from enge.utils.errors import ConfigurationError, NetworkError, EngeError
+
+from enge.reportportal.utils import (
+    DEFAULT_ENRICH_MAX_FILE_SIZE,
+    ArtifactFile,
+    get_artifact_log_level,
+    should_skip_artifact,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -51,30 +63,24 @@ class ReportPortalLaunch:
             "Content-Type": "application/json",
         }
 
+    # ===================================================================
+    # Launch CRUD
+    # ===================================================================
+
     def generate_launch_name(self, context: Optional[Dict[str, Any]] = None) -> str:
         """
-        Generate launch name in the format: (EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture
-
-        Args:
-            context: Optional context containing event, set_name, tier, architecture, etc.
-
-        Returns:
-            str: Generated launch name
+        Generate launch name in the format:
+        ``(EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture``
         """
-        # Get timestamp in YYYY-MM-DD format
         timestamp = datetime.now().strftime("%Y-%m-%d")
 
         if not context:
             return f"ENGE_Launch~{timestamp}~unknown"
 
-        # Determine the event/set name component (event takes priority)
         name_component = context.get("event") or context.get("set_name") or "unknown"
-
-        # Get tier and architecture
         tier = context.get("tier") or "unknown"
         architecture = context.get("architecture") or "unknown"
 
-        # Generate the name in the format: (EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture
         return f"{name_component.upper()}~{timestamp}~{tier}~{architecture}"
 
     def generate_launch_payload(
@@ -85,48 +91,38 @@ class ReportPortalLaunch:
         tmt_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Generate the launch payload that would be sent to ReportPortal API.
-
-        This method is useful for dry run mode to show what would be sent without actually sending it.
+        Generate the launch payload for the ReportPortal API.
 
         Args:
-            name: Optional launch name. If not provided, will be auto-generated.
-            description: Optional launch description.
-            context: Optional context for launch name generation.
-            tmt_context: Optional TMT context to include as launch attributes.
-
-        Returns:
-            Dict: The launch payload that would be sent to ReportPortal
+            name: Launch name (auto-generated from *context* when absent).
+            description: Launch description.
+            context: Context for name generation (event, tier, arch, ...).
+            tmt_context: TMT context dict — stored as launch attributes.
         """
         if not name:
             name = self.generate_launch_name(context)
 
-        launch_data = {
+        launch_data: Dict[str, Any] = {
             "name": name,
             "description": description
             or f"Launch created by enge on {datetime.now().isoformat()}",
             "mode": "DEFAULT",
-            "startTime": int(
-                datetime.now().timestamp() * 1000
-            ),  # ReportPortal expects milliseconds
+            "startTime": int(datetime.now().timestamp() * 1000),
             "tags": ["enge", "automated"],
         }
 
-        # Add TMT context as ReportPortal launch attributes
         if tmt_context:
             attributes = []
             for key, value in tmt_context.items():
-                if value is not None:  # Only include non-None values
-                    str_value = str(value)
-                    attributes.append({"key": key, "value": str_value})
+                if value is not None:
+                    attributes.append({"key": key, "value": str(value)})
 
-            # Ensure arch gets through even if not in tmt_context yet
             if (
                 context
                 and context.get("architecture")
                 and not any(a.get("key") == "arch" for a in attributes)
             ):
-                attributes.append({"key": "arch", "value": context.get("architecture")})
+                attributes.append({"key": "arch", "value": context["architecture"]})
 
             if attributes:
                 launch_data["attributes"] = attributes
@@ -143,18 +139,9 @@ class ReportPortalLaunch:
         """
         Create a new launch in ReportPortal.
 
-        Args:
-            name: Optional launch name. If not provided, will be auto-generated.
-            description: Optional launch description.
-
         Returns:
             str: UUID of the created launch
-
-        Raises:
-            RequestException: If the API request fails
-            ValueError: If the response is invalid
         """
-        # Generate the launch payload
         launch_data = self.generate_launch_payload(
             name, description, context, tmt_context
         )
@@ -170,7 +157,8 @@ class ReportPortalLaunch:
 
             if response.status_code not in [200, 201]:
                 raise RequestException(
-                    f"Failed to create launch: {response.status_code} - {response.text}"
+                    f"Failed to create launch: "
+                    f"{response.status_code} - {response.text}"
                 )
 
             response_data = response.json()
@@ -179,19 +167,20 @@ class ReportPortalLaunch:
             if not launch_uuid:
                 raise ValueError("Launch UUID not found in response")
 
-            LOGGER.info(f"✓ ReportPortal launch created successfully: {launch_uuid}")
+            LOGGER.info(f"ReportPortal launch created successfully: " f"{launch_uuid}")
             LOGGER.info(f"  Launch name: {launch_data['name']}")
             LOGGER.info(
-                f"  Launch URL: {self.url}/ui/#{self.project}/launches/all/{launch_uuid}"
+                f"  Launch URL: {self.url}/ui/#{self.project}"
+                f"/launches/all/{launch_uuid}"
             )
 
             return launch_uuid
 
         except RequestException as e:
-            LOGGER.error(f"Failed to create ReportPortal launch.")
+            LOGGER.error("Failed to create ReportPortal launch.")
             raise NetworkError("Failed to create ReportPortal launch") from e
         except Exception as e:
-            LOGGER.error(f"Unexpected error creating launch.")
+            LOGGER.error("Unexpected error creating launch.")
             raise EngeError("Unexpected error creating ReportPortal launch") from e
 
     def list_launches(
@@ -205,37 +194,26 @@ class ReportPortalLaunch:
         List launches in the project.
 
         Args:
-            size: Number of launches to retrieve per page (default: 50)
-            page: Page number to retrieve (default: 0)
-            status: Launch status to filter by (default: "IN_PROGRESS")
-            attribute_filters: Dict of attribute key-value pairs to filter by
-
-        Returns:
-            List[Dict]: List of launch data dictionaries
-
-        Raises:
-            RequestException: If the API request fails
+            size: Number of launches per page (default: 50)
+            page: Page number (0-based, default: 0)
+            status: Status filter (default: ``"IN_PROGRESS"``)
+            attribute_filters: Attribute key/value pairs for server-side filtering
         """
         try:
-            # Build base parameters
-            params = [
+            params: list = [
                 ("page.size", size),
                 ("page.page", page),
             ]
 
-            # Add status filter if provided
             if status:
                 params.append(("filter.eq.status", status))
 
-            # Add attribute filters if provided
             if attribute_filters:
                 for key, value in attribute_filters.items():
-                    if key != "uniq_id":  # Skip uniq_id as it's used for UUID matching
+                    if key != "uniq_id":
                         params.append(("filter.has.attributeKey", key))
                         params.append(("filter.has.attributeValue", value))
                         LOGGER.debug(f"Adding attribute filter: {key}={value}")
-
-            LOGGER.debug(f"Launch list params: {params}")
 
             response = http_get(
                 f"{self.api_base}/launch",
@@ -246,51 +224,37 @@ class ReportPortalLaunch:
 
             if response.status_code != 200:
                 raise RequestException(
-                    f"Failed to list launches: {response.status_code} - {response.text}"
+                    f"Failed to list launches: "
+                    f"{response.status_code} - {response.text}"
                 )
 
             response_data = response.json()
-
-            # Debug: Log the actual response structure
-            LOGGER.debug(
-                f"ReportPortal API response keys: {list(response_data.keys())}"
-            )
-
             launches = response_data.get("content", [])
-
-            # Debug: Log structure of first launch if available
-            if launches and len(launches) > 0:
-                LOGGER.debug(f"First launch keys: {list(launches[0].keys())}")
-                LOGGER.debug(f"First launch sample: {launches[0]}")
 
             LOGGER.debug(f"Retrieved {len(launches)} launches from page {page}")
             return launches
 
         except RequestException as e:
-            LOGGER.error(f"Failed to list ReportPortal launches")
+            LOGGER.error("Failed to list ReportPortal launches")
             raise NetworkError("Failed to list ReportPortal launches") from e
         except Exception as e:
-            LOGGER.error(f"Unexpected error listing launches.")
+            LOGGER.error("Unexpected error listing launches.")
             raise EngeError("Unexpected error listing ReportPortal launches") from e
 
     def find_launch_by_uniq_id(
-        self, uniq_id: str, tmt_context: Optional[Dict[str, str]] = None
+        self,
+        uniq_id: str,
+        tmt_context: Optional[Dict[str, str]] = None,
     ) -> Optional[str]:
         """
-        Find a launch UUID by matching the uniq_id (first 12 chars of UUID).
-        Uses TMT context for enhanced filtering when available.
+        Find a launch UUID by matching ``uniq_id`` (UUID prefix).
 
-        Args:
-            uniq_id: First 12 characters of the launch UUID to match
-            tmt_context: Optional TMT context for enhanced filtering
-
-        Returns:
-            str: Full launch UUID if found, None otherwise
+        Uses TMT context for server-side attribute filtering when
+        available, then verifies client-side via UUID prefix matching.
         """
         try:
             LOGGER.info(f"Searching for launch with uniq_id: {uniq_id}")
 
-            # Use TMT context for enhanced filtering if available
             attribute_filters = None
             if tmt_context:
                 attribute_filters = {
@@ -300,26 +264,19 @@ class ReportPortalLaunch:
                 }
                 if attribute_filters:
                     LOGGER.info(
-                        f"Using TMT context filters: {list(attribute_filters.keys())}"
-                    )
-                else:
-                    LOGGER.debug(
-                        "TMT context provided but no usable attributes for filtering"
+                        f"Using TMT context filters: "
+                        f"{list(attribute_filters.keys())}"
                     )
 
-            # First try with IN_PROGRESS status (most likely for active launches)
             total_checked = 0
-            for status in [
-                "IN_PROGRESS",
-                None,
-            ]:  # Try IN_PROGRESS first, then all statuses
+            for status in ["IN_PROGRESS", None]:
                 if status:
                     LOGGER.debug(f"Searching launches with status: {status}")
                 else:
                     LOGGER.debug("Searching all launches (no status filter)")
 
                 status_checked = 0
-                for page in range(0, 10):  # Check fewer pages with better filtering
+                for page in range(0, 10):
                     launches = self.list_launches(
                         size=50,
                         page=page,
@@ -328,80 +285,53 @@ class ReportPortalLaunch:
                     )
 
                     if not launches:
-                        LOGGER.debug(f"No more launches found at page {page}")
                         break
 
                     status_checked += len(launches)
                     total_checked += len(launches)
-                    LOGGER.debug(f"Checking page {page} with {len(launches)} launches")
 
                     for launch in launches:
-                        # Try both "uuid" and "id" fields as different RP versions may use different field names
                         launch_uuid = launch.get("uuid") or launch.get("id") or ""
-
                         if not launch_uuid:
-                            LOGGER.debug(
-                                f"Launch missing UUID field: {list(launch.keys())}"
-                            )
                             continue
-
-                        LOGGER.debug(
-                            f"Checking launch UUID: {launch_uuid} against uniq_id: {uniq_id}"
-                        )
 
                         if launch_uuid.startswith(uniq_id):
                             LOGGER.info(
-                                f"✓ Found launch matching uniq_id '{uniq_id}': {launch_uuid}"
-                            )
-                            LOGGER.info(
-                                f"  Launch name: {launch.get('name', 'Unknown')}"
-                            )
-                            LOGGER.info(
-                                f"  Launch status: {launch.get('status', 'Unknown')}"
+                                f"Found launch matching uniq_id "
+                                f"'{uniq_id}': {launch_uuid}"
                             )
 
-                            # Verify attributes match if we used filtering
                             if attribute_filters:
                                 launch_attrs = {
                                     attr.get("key"): attr.get("value")
                                     for attr in launch.get("attributes", [])
                                     if attr.get("key") and attr.get("value")
                                 }
-                                LOGGER.debug(f"Launch attributes: {launch_attrs}")
                                 matches = all(
                                     launch_attrs.get(k) == v
                                     for k, v in attribute_filters.items()
                                 )
-                                if matches:
-                                    LOGGER.info(
-                                        f"✓ Attributes verified for launch {launch_uuid}"
-                                    )
-                                else:
+                                if not matches:
                                     LOGGER.warning(
-                                        f"Attributes mismatch for launch {launch_uuid}, continuing search..."
+                                        f"Attributes mismatch for "
+                                        f"launch {launch_uuid}, "
+                                        f"continuing search..."
                                     )
                                     continue
 
                             return launch_uuid
 
-                LOGGER.debug(
-                    f"Checked {status_checked} launches with status {status or 'any'}"
-                )
-
-                # If we found launches with filtering but no match, try next status
                 if status_checked > 0:
                     continue
 
             LOGGER.warning(
-                f"No launch found matching uniq_id '{uniq_id}' in {total_checked} launches checked"
+                f"No launch found matching uniq_id '{uniq_id}' "
+                f"in {total_checked} launches checked"
             )
             return None
 
         except Exception as e:
-            LOGGER.error(f"Error searching for launch with uniq_id '{uniq_id}': {e}")
-            import traceback
-
-            LOGGER.debug(f"Traceback: {traceback.format_exc()}")
+            LOGGER.error(f"Error searching for launch by uniq_id: {e}")
             return None
 
     def finish_launch(
@@ -414,28 +344,14 @@ class ReportPortalLaunch:
     ) -> bool:
         """
         Finish a ReportPortal launch.
-
-        Args:
-            launch_uuid: UUID of the launch to finish
-            end_time: End time in ISO format (e.g., "2025-07-31T06:43:04.695Z")
-            status: Launch status ("PASSED", "FAILED", "STOPPED", "SKIPPED", "INTERRUPTED")
-            description: Optional launch description
-            attributes: Optional list of launch attributes in [{"key": "key1", "value": "value1"}] format
-
-        Returns:
-            bool: True if successful, False otherwise
-
-        Raises:
-            RequestException: If the API request fails
         """
-        finish_data = {
+        finish_data: Dict[str, Any] = {
             "endTime": end_time,
             "status": status,
         }
 
         if description is not None:
             finish_data["description"] = description
-
         if attributes:
             finish_data["attributes"] = attributes
 
@@ -450,654 +366,520 @@ class ReportPortalLaunch:
                 timeout=30,
             )
 
-            if response.status_code not in [200, 201]:
-                raise RequestException(
-                    f"Failed to finish launch: {response.status_code} - {response.text}"
-                )
+            if response.status_code == 200:
+                LOGGER.info(f"Launch {launch_uuid} finished with status '{status}'")
+                return True
+            else:
+                LOGGER.error(f"Failed to finish launch: HTTP {response.status_code}")
+                LOGGER.error(f"Response: {response.text}")
+                return False
+        except RequestException as e:
+            LOGGER.error(f"Network error finishing launch: {e}")
+            return False
 
-            LOGGER.info(f"✓ ReportPortal launch finished successfully: {launch_uuid}")
-            LOGGER.info(f"  Status: {status}")
-            LOGGER.info(f"  End time: {end_time}")
+    def store_launch_uuid(self, launch_uuid: str) -> None:
+        """Store the launch UUID for later use (currently just logs it)."""
+        LOGGER.info(f"Launch UUID stored: {launch_uuid}")
+
+    def update_launch(
+        self,
+        launch_id: int,
+        attributes: Optional[List[Dict[str, str]]] = None,
+        description: Optional[str] = None,
+    ) -> bool:
+        """
+        Update metadata on an existing launch via the RP update endpoint.
+
+        Uses ``PUT /api/v1/{project}/launch/{launchId}/update``.
+        Works on both IN_PROGRESS and FINISHED launches.
+        """
+        update_data: Dict[str, Any] = {}
+        if attributes is not None:
+            update_data["attributes"] = attributes
+        if description is not None:
+            update_data["description"] = description
+
+        if not update_data:
             return True
 
+        try:
+            response = http_put(
+                f"{self.api_base}/launch/{launch_id}/update",
+                headers=self.headers,
+                json=update_data,
+                timeout=30,
+            )
+            if response.status_code == 200:
+                LOGGER.debug(f"Updated launch {launch_id} attributes")
+                return True
+            else:
+                LOGGER.warning(
+                    f"Failed to update launch {launch_id}: "
+                    f"HTTP {response.status_code}"
+                )
+                return False
         except RequestException as e:
-            LOGGER.error(f"Failed to finish ReportPortal launch.")
-            raise NetworkError("Failed to finish ReportPortal launch") from e
-        except Exception as e:
-            LOGGER.error(f"Unexpected error finishing launch.")
-            raise EngeError("Unexpected error finishing ReportPortal launch") from e
+            LOGGER.warning(f"Error updating launch {launch_id}: {e}")
+            return False
 
-    def extract_latest_timestamp_from_xml(self, xml_content: str) -> Optional[str]:
-        """
-        Extract the latest timestamp (end-time) from parsed XML content.
+    # ===================================================================
+    # Test-item & launch-ID helpers
+    # ===================================================================
 
-        Args:
-            xml_content: Raw XML content from xunit results
-
-        Returns:
-            str: Latest timestamp in ISO format (e.g., "2025-07-31T06:43:04.695Z") or None if not found
-        """
-        if not xml_content or not xml_content.strip():
-            LOGGER.warning("No XML content provided for timestamp extraction")
-            return None
-
+    def get_launch_test_items(self, launch_id: int) -> List[Dict[str, Any]]:
+        """Fetch test items belonging to a launch (paginated)."""
+        items: List[Dict[str, Any]] = []
+        page = 1
         try:
-            # Parse XML
-            LOGGER.debug(f"Parsing XML content (length: {len(xml_content)} chars)")
-            xml = lxml.etree.fromstring(xml_content.encode())
-            latest_timestamp = None
-            latest_datetime = None
+            while True:
+                response = http_get(
+                    f"{self.api_base}/item",
+                    headers=self.headers,
+                    params={
+                        "filter.eq.launchId": launch_id,
+                        "page.size": 300,
+                        "page.page": page,
+                    },
+                    timeout=30,
+                )
+                if response.status_code != 200:
+                    LOGGER.warning(
+                        f"Failed to fetch test items: HTTP {response.status_code}"
+                    )
+                    break
 
-            # Look for timestamps in testsuites and testcases
-            elements_to_check = xml.xpath("//testsuite | //testcase")
-            LOGGER.debug(
-                f"Found {len(elements_to_check)} XML elements to check for timestamps"
-            )
+                data = response.json()
+                content = data.get("content", [])
+                if not content:
+                    break
 
-            if not elements_to_check:
-                LOGGER.warning("No testsuite or testcase elements found in XML")
-                # Try to find any elements with time-related attributes
-                all_elements = xml.xpath("//*")
-                LOGGER.debug(f"Total XML elements found: {len(all_elements)}")
-                elements_to_check = all_elements
+                items.extend(content)
+                total_pages = data.get("page", {}).get("totalPages", 1)
+                if page >= total_pages:
+                    break
+                page += 1
 
-            for elem in elements_to_check:
-                # Check attributes directly (without @ prefix since we're checking .attrib)
-                if "end-time" in elem.attrib:
-                    timestamp_str = elem.attrib["end-time"]
+            LOGGER.info(f"Found {len(items)} test item(s) in launch {launch_id}")
+            if items:
+                for item in items[:10]:
                     LOGGER.debug(
-                        f"Found timestamp in {elem.tag}.end-time: {timestamp_str}"
+                        f"  RP item: name={item.get('name', '?')!r}  "
+                        f"uuid={item.get('uuid', '?')[:12]}  "
+                        f"type={item.get('type', '?')}"
                     )
-
-                    # Try to parse the timestamp
-                    parsed_time = self._parse_timestamp(timestamp_str)
-                    if parsed_time and (
-                        latest_datetime is None or parsed_time > latest_datetime
-                    ):
-                        latest_datetime = parsed_time
-                        latest_timestamp = timestamp_str
-                        LOGGER.debug(f"New latest timestamp: {timestamp_str}")
-
-            # If no timestamps found in attributes, look for <timestamp> elements
-            if latest_timestamp is None:
-                LOGGER.debug(
-                    "No timestamps found in attributes, checking element text content"
-                )
-                timestamp_elements = xml.xpath("//timestamp | //time | //end-time")
-
-                for elem in timestamp_elements:
-                    if elem.text:
-                        LOGGER.debug(f"Found timestamp element {elem.tag}: {elem.text}")
-                        parsed_time = self._parse_timestamp(elem.text)
-                        if parsed_time and (
-                            latest_datetime is None or parsed_time > latest_datetime
-                        ):
-                            latest_datetime = parsed_time
-                            latest_timestamp = elem.text
-
-            if latest_timestamp:
-                # Convert to ISO format with Z suffix for ReportPortal
-                iso_timestamp = self._convert_to_iso_format(latest_timestamp)
-                LOGGER.info(f"✓ Latest timestamp extracted from XML: {iso_timestamp}")
-                return iso_timestamp
-            else:
-                LOGGER.warning("No timestamps found in XML content")
-                LOGGER.debug("XML structure preview:")
-                LOGGER.debug(
-                    lxml.etree.tostring(xml, pretty_print=True, encoding="unicode")[
-                        :500
-                    ]
-                    + "..."
-                )
-                return None
-
-        except lxml.etree.XMLSyntaxError as e:
-            LOGGER.error(f"XML parsing error: {e}")
-            LOGGER.debug(f"XML content preview: {xml_content[:200]}...")
-            return None
+                if len(items) > 10:
+                    LOGGER.debug(f"  ... and {len(items) - 10} more")
         except Exception as e:
-            LOGGER.error(f"Error extracting timestamp from XML: {e}")
-            return None
+            LOGGER.error(f"Error fetching test items: {e}")
 
-    def _parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
-        """
-        Parse timestamp string into datetime object.
+        return items
 
-        Args:
-            timestamp_str: Timestamp string in various formats
-
-        Returns:
-            datetime: Parsed datetime object or None if parsing fails
-        """
-        # Try the specific format first (based on your XML structure)
-        primary_format = "%Y-%m-%dT%H:%M:%S.%f+00:00"
-
+    def get_launch_id_from_uuid(self, launch_uuid: str) -> Optional[int]:
+        """Resolve the numeric launch ID from a launch UUID."""
         try:
-            return datetime.strptime(timestamp_str.strip(), primary_format)
-        except ValueError:
-            pass
-
-        # Fallback to other common formats
-        fallback_formats = [
-            "%Y-%m-%dT%H:%M:%S.%fZ",  # ISO with microseconds and Z
-            "%Y-%m-%dT%H:%M:%SZ",  # ISO without microseconds and Z
-            "%Y-%m-%dT%H:%M:%S.%f",  # ISO with microseconds, no Z
-            "%Y-%m-%dT%H:%M:%S",  # ISO without microseconds, no Z
-            "%Y-%m-%d %H:%M:%S.%f",  # Space separated with microseconds
-            "%Y-%m-%d %H:%M:%S",  # Space separated without microseconds
-        ]
-
-        for fmt in fallback_formats:
-            try:
-                return datetime.strptime(timestamp_str.strip(), fmt)
-            except ValueError:
-                continue
-
-        # Try parsing as Unix timestamp (seconds)
-        try:
-            return datetime.fromtimestamp(float(timestamp_str))
-        except (ValueError, OverflowError):
-            pass
-
-        LOGGER.debug(f"Could not parse timestamp: {timestamp_str}")
-        return None
-
-    def _convert_to_iso_format(self, timestamp_str: str) -> str:
-        """
-        Convert timestamp to ISO format required by ReportPortal.
-
-        Args:
-            timestamp_str: Original timestamp string
-
-        Returns:
-            str: ISO formatted timestamp with Z suffix
-        """
-        parsed_time = self._parse_timestamp(timestamp_str)
-        if parsed_time:
-            # Convert to ISO format with milliseconds and Z suffix
-            return parsed_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-        else:
-            # Fallback to current time if parsing fails
-            LOGGER.warning(
-                f"Could not parse timestamp '{timestamp_str}', using current time"
-            )
-            return datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-
-    def extract_artifacts_url(self, task_data: Dict[str, Any]) -> Optional[str]:
-        """
-        Extract artifacts URL from request JSON run section.
-
-        Args:
-            task_data: Task data dictionary from the Testing Farm API
-
-        Returns:
-            str: Artifacts URL or None if not found
-        """
-        try:
-            # Look for run.artifacts in the task data
-            run_data = task_data.get("run", {})
-            if not isinstance(run_data, dict):
-                LOGGER.warning("No 'run' section found in task data")
-                return None
-
-            artifacts = run_data.get("artifacts")
-            if not artifacts:
-                LOGGER.warning("No 'artifacts' found in run section")
-                return None
-
-            # artifacts could be a string URL or a dict with URL inside
-            if isinstance(artifacts, str):
-                LOGGER.debug(f"Found artifacts URL: {artifacts}")
-                return artifacts
-            elif isinstance(artifacts, dict):
-                # Look for common keys that might contain the URL
-                url_keys = ["url", "link", "href", "artifacts_url"]
-                for key in url_keys:
-                    if key in artifacts and artifacts[key]:
-                        LOGGER.debug(
-                            f"Found artifacts URL in '{key}': {artifacts[key]}"
-                        )
-                        return artifacts[key]
-
-                LOGGER.warning(f"No URL found in artifacts dict: {artifacts}")
-                return None
-            else:
-                LOGGER.warning(f"Unexpected artifacts type: {type(artifacts)}")
-                return None
-
-        except Exception as e:
-            LOGGER.error(f"Error extracting artifacts URL: {e}")
-            return None
-
-    def finish_launch_from_task(self) -> int:
-        """
-        Main logic for finishing a ReportPortal launch based on Testing Farm task results.
-
-        This method:
-        1. Uses the report module to get task data
-        2. Checks if tasks are ready (not in new, queued, running, canceled states)
-        3. Extracts uniq_id from TMT context
-        4. Finds matching launch by uniq_id
-        5. Extracts latest timestamp from XML results
-        6. Extracts artifacts URL from task data
-        7. Builds finish request with attributes from TMT context
-        8. Finishes the launch
-
-        Returns:
-            int: Exit code (0 for success, non-zero for error)
-        """
-        try:
-            # Import and use the report module to get task data
-            from enge.report.concurrent_parser import parse_request_xunit_concurrent
-            from enge.report.__main__ import parse_tasks
-
-            LOGGER.info("Getting task data using report module...")
-
-            # Get task URLs
-            request_url_list, tasks_source = parse_tasks()
-            if not request_url_list:
-                LOGGER.error("No task URLs found to process")
-                return 1
-
-            # Parse task data with concurrent parser
-            task_results_dict = parse_request_xunit_concurrent(
-                request_url_list, tasks_source
-            )
-
-            if not task_results_dict:
-                LOGGER.error("No task results found")
-                return 1
-
-            processed_count = 0
-            for task_uuid, task_data in task_results_dict.items():
-                LOGGER.info(f"Processing task: {task_uuid}")
-
-                # Get the original task data with state information AND XML content
-                from enge.report.concurrent_parser import ConcurrentRequestParser
-
-                with ConcurrentRequestParser() as parser:
-                    task_url = f"{parsed_opts.testing_farm_endpoint.api_endpoint_url}/{task_uuid}"
-                    task_result = parser._fetch_task_info(task_url)
-
-                    if not task_result:
-                        LOGGER.warning(f"Could not fetch task info for {task_uuid}")
-                        continue
-
-                    # Check if task is ready to be finished (not in excluded states)
-                    excluded_states = ["NEW", "QUEUED", "RUNNING", "CANCELED"]
-                    if task_result.request_state.upper() in excluded_states:
-                        LOGGER.info(
-                            f"Task {task_uuid} is in state '{task_result.request_state}', skipping"
-                        )
-                        continue
-
-                    LOGGER.info(
-                        f"Task {task_uuid} is in state '{task_result.request_state}', proceeding to finish launch"
-                    )
-
-                    # NOW fetch the XML content - this is the missing step!
-                    LOGGER.debug(f"Fetching XML content for task {task_uuid}")
-                    task_result = parser._fetch_xml_results(task_result)
-
-                    if task_result.xunit_content:
-                        LOGGER.debug(
-                            f"✓ Successfully fetched XML content (length: {len(task_result.xunit_content)})"
-                        )
-                    else:
-                        LOGGER.warning(
-                            f"No XML content available for task {task_uuid} (error: {task_result.error_message})"
-                        )
-
-                    # Get TMT context to extract uniq_id and build attributes
-                    tmt_context = self._extract_tmt_context_from_task(task_result)
-                    if not tmt_context:
-                        LOGGER.warning(f"No TMT context found for task {task_uuid}")
-                        continue
-
-                    uniq_id = tmt_context.get("uniq_id")
-                    if not uniq_id:
-                        LOGGER.warning(
-                            f"No uniq_id found in TMT context for task {task_uuid}"
-                        )
-                        continue
-
-                    LOGGER.info(f"Found uniq_id: {uniq_id}")
-
-                    # Find the matching launch using enhanced filtering with TMT context
-                    launch_uuid = self.find_launch_by_uniq_id(uniq_id, tmt_context)
-                    if not launch_uuid:
-                        LOGGER.error(f"No launch found matching uniq_id '{uniq_id}'")
-                        continue
-
-                    # Extract latest timestamp from XML
-                    end_time = None
-                    if task_result.xunit_content and task_result.xunit_content.strip():
-                        LOGGER.info("Extracting timestamp from XML content...")
-                        end_time = self.extract_latest_timestamp_from_xml(
-                            task_result.xunit_content
-                        )
-                    else:
-                        LOGGER.warning(f"No XML content available for task {task_uuid}")
-
-                    if not end_time:
-                        # Fallback to current time
-                        LOGGER.warning(
-                            "No timestamp found in XML, using current time as fallback"
-                        )
-                        end_time = (
-                            datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-                        )
-                        LOGGER.info(f"Using fallback timestamp: {end_time}")
-
-                    # Extract artifacts URL for description
-                    # Need to fetch full task data for this
-
-                    response = http_get(
-                        task_url,
-                        headers={
-                            "Authorization": f"Bearer {parsed_opts.testing_farm.get('api_key')}"
-                        },
-                        timeout=30,
-                    )
-                    full_task_data = (
-                        response.json() if response.status_code == 200 else {}
-                    )
-
-                    artifacts_url = self.extract_artifacts_url(full_task_data)
-                    description = f"\n{artifacts_url}" if artifacts_url else None
-
-                    # Build attributes from TMT context
-                    attributes = []
-                    for key, value in tmt_context.items():
-                        if value is not None:
-                            attributes.append({"key": key, "value": str(value)})
-
-                    # Determine status from task state
-                    status_mapping = {
-                        "COMPLETE": "PASSED",
-                        "ERROR": "FAILED",
-                        "FAILED": "FAILED",
-                    }
-                    status = status_mapping.get(
-                        task_result.request_state.upper(), "STOPPED"
-                    )
-
-                    # Also check overall result if available
-                    if task_data.get("overall_result"):
-                        result_status_mapping = {
-                            "passed": "PASSED",
-                            "failed": "FAILED",
-                            "error": "FAILED",
-                        }
-                        status = result_status_mapping.get(
-                            task_data["overall_result"].lower(), status
-                        )
-
-                    # Check if this is a dry run
-                    is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
-
-                    if is_dryrun:
-                        # Show what would be sent without actually finishing the launch
-                        self._show_dryrun_finish_data(
-                            task_uuid=task_uuid,
-                            launch_uuid=launch_uuid,
-                            end_time=end_time,
-                            status=status,
-                            description=description,
-                            attributes=attributes,
-                        )
-                        processed_count += 1
-                    else:
-                        # Actually finish the launch
-                        success = self.finish_launch(
-                            launch_uuid=launch_uuid,
-                            end_time=end_time,
-                            status=status,
-                            description=description,
-                            attributes=attributes,
-                        )
-
-                        if success:
-                            LOGGER.info(
-                                f"✓ Successfully finished launch for task {task_uuid}"
-                            )
-                            processed_count += 1
-                        else:
-                            LOGGER.error(
-                                f"✗ Failed to finish launch for task {task_uuid}"
-                            )
-
-            is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
-            if processed_count > 0:
-                if is_dryrun:
-                    LOGGER.info(
-                        f"✓ Dry run complete - showed {processed_count} launch finish request(s)"
-                    )
-                else:
-                    LOGGER.info(f"✓ Successfully finished {processed_count} launch(es)")
-                return 0
-            else:
-                if is_dryrun:
-                    LOGGER.warning("No launches would be finished")
-                else:
-                    LOGGER.warning("No launches were finished")
-                return 1
-
-        except Exception as e:
-            LOGGER.error(f"Error in finish launch logic: {e}")
-            return 1
-
-    def _show_dryrun_finish_data(
-        self,
-        task_uuid: str,
-        launch_uuid: str,
-        end_time: str,
-        status: str,
-        description: Optional[str] = None,
-        attributes: Optional[List[Dict[str, str]]] = None,
-    ) -> None:
-        """
-        Display what would be sent to ReportPortal in dry run mode.
-
-        Args:
-            task_uuid: Task UUID being processed
-            launch_uuid: ReportPortal launch UUID
-            end_time: End time in ISO format
-            status: Launch status
-            description: Optional launch description
-            attributes: Optional list of launch attributes
-        """
-        from enge.utils import FormatText
-
-        # Build the request data that would be sent
-        finish_data = {
-            "endTime": end_time,
-            "status": status,
-        }
-
-        if description is not None:
-            finish_data["description"] = description
-
-        if attributes:
-            finish_data["attributes"] = attributes
-
-        # Display the dry run information
-        print()
-        print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-        print(
-            f"{FormatText.BLUE}DRY RUN - ReportPortal Launch Finish Request{FormatText.END}"
-        )
-        print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-        print()
-        print(f"{FormatText.BOLD}Task UUID:{FormatText.END} {task_uuid}")
-        print(f"{FormatText.BOLD}Launch UUID:{FormatText.END} {launch_uuid}")
-        print(
-            f"{FormatText.BOLD}API Endpoint:{FormatText.END} PUT {self.api_base}/launch/{launch_uuid}/finish"
-        )
-        print()
-        print(f"{FormatText.BOLD}Request Headers:{FormatText.END}")
-        print(f"  Authorization: Bearer {self.token[:10]}...")
-        print("  Content-Type: application/json")
-        print()
-        print(f"{FormatText.BOLD}Request Body:{FormatText.END}")
-        print(json.dumps(finish_data, indent=2, ensure_ascii=False))
-        print()
-
-        # Show attribute details if present
-        if attributes:
-            print(f"{FormatText.BOLD}Attributes Details:{FormatText.END}")
-            for attr in attributes:
-                print(f"  • {attr['key']}: {attr['value']}")
-            print()
-
-        print(
-            f"{FormatText.GREEN}✓ Would finish launch {launch_uuid} for task {task_uuid}{FormatText.END}"
-        )
-        print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-        print()
-
-    def _extract_tmt_context_from_task(self, task_result) -> Optional[Dict[str, Any]]:
-        """
-        Extract TMT context from task result.
-
-        Args:
-            task_result: TaskResult object from concurrent parser
-
-        Returns:
-            Dict: TMT context or None if not found
-        """
-        # For now, we'll need to get the TMT context from the Testing Farm API
-        # This requires getting the full task data
-        try:
-
-            task_url = task_result.url
-            LOGGER.debug(f"Fetching full task data from: {task_url}")
-
             response = http_get(
-                task_url,
-                headers={
-                    "Authorization": f"Bearer {parsed_opts.testing_farm.get('api_key')}"
+                f"{self.api_base}/launch",
+                headers=self.headers,
+                params={
+                    "filter.eq.uuid": launch_uuid,
+                    "page.size": 1,
                 },
                 timeout=30,
             )
+            if response.status_code == 200:
+                data = response.json()
+                content = data.get("content", [])
+                if content:
+                    numeric_id = content[0].get("id")
+                    LOGGER.debug(
+                        f"Resolved launch UUID {launch_uuid} "
+                        f"-> numeric ID {numeric_id}"
+                    )
+                    return numeric_id
 
-            if response.status_code != 200:
-                LOGGER.warning(
-                    f"Could not fetch task data: HTTP {response.status_code}"
-                )
-                LOGGER.debug(f"Response text: {response.text}")
-                return None
-
-            task_data = response.json()
-            LOGGER.debug(f"Task data keys: {list(task_data.keys())}")
-
-            # Look for TMT context in environments
-            environments = task_data.get("environments_requested", [])
-            LOGGER.debug(f"Found {len(environments)} environments in task data")
-
-            if environments and len(environments) > 0:
-                env = environments[0]
-                LOGGER.debug(f"Environment keys: {list(env.keys())}")
-
-                tmt_config = env.get("tmt", {})
-                LOGGER.debug(
-                    f"TMT config keys: {list(tmt_config.keys()) if tmt_config else 'No TMT config'}"
-                )
-
-                context = tmt_config.get("context", {})
-                LOGGER.debug(f"TMT context: {context}")
-
-                if context:
-                    LOGGER.info(f"✓ Found TMT context with {len(context)} attributes")
-                    return context
-                else:
-                    LOGGER.warning("TMT context is empty")
-            else:
-                LOGGER.warning("No environments found in task data")
-
-            LOGGER.warning("No TMT context found in task data")
-
-            # Try alternative locations for context
-            LOGGER.debug("Searching for context in alternative locations...")
-            for key in ["test", "environments", "environments_requested"]:
-                if key in task_data:
-                    LOGGER.debug(f"Found '{key}' section in task data")
-
-            return None
-
+            LOGGER.debug("UUID filter not supported, falling back to page scan")
+            for status in ["IN_PROGRESS", None]:
+                launches = self.list_launches(size=50, page=0, status=status)
+                for launch in launches:
+                    if str(launch.get("uuid", "")) == launch_uuid:
+                        numeric_id = launch.get("id")
+                        LOGGER.debug(
+                            f"Found launch UUID {launch_uuid} "
+                            f"-> numeric ID {numeric_id}"
+                        )
+                        return numeric_id
         except Exception as e:
-            LOGGER.error(f"Error extracting TMT context: {e}")
-            import traceback
+            LOGGER.warning(f"Error resolving launch ID for UUID {launch_uuid}: {e}")
+        LOGGER.warning(f"Could not resolve numeric launch ID for UUID {launch_uuid}")
+        return None
 
-            LOGGER.debug(f"Traceback: {traceback.format_exc()}")
-            return None
+    def get_launch_by_id(
+        self,
+        launch_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch the full launch dict by its numeric ID."""
+        try:
+            response = http_get(
+                f"{self.api_base}/launch/{launch_id}",
+                headers=self.headers,
+                timeout=30,
+            )
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            LOGGER.warning(f"Error fetching launch {launch_id}: {e}")
+        return None
 
-    def test_connection_and_data(self) -> int:
+    # ===================================================================
+    # Log upload
+    # ===================================================================
+
+    def upload_logs_to_rp(
+        self,
+        launch_uuid: str,
+        mapped_artifacts: List[Tuple[ArtifactFile, Optional[str]]],
+        max_file_size: int = DEFAULT_ENRICH_MAX_FILE_SIZE,
+        max_workers: int = 5,
+    ) -> int:
         """
-        Test ReportPortal connection and show sample data for debugging.
+        Download artifacts and upload them as log entries to ReportPortal.
+
+        Callers are expected to handle deduplication before invoking this
+        method (see :func:`~enge.reportportal.utils.filter_already_enriched`).
 
         Returns:
-            int: Exit code (0 for success, non-zero for error)
+            Number of logs successfully uploaded
         """
-        try:
-            LOGGER.info("Testing ReportPortal connection...")
+        uploaded = 0
+        batch: List[Dict[str, Any]] = []
+        batch_size_limit = 20
 
-            # Test 1: List launches to verify API connection
-            LOGGER.info("Testing launch listing...")
-            launches = self.list_launches(
-                size=5, page=0, status=None
-            )  # Get all statuses for testing
-
-            if launches:
-                LOGGER.info(f"✓ Successfully retrieved {len(launches)} launches")
-                for i, launch in enumerate(launches[:3]):
-                    LOGGER.info(
-                        f"  Launch {i+1}: {launch.get('name', 'No name')} (UUID: {launch.get('uuid') or launch.get('id', 'No UUID')})"
+        def _flush_batch():
+            nonlocal uploaded
+            if not batch:
+                return
+            try:
+                multipart_headers = {
+                    "Authorization": f"Bearer {self.token}",
+                }
+                files = [
+                    (
+                        "json_request_part",
+                        (None, json.dumps(batch[:]), "application/json"),
                     )
-            else:
-                LOGGER.warning(
-                    "No launches found - this might be expected for a new project"
+                ]
+                response = http_post(
+                    f"{self.api_base}/log",
+                    headers=multipart_headers,
+                    files=files,
+                    timeout=60,
                 )
+                if response.status_code in (200, 201):
+                    uploaded += len(batch)
+                    LOGGER.debug(f"Uploaded batch of {len(batch)} log entries")
+                else:
+                    LOGGER.warning(
+                        f"Log batch upload returned "
+                        f"{response.status_code}: "
+                        f"{response.text[:200]}"
+                    )
+            except RequestException as e:
+                LOGGER.warning(f"Failed to upload log batch: {e}")
+            batch.clear()
 
-            # Test 2: Try report module integration
-            LOGGER.info("Testing report module integration...")
-            from enge.report.__main__ import parse_tasks
+        def _download_one(
+            artifact: ArtifactFile,
+        ) -> Optional[Tuple[ArtifactFile, str]]:
+            try:
+                resp = http_get(artifact.url, timeout=30)
+                if resp.status_code != 200:
+                    LOGGER.debug(
+                        f"Artifact download returned "
+                        f"{resp.status_code}: {artifact.url}"
+                    )
+                    return None
 
-            request_url_list, tasks_source = parse_tasks()
+                content_length = resp.headers.get("Content-Length")
+                if content_length and int(content_length) > max_file_size:
+                    LOGGER.debug(
+                        f"Skipping oversized artifact "
+                        f"({content_length} bytes): "
+                        f"{artifact.relative_path}"
+                    )
+                    return None
 
-            if request_url_list:
-                LOGGER.info(
-                    f"✓ Found {len(request_url_list)} task URLs from report module"
-                )
-                for i, url in enumerate(request_url_list[:3]):
-                    LOGGER.info(f"  Task URL {i+1}: {url}")
-            else:
-                LOGGER.warning(
-                    "No task URLs found - you may need to provide task IDs via -i, -f, or --get-tag"
-                )
+                content = resp.text
+                if len(content.encode("utf-8", errors="replace")) > max_file_size:
+                    LOGGER.debug(
+                        f"Skipping oversized artifact content: "
+                        f"{artifact.relative_path}"
+                    )
+                    return None
 
+                return (artifact, content)
+            except Exception as e:
+                LOGGER.debug(f"Failed to download {artifact.url}: {e}")
+                return None
+
+        LOGGER.info(f"Downloading {len(mapped_artifacts)} artifact(s) for upload")
+        download_results: List[Tuple[ArtifactFile, str, Optional[str]]] = []
+
+        artifact_to_item = {id(a): item_uuid for a, item_uuid in mapped_artifacts}
+        artifacts_only = [a for a, _ in mapped_artifacts]
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_artifact = {
+                executor.submit(_download_one, art): art for art in artifacts_only
+            }
+            for future in as_completed(future_to_artifact):
+                result = future.result()
+                if result:
+                    art, content = result
+                    item_uuid = artifact_to_item.get(id(art))
+                    download_results.append((art, content, item_uuid))
+
+        LOGGER.info(
+            f"Downloaded {len(download_results)} artifact(s), " f"preparing log entries"
+        )
+
+        now_ms = str(int(datetime.now().timestamp() * 1000))
+
+        skipped_names: List[str] = []
+        for artifact, content, item_uuid in download_results:
+            if should_skip_artifact(artifact.name):
+                skipped_names.append(artifact.name)
+                continue
+
+            log_entry: Dict[str, Any] = {
+                "launchUuid": launch_uuid,
+                "time": now_ms,
+                "level": get_artifact_log_level(artifact.name),
+                "message": f"### `{artifact.name}`\n{content}",
+            }
+            if item_uuid:
+                log_entry["itemUuid"] = item_uuid
+
+            batch.append(log_entry)
+            if len(batch) >= batch_size_limit:
+                _flush_batch()
+
+        if skipped_names:
+            LOGGER.info(
+                f"Skipped {len(skipped_names)} artifact(s) "
+                f"per skip list: {', '.join(skipped_names[:10])}"
+            )
+
+        _flush_batch()
+
+        LOGGER.info(
+            f"Successfully uploaded {uploaded} log "
+            f"entr{'y' if uploaded == 1 else 'ies'} to ReportPortal"
+        )
+        return uploaded
+
+    # ===================================================================
+    # Log deletion API methods
+    # ===================================================================
+
+    def get_launch_logs(
+        self, launch_id: int, page_size: int = 300
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch all log entries belonging to a launch.
+
+        Collects logs at both the launch level (``filter.eq.launch``)
+        and the item level (per test-item), since enrichment logs are
+        attached to individual test items via ``itemUuid``.
+        """
+        seen_ids: set = set()
+        logs: List[Dict[str, Any]] = []
+
+        def _collect(params: dict, label: str) -> None:
+            page = 1
+            while True:
+                paged_params = dict(params)
+                paged_params["page.size"] = page_size
+                paged_params["page.page"] = page
+                try:
+                    response = http_get(
+                        f"{self.api_base}/log",
+                        headers=self.headers,
+                        params=paged_params,
+                        timeout=30,
+                    )
+                except Exception as e:
+                    LOGGER.warning(f"Error fetching logs ({label}): {e}")
+                    break
+
+                if response.status_code != 200:
+                    LOGGER.warning(
+                        f"Failed to fetch logs ({label}): "
+                        f"HTTP {response.status_code}"
+                    )
+                    break
+
+                data = response.json()
+                content = data.get("content", [])
+                if not content:
+                    break
+
+                for entry in content:
+                    log_id = entry.get("id")
+                    if log_id and log_id not in seen_ids:
+                        seen_ids.add(log_id)
+                        logs.append(entry)
+
+                total_pages = data.get("page", {}).get("totalPages", 1)
+                if page >= total_pages:
+                    break
+                page += 1
+
+        try:
+            # 1. Launch-level logs
+            _collect(
+                {"filter.eq.launch": launch_id},
+                f"launch-level {launch_id}",
+            )
+            launch_level = len(logs)
+
+            # 2. Item-level logs — fetch from each test item
+            items = self.get_launch_test_items(launch_id)
+            for item in items:
+                item_id = item.get("id")
+                if item_id:
+                    _collect(
+                        {"filter.eq.item": item_id},
+                        f"item {item_id}",
+                    )
+
+            LOGGER.info(
+                f"Found {len(logs)} log "
+                f"entr{'y' if len(logs) == 1 else 'ies'} "
+                f"in launch {launch_id} "
+                f"({launch_level} launch-level, "
+                f"{len(logs) - launch_level} item-level)"
+            )
+        except Exception as e:
+            LOGGER.error(f"Error fetching launch logs: {e}")
+
+        return logs
+
+    def delete_logs(self, log_ids: List[int], batch_size: int = 20) -> int:
+        """
+        Delete log entries by their IDs (bulk with single-ID fallback).
+        """
+        if not log_ids:
             return 0
 
-        except Exception as e:
-            LOGGER.error(f"Connection test failed: {e}")
-            import traceback
+        deleted = 0
 
-            LOGGER.debug(f"Traceback: {traceback.format_exc()}")
-            return 1
+        for i in range(0, len(log_ids), batch_size):
+            batch = log_ids[i : i + batch_size]
+            ids_param = ",".join(str(lid) for lid in batch)
 
-    def store_launch_uuid(self, launch_uuid: str) -> None:
+            try:
+                response = http_delete(
+                    f"{self.api_base}/log",
+                    headers=self.headers,
+                    params={"ids": ids_param},
+                    timeout=30,
+                )
+
+                if response.status_code in (200, 204):
+                    deleted += len(batch)
+                    LOGGER.debug(f"Deleted batch of {len(batch)} log entries")
+                else:
+                    LOGGER.debug(
+                        f"Bulk delete returned "
+                        f"{response.status_code}, "
+                        f"falling back to individual deletes"
+                    )
+                    for lid in batch:
+                        try:
+                            resp = http_delete(
+                                f"{self.api_base}/log/{lid}",
+                                headers=self.headers,
+                                timeout=30,
+                            )
+                            if resp.status_code in (200, 204):
+                                deleted += 1
+                            else:
+                                LOGGER.debug(
+                                    f"Failed to delete log {lid}: "
+                                    f"HTTP {resp.status_code}"
+                                )
+                        except RequestException as e:
+                            LOGGER.debug(f"Failed to delete log {lid}: {e}")
+
+            except RequestException as e:
+                LOGGER.warning(f"Failed to delete log batch: {e}")
+
+        return deleted
+
+    def delete_launch_logs(self, launch_uuid: str) -> Tuple[int, int]:
         """
-        Store the launch UUID for later use.
+        Delete all log entries for a given launch.
 
-        For now, this just logs the UUID. In the future, this could be extended
-        to store in a file, database, or other persistent storage.
-
-        Args:
-            launch_uuid: The UUID of the created launch
+        Returns:
+            Tuple of (total_logs_found, successfully_deleted_count)
         """
-        LOGGER.info(f"Launch UUID stored: {launch_uuid}")
-        # TODO: Implement persistent storage if needed
-        # For now, the UUID is available in the logs and returned from create_launch()
+        launch_id = self.get_launch_id_from_uuid(launch_uuid)
+        if launch_id is None:
+            LOGGER.error(f"Could not resolve numeric ID for launch " f"{launch_uuid}")
+            return 0, 0
+
+        logs = self.get_launch_logs(launch_id)
+        if not logs:
+            LOGGER.info(f"No logs found for launch {launch_uuid}")
+            return 0, 0
+
+        log_ids = [log["id"] for log in logs if log.get("id") is not None]
+        if not log_ids:
+            LOGGER.warning("Logs found but none had valid IDs")
+            return len(logs), 0
+
+        LOGGER.info(
+            f"Deleting {len(log_ids)} log "
+            f"entr{'y' if len(log_ids) == 1 else 'ies'} "
+            f"from launch {launch_uuid}"
+        )
+        deleted = self.delete_logs(log_ids)
+        return len(log_ids), deleted
+
+    # ===================================================================
+    # All-launches query helpers
+    # ===================================================================
+
+    def get_all_in_progress_launches(self) -> List[Dict[str, Any]]:
+        """Fetch all IN_PROGRESS launches in the project (paginated)."""
+        all_launches: List[Dict[str, Any]] = []
+        seen_ids: set = set()
+        for page in range(1, 51):
+            launches = self.list_launches(size=50, page=page, status="IN_PROGRESS")
+            if not launches:
+                break
+            for launch in launches:
+                lid = launch.get("id")
+                if lid and lid not in seen_ids:
+                    seen_ids.add(lid)
+                    all_launches.append(launch)
+        LOGGER.info(
+            f"Found {len(all_launches)} IN_PROGRESS launch(es) "
+            f"in project '{self.project}'"
+        )
+        return all_launches
+
+    def derive_launch_status(self, launch_id: int) -> str:
+        """Derive an overall status for a launch from its test items."""
+        from enge.reportportal.utils import derive_status_from_items
+
+        items = self.get_launch_test_items(launch_id)
+        return derive_status_from_items(items)
+
+
+# ===================================================================
+# Entry point
+# ===================================================================
 
 
 def main() -> int:
@@ -1105,28 +887,109 @@ def main() -> int:
     Main entry point for reportportal subcommand.
 
     Handles different ReportPortal operations based on CLI arguments.
+    Supports combining ``--enrich-logs`` with ``--finish`` to enrich first,
+    then finish the launch.  ``--all-launches`` bypasses TF task resolution
+    and operates directly on all IN_PROGRESS launches.
     """
+    from enge.reportportal.operations import (
+        finish_launch_from_task,
+        enrich_logs_from_task,
+        enrich_all_launches,
+        delete_logs_from_task,
+        test_connection_and_data,
+        finish_all_in_progress_launches,
+        delete_logs_all_launches,
+    )
+
     try:
         rp_launch = ReportPortalLaunch()
 
-        # Check if --finish flag is used
-        if getattr(parsed_opts.cli_args, "finish", False):
+        wants_enrich = getattr(parsed_opts.cli_args, "enrich_logs", False)
+        wants_finish = getattr(parsed_opts.cli_args, "finish", False)
+        wants_test = getattr(parsed_opts.cli_args, "test", False)
+        wants_delete_logs = getattr(parsed_opts.cli_args, "delete_logs", False)
+        wants_all = getattr(parsed_opts.cli_args, "all_launches", False)
+
+        # --all-launches mode
+        if wants_all:
+            # --finish --enrich-logs --all-launches
+            # → enrich IN_PROGRESS launches, then finish them
+            if wants_enrich and wants_finish:
+                LOGGER.info(
+                    "ReportPortal module - Enriching then "
+                    "finishing all IN_PROGRESS launches"
+                )
+                enrich_rc = enrich_all_launches(rp_launch, status_filter="IN_PROGRESS")
+                if enrich_rc != 0:
+                    LOGGER.warning("Log enrichment finished with " "warnings/errors")
+                finish_rc = finish_all_in_progress_launches(rp_launch)
+                return finish_rc if finish_rc != 0 else enrich_rc
+
+            # --enrich-logs --all-launches
+            # → enrich all launches regardless of status
+            if wants_enrich:
+                LOGGER.info("ReportPortal module - Enriching logs for " "all launches")
+                return enrich_all_launches(rp_launch, status_filter=None)
+
+            if wants_finish:
+                LOGGER.info(
+                    "ReportPortal module - " "Finishing all IN_PROGRESS launches"
+                )
+                return finish_all_in_progress_launches(rp_launch)
+
+            if wants_delete_logs:
+                LOGGER.info(
+                    "ReportPortal module - "
+                    "Deleting logs from all IN_PROGRESS launches"
+                )
+                return delete_logs_all_launches(rp_launch)
+
+            LOGGER.error(
+                "--all-launches must be combined with "
+                "--finish, --enrich-logs, or --delete-logs"
+            )
+            return 1
+
+        # --enrich-logs (possibly combined with --finish)
+        if wants_enrich:
+            LOGGER.info(
+                "ReportPortal module - " "Enriching launch logs from TF artifacts"
+            )
+            enrich_rc = enrich_logs_from_task(rp_launch)
+            if enrich_rc != 0:
+                LOGGER.warning("Log enrichment finished with warnings/errors")
+
+            if wants_finish:
+                LOGGER.info(
+                    "ReportPortal module - " "Finishing launches (after enrichment)"
+                )
+                finish_rc = finish_launch_from_task(rp_launch)
+                return finish_rc if finish_rc != 0 else enrich_rc
+
+            return enrich_rc
+
+        # --finish only
+        if wants_finish:
             LOGGER.info("ReportPortal module - Finishing launches")
-            return rp_launch.finish_launch_from_task()
-        elif getattr(parsed_opts.cli_args, "test", False):
+            return finish_launch_from_task(rp_launch)
+
+        # --test
+        if wants_test:
             LOGGER.info("ReportPortal module - Testing connection and data")
-            return rp_launch.test_connection_and_data()
-        else:
-            # Default behavior: create a launch
-            LOGGER.info("ReportPortal module - Launch creation")
+            return test_connection_and_data(rp_launch)
 
-            # Create a launch with auto-generated name
-            launch_uuid = rp_launch.create_launch()
+        # --delete-logs
+        if wants_delete_logs:
+            LOGGER.info("ReportPortal module - Deleting launch logs")
+            return delete_logs_from_task(rp_launch)
 
-            # Store the UUID (for now just logs it)
-            rp_launch.store_launch_uuid(launch_uuid)
+        # Default behavior: create a launch
+        LOGGER.info("ReportPortal module - Launch creation")
 
-            return 0
+        launch_uuid = rp_launch.create_launch()
+        rp_launch.store_launch_uuid(launch_uuid)
+
+        return 0
 
     except ConfigurationError as e:
         LOGGER.error(f"Configuration error: {e}")
