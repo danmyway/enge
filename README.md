@@ -43,7 +43,13 @@ The additional value is not only in the ability to quickly dispatch a test reque
 To be able to send requests to Testing Farm API, you need to obtain the API key.
 Please, kindly refer to [testing farm onboarding](https://docs.testing-farm.io/general/0.1/onboarding.html)
 to request the API key.<br>
-Add the obtained api_key to the config file as instructed below.
+Add the obtained api_key to the config file as instructed below, or export it as an environment variable:
+
+```bash
+export TESTING_FARM_API_TOKEN="your-api-key"
+```
+
+> **Priority**: config value > environment variable. If `api_key` is set in `enge.toml`, the environment variable is ignored.
 
 ### Cloud Resources Tag
 
@@ -75,7 +81,7 @@ dnf install enge
 >__NOTE__:<br>Additionally the tool should be installable from the repository root with `pip install .`
 
 #### Set up the configuration file
-The template for the config file is available in the root of the repository. The default locations for the config file are `~/.config/enge.toml`, `~/enge.toml`, or `/etc/enge/enge.toml`. A custom path to a config file can be specified through the commandline option `-c`.<br>
+The template for the config file is available in the root of the repository. The default locations for the config file are `~/.config/enge_user_config.toml`, `~/enge_user_config.toml`, or `/etc/enge/enge_user_config.toml`. A custom path to a config file can be specified through the commandline option `-c`.<br>
 In case of any question, please reach out to the project maintainer(s).
 
 ##### Configuration locations and precedence
@@ -83,9 +89,9 @@ When loading configuration, enge applies these rules:
 
 - **CLI-provided path**: If `-c/--config` is used, that file is tried first.
 - **User locations (searched in order)**:
-  - `~/.config/enge.toml`
-  - `~/enge.toml`
-  - `/etc/enge/enge.toml`
+  - `~/.config/enge_user_config.toml`
+  - `~/enge_user_config.toml`
+  - `/etc/enge/enge_user_config.toml`
 - The first existing file in the search order above is used as the user configuration.
 - The user configuration is then **merged over defaults** (see below). Nested tables are merged recursively; user values take precedence.
 
@@ -115,7 +121,7 @@ Key default paths from the bundled defaults (can be overridden in your `enge.tom
 When installed via RPM, the following files are provided under `/etc/enge/`:
 
 - `enge_default_config.toml` — system default configuration used as a base
-- `enge.toml` — an empty user configuration file (marked as `noreplace` so upgrades do not overwrite local changes)
+- `enge_user_config.toml` — an empty user configuration file (marked as `noreplace` so upgrades do not overwrite local changes)
 
 ### Usage
 
@@ -469,6 +475,14 @@ project = "your-project-name"
 launch = "Custom Default Launch Name"
 description = "Default launch description"
 ```
+
+The API token can also be provided via environment variable:
+
+```bash
+export REPORTPORTAL_API_TOKEN="your-reportportal-api-token"
+```
+
+> **Priority**: config value > environment variable. If `token` is set in `enge.toml`, the environment variable is ignored.
 
 **Test Set Event Configuration:**
 

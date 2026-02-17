@@ -43,6 +43,7 @@ post_install_script = ''
 [testing_farm]
 # REQUIRED: Testing Farm API access token
 # Get yours at: https://docs.testing-farm.io/Testing%20Farm/0.1/onboarding.html#_api_version_v0_1
+# Priority: config value > TESTING_FARM_API_TOKEN environment variable
 api_key = ''
 
 # Override default cloud resources business unit tag for cost tracking
@@ -135,6 +136,7 @@ build_references = []
 # Example: url = 'https://my-reportportal.com' becomes TMT_PLUGIN_REPORT_REPORTPORTAL_URL = 'https://my-reportportal.com'
 
 # API token for authentication (REQUIRED for 'enge rp' commands)
+# Priority: config value > REPORTPORTAL_API_TOKEN environment variable
 token = ''
 
 # ReportPortal server url (REQUIRED - for correct functioning of the 'enge rp' commands and launch generation)
