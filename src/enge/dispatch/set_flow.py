@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
 from enge.utils.source_target_parser import (
-    parse_source_target_config,
     generate_upgrade_path_alias,
     generate_detailed_upgrade_path_alias,
     parse_architectures,
@@ -79,26 +78,16 @@ def expand_set_requests() -> List[RequestSpec]:
         set_name = test_set["name"]
         effective_values = test_set["effective_values"]
 
-        # Parse source/target
-        source_value = effective_values.get("source")
-        target_value = effective_values.get("target")
-        if not source_value:
-            LOGGER.error(f"No source specified for test set '{set_name}'")
+        # Use cached source/target specs from opt_manager initialization
+        source_spec = test_set.get("source_spec")
+        target_spec = test_set.get("target_spec")
+        if not source_spec or not target_spec:
+            LOGGER.error(f"No parsed source/target for test set '{set_name}'")
             continue
-        try:
-            LOGGER.debug(f"Parsing source/target from test set '{set_name}' config")
-            source_spec, target_spec = parse_source_target_config(
-                source_value, target_value, resolved_opts.config
-            )
-            upgrade_path = generate_upgrade_path_alias(source_spec, target_spec)
-            detailed_upgrade_path = generate_detailed_upgrade_path_alias(
-                source_spec, target_spec
-            )
-        except ValueError as e:
-            LOGGER.error(
-                f"Failed to parse configuration for test set '{set_name}': {e}"
-            )
-            continue
+        upgrade_path = generate_upgrade_path_alias(source_spec, target_spec)
+        detailed_upgrade_path = generate_detailed_upgrade_path_alias(
+            source_spec, target_spec
+        )
 
         # Architectures
         arch_input = effective_values.get("architectures")
