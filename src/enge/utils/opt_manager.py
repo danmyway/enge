@@ -874,12 +874,24 @@ class ParsedOpts:
                             # Be safe; do not break on malformed inputs
                             pass
 
+                    # Parse source/target per set and cache for reuse in set_flow
+                    set_source = effective_values.get("source")
+                    set_target = effective_values.get("target")
+                    if set_source:
+                        set_source_spec, set_target_spec = parse_source_target_config(
+                            set_source, set_target, self.config
+                        )
+                    else:
+                        set_source_spec, set_target_spec = None, None
+
                     # Store the set with its effective values for dispatch
                     self.individual_test_sets.append(
                         {
                             "name": set_name,
                             "config": set_config,
                             "effective_values": effective_values,
+                            "source_spec": set_source_spec,
+                            "target_spec": set_target_spec,
                         }
                     )
 
@@ -1019,10 +1031,15 @@ class ParsedOpts:
             raise ValidationError("Source compose specification is required")
 
         try:
-            # Parse source and target specifications
-            self.source_spec, self.target_spec = parse_source_target_config(
-                source_value, target_value, self.config
-            )
+            # Reuse cached specs from the first test set when available,
+            # otherwise parse fresh (non-set flow)
+            if cli_sets and self.individual_test_sets:
+                self.source_spec = self.individual_test_sets[0]["source_spec"]
+                self.target_spec = self.individual_test_sets[0]["target_spec"]
+            else:
+                self.source_spec, self.target_spec = parse_source_target_config(
+                    source_value, target_value, self.config
+                )
 
             # Generate derived values
             self.upgrade_path_alias = generate_upgrade_path_alias(

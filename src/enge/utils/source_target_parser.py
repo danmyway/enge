@@ -6,6 +6,7 @@ This module provides functions to parse source and target specifications
 and derive all necessary values for Testing Farm payloads.
 """
 
+from mimetypes import suffix_map
 import re
 from typing import Dict, Tuple, Optional, Any, List
 from logging import getLogger
@@ -79,6 +80,13 @@ def parse_compose_spec(
     if version_match:
         major = int(version_match.group(1))
         minor = int(version_match.group(2))
+        try:
+            suffix = version_match.group(3)
+        except IndexError:
+            suffix = "Nightly"
+            LOGGER.debug(
+                f"Provided compose name {spec.strip()} does not contain a suffix, falling back to 'Nightly'."
+            )
 
         # Use pin_compose to translate the compose with fallback logic
         from enge.dispatch.pin_compose import _pin_compose_with_fallback
@@ -86,20 +94,13 @@ def parse_compose_spec(
         composes_prod_url = config.get("testing_farm", {}).get("composes_prod_url", "")
 
         if composes_prod_url:
-            try:
-                translated_compose = _pin_compose_with_fallback(
-                    major, minor, composes_prod_url
-                )
-                LOGGER.debug(
-                    f"Translated compose for {major}.{minor} to {translated_compose}"
-                )
-                compose_name = translated_compose
-            except Exception as e:
-                LOGGER.warning(
-                    f"Failed to translate compose for {major}.{minor}: {e}. "
-                    "Using symbolic compose name, the provisioner will resolve it."
-                )
-                compose_name = f"RHEL-{major}.{minor}.0-Nightly"
+            translated_compose = _pin_compose_with_fallback(
+                major, minor, suffix, composes_prod_url
+            )
+            LOGGER.debug(
+                f"Translated compose for {major}.{minor} to {translated_compose}"
+            )
+            compose_name = translated_compose
         else:
             LOGGER.debug(
                 "composes_prod_url not configured, using standard compose name"

@@ -1,3 +1,5 @@
+from calendar import c
+from enge.utils.opt_manager import parsed_opts
 import requests
 from enge.utils.http_client import http_get
 import logging
@@ -216,7 +218,7 @@ def find_compose(compose_arg, data):
     return None
 
 
-def _pin_compose_with_fallback(major, minor, composes_prod_url):
+def _pin_compose_with_fallback(major, minor, suffix, composes_prod_url):
     """
     Attempts to pin a compose with fallback logic for different RHEL formats.
 
@@ -241,13 +243,25 @@ def _pin_compose_with_fallback(major, minor, composes_prod_url):
     data = fetch_data_from_url(composes_prod_url)
 
     # Format with micro version (RHEL 8/9 style)
-    compose_with_micro = f"RHEL-{major}.{minor}.0-Nightly"
+    compose_with_micro = f"RHEL-{major}.{minor}.0-{suffix}"
 
     # Format without micro version (RHEL 10 style)
-    compose_without_micro = f"RHEL-{major}.{minor}-Nightly"
+    compose_without_micro = f"RHEL-{major}.{minor}-{suffix}"
     result = find_compose(compose_with_micro, data) or find_compose(
         compose_without_micro, data
     )
+    is_rerun = (
+        parsed_opts._instance is not None
+        and getattr(getattr(parsed_opts._instance, "cli_args", None), "action", None)
+        == "rerun"
+    )
+    if not result and is_rerun:
+        LOGGER.warning(
+            f"Rerun mode: Compose '{compose_with_micro}', '{compose_without_micro}' not found, falling back to the latest Nightly."
+        )
+        result = find_compose(f"RHEL-{major}.{minor}.0-Nightly", data) or find_compose(
+            f"RHEL-{major}.{minor}-Nightly", data
+        )
     if result:
         LOGGER.debug(f"Found compose with version: {result}")
         return result
@@ -331,60 +345,26 @@ def _show_compose_not_found_error(attempted_composes, data, major=None, minor=No
     if compose_list:
         LOGGER.error(f"Available relevant composes: \n{compose_list}")
     if not available_images and not compose_list:
-        LOGGER.debug(
+        all_symbolic_names = "\n".join(
+            [
+                "            - " + ",".join(str(k) for k in item.keys())
+                for item in symbolic_composes
+                if item
+            ]
+        )
+        all_compose_names = "\n".join(
+            ["            - " + str(c) for c in all_compose_list if c]
+        )
+        LOGGER.error(
             f"No relevant composes found for RHEL {version_info['major']}.{version_info['minor']}."
         )
+        if all_symbolic_names:
+            LOGGER.error(f"All available symbolic composes: \n{all_symbolic_names}")
+        if all_compose_names:
+            LOGGER.error(f"All available composes: \n{all_compose_names}")
     from enge.utils.errors import ValidationError
 
     raise ValidationError("Compose not found")
-
-
-def _pin_compose(compose_arg, composes_prod_url):
-    """
-    Attempts to pin a compose based on the given argument.
-
-    Parameters:
-    - compose_arg (str): The argument to use for finding a compose.
-    - composes_prod_url (str): URL to fetch compose data from.
-
-    Raises:
-    - ValueError: If the compose cannot be found.
-
-    Returns:
-    - str or None: The found compose, or None if not found.
-
-    """
-    if not composes_prod_url:
-        raise ValueError("composes_prod_url not configured")
-
-    data = fetch_data_from_url(composes_prod_url)
-
-    compose = find_compose(compose_arg, data)
-    if compose is None:
-        attempted_composes = [compose_arg]
-        major, minor = None, None
-
-        # For full compose names, try fallback logic if it looks like a RHEL compose
-        rhel_match = re.match(r"^RHEL-(\d+)\.(\d+)\.(\d+)-(.+)$", compose_arg)
-        if rhel_match:
-            major = int(rhel_match.group(1))
-            minor = int(rhel_match.group(2))
-            suffix = rhel_match.group(4)
-
-            # Try without micro version as fallback
-            fallback_compose = f"RHEL-{major}.{minor}-{suffix}"
-            compose = find_compose(fallback_compose, data)
-            if compose:
-                LOGGER.debug(f"Found fallback compose: {compose}")
-                return compose
-
-            # Add fallback to attempted list
-            attempted_composes.append(fallback_compose)
-
-        # Show error with attempted compose(s) and version info if available
-        _show_compose_not_found_error(attempted_composes, data, major, minor)
-
-    return compose_arg if compose_arg in (data.get("COMPOSES") or []) else compose
 
 
 _repin_cache = {}
@@ -437,13 +417,14 @@ def repin_compose(compose_name, composes_prod_url):
 
     major = int(match.group(1))
     minor = int(match.group(2))
+    suffix = match.group(3)
 
     if not composes_prod_url:
         raise ValueError(
             "composes_prod_url is not configured, cannot validate compose availability"
         )
 
-    result = _pin_compose_with_fallback(major, minor, composes_prod_url)
+    result = _pin_compose_with_fallback(major, minor, suffix, composes_prod_url)
     if result != compose_name:
         LOGGER.warning("Compose re-pinned: %s -> %s", compose_name, result)
     else:

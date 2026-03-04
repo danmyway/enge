@@ -23,22 +23,16 @@ class TestSetFlow(unittest.TestCase):
                     "tiers": ["sanity"],
                     "plans": ["/plans/p1"],
                 },
+                "source_spec": {"major": 9, "minor": 2, "compose_name": "RHEL-9.2.0"},
+                "target_spec": {"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"},
             }
         ]
         mock_parsed_opts.return_value = po
 
         with patch(
-            "enge.dispatch.set_flow.parse_source_target_config",
-            return_value=(
-                {"major": 9, "minor": 2, "compose_name": "RHEL-9.2.0"},
-                {"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"},
-            ),
-        ), patch(
             "enge.dispatch.set_flow.generate_upgrade_path_alias",
             return_value="rhel-9.2-to-9.4",
-        ), patch(
-            "enge.dispatch.set_flow.parse_architectures", return_value=["x86_64"]
-        ):
+        ), patch("enge.dispatch.set_flow.parse_architectures", return_value=["x86_64"]):
             specs = expand_set_requests()
 
         self.assertEqual(len(specs), 1)
