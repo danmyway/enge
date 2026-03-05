@@ -49,6 +49,53 @@ LOGGER = logging.getLogger(__name__)
 # ===================================================================
 
 
+def _extract_tf_uuid(artifacts_url: str) -> Optional[str]:
+    """Extract a Testing Farm task UUID from an artifacts URL.
+
+    Expects the UUID as the last meaningful path segment, e.g.
+    ``https://artifacts.dev.testing-farm.io/<uuid>`` or
+    ``https://…/artifacts/<uuid>/``.
+    """
+    import re
+
+    match = re.search(
+        r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+        artifacts_url,
+        re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+
+def _get_tf_task_info(task_uuid: str) -> Optional[Dict[str, Any]]:
+    """Query the Testing Farm API for a task's state and result.
+
+    Returns ``{"state": …, "overall": …}`` or ``None`` when TF
+    credentials are unavailable or the query fails.
+    """
+    tf_cfg = parsed_opts.config.get("testing_farm", {})
+    api_key = tf_cfg.get("api_key", "")
+    api_url = tf_cfg.get("api_endpoint_url", "")
+    if not api_key or not api_url:
+        return None
+
+    try:
+        resp = http_get(
+            f"{api_url.rstrip('/')}/{task_uuid}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            result = data.get("result") or {}
+            return {
+                "state": data.get("state"),
+                "overall": result.get("overall") if isinstance(result, dict) else None,
+            }
+    except Exception as exc:
+        LOGGER.debug(f"Could not query TF task info for {task_uuid}: {exc}")
+    return None
+
+
 def _stamp_logs_attached(
     rp: ReportPortalLaunch,
     launch_id: Optional[int],
@@ -168,47 +215,35 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
         Exit code (0 success, non-zero error)
     """
     try:
-        from enge.report.concurrent_parser import (
-            parse_request_xunit_concurrent,
-            ConcurrentRequestParser,
-        )
+        from enge.report.concurrent_parser import ConcurrentRequestParser
         from enge.report.__main__ import parse_tasks
 
-        LOGGER.info("Getting task data using report module...")
+        is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
 
-        request_url_list, tasks_source = parse_tasks()
+        request_url_list, _tasks_source = parse_tasks()
         if not request_url_list:
             LOGGER.error("No task URLs found to process")
             return 1
 
-        task_results_dict = parse_request_xunit_concurrent(
-            request_url_list, tasks_source
-        )
-        if not task_results_dict:
-            LOGGER.error("No task results found")
-            return 1
-
         processed_count = 0
-        for task_uuid, task_data in task_results_dict.items():
-            LOGGER.info(f"Processing task: {task_uuid}")
+
+        for task_url in request_url_list:
+            LOGGER.info(f"Processing task: {task_url}")
 
             with ConcurrentRequestParser() as parser:
-                task_url = (
-                    f"{parsed_opts.testing_farm_endpoint.api_endpoint_url}"
-                    f"/{task_uuid}"
-                )
-                task_result = parser._fetch_task_info(task_url)
+                task_result = parser._fetch_task_info(task_url, process_state=False)
                 if not task_result:
-                    LOGGER.warning(f"Could not fetch task info for {task_uuid}")
+                    LOGGER.warning(f"Could not fetch task info for {task_url}")
                     continue
 
-                excluded_states = [
+                task_uuid = task_result.request_uuid
+
+                if task_result.request_state.upper() in (
                     "NEW",
                     "QUEUED",
                     "RUNNING",
                     "CANCELED",
-                ]
-                if task_result.request_state.upper() in excluded_states:
+                ):
                     LOGGER.info(
                         f"Task {task_uuid} is in state "
                         f"'{task_result.request_state}', skipping"
@@ -221,20 +256,7 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
                     f"proceeding to finish launch"
                 )
 
-                LOGGER.debug(f"Fetching XML content for task {task_uuid}")
                 task_result = parser._fetch_xml_results(task_result)
-
-                if task_result.xunit_content:
-                    LOGGER.debug(
-                        f"Successfully fetched XML content "
-                        f"(length: {len(task_result.xunit_content)})"
-                    )
-                else:
-                    LOGGER.warning(
-                        f"No XML content available for task "
-                        f"{task_uuid} "
-                        f"(error: {task_result.error_message})"
-                    )
 
                 tmt_context = extract_tmt_context_from_task(task_result)
                 if not tmt_context:
@@ -244,7 +266,7 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
                 uniq_id = tmt_context.get("uniq_id")
                 if not uniq_id:
                     LOGGER.warning(
-                        f"No uniq_id found in TMT context " f"for task {task_uuid}"
+                        f"No uniq_id found in TMT context for task {task_uuid}"
                     )
                     continue
 
@@ -255,38 +277,26 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
                     LOGGER.error(f"No launch found matching uniq_id '{uniq_id}'")
                     continue
 
-                # Extract end time from XML
+                # End time from XML, fallback to now
                 end_time = None
                 if task_result.xunit_content and task_result.xunit_content.strip():
-                    LOGGER.info("Extracting timestamp from XML content...")
                     end_time = extract_latest_timestamp_from_xml(
                         task_result.xunit_content
                     )
-                else:
-                    LOGGER.warning(f"No XML content available for task " f"{task_uuid}")
-
                 if not end_time:
                     LOGGER.warning(
-                        "No timestamp found in XML, " "using current time as fallback"
+                        "No timestamp found in XML, using current time as fallback"
                     )
                     end_time = (
                         datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
                     )
-                    LOGGER.info(f"Using fallback timestamp: {end_time}")
 
-                # Artifacts URL for description
-                response = http_get(
-                    task_url,
-                    headers={
-                        "Authorization": (
-                            f"Bearer " f"{parsed_opts.testing_farm.get('api_key')}"
-                        )
-                    },
-                    timeout=30,
+                # Artifacts URL for launch description
+                artifacts_url = (
+                    task_result.results_xml_url.rsplit("/results.xml", 1)[0]
+                    if task_result.results_xml_url
+                    else None
                 )
-                full_task_data = response.json() if response.status_code == 200 else {}
-
-                artifacts_url = extract_artifacts_url(full_task_data)
                 description = f"\n{artifacts_url}" if artifacts_url else None
 
                 attributes = []
@@ -294,6 +304,7 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
                     if value is not None:
                         attributes.append({"key": key, "value": str(value)})
 
+                # Derive RP status from TF state + overall result
                 status_mapping = {
                     "COMPLETE": "PASSED",
                     "ERROR": "FAILED",
@@ -302,18 +313,15 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
                 status = status_mapping.get(
                     task_result.request_state.upper(), "STOPPED"
                 )
-
-                if task_data.get("overall_result"):
-                    result_status_mapping = {
+                if task_result.request_result_overall:
+                    result_mapping = {
                         "passed": "PASSED",
                         "failed": "FAILED",
                         "error": "FAILED",
                     }
-                    status = result_status_mapping.get(
-                        task_data["overall_result"].lower(), status
+                    status = result_mapping.get(
+                        task_result.request_result_overall.lower(), status
                     )
-
-                is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
 
                 if is_dryrun:
                     show_dryrun_finish_data(
@@ -337,33 +345,25 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
                     )
                     if success:
                         LOGGER.info(
-                            f"Successfully finished launch " f"for task {task_uuid}"
+                            f"Successfully finished launch for task {task_uuid}"
                         )
                         processed_count += 1
                     else:
-                        LOGGER.error(
-                            f"Failed to finish launch " f"for task {task_uuid}"
-                        )
+                        LOGGER.error(f"Failed to finish launch for task {task_uuid}")
 
-        is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
         if processed_count > 0:
-            if is_dryrun:
-                LOGGER.info(
-                    f"Dry run complete - showed "
-                    f"{processed_count} launch finish request(s)"
-                )
-            else:
-                LOGGER.info(f"Successfully finished " f"{processed_count} launch(es)")
+            action = "shown" if is_dryrun else "finished"
+            LOGGER.info(f"Successfully {action} {processed_count} launch(es)")
             return 0
         else:
-            if is_dryrun:
-                LOGGER.warning("No launches would be finished")
-            else:
-                LOGGER.warning("No launches were finished")
+            LOGGER.warning("No launches were finished")
             return 1
 
     except Exception as e:
         LOGGER.error(f"Error in finish launch logic: {e}")
+        import traceback
+
+        LOGGER.debug(f"Traceback: {traceback.format_exc()}")
         return 1
 
 
@@ -396,7 +396,7 @@ def enrich_logs_from_task(rp: ReportPortalLaunch) -> int:
             LOGGER.info(f"Processing task: {task_url}")
 
             with ConcurrentRequestParser() as parser:
-                task_result = parser._fetch_task_info(task_url)
+                task_result = parser._fetch_task_info(task_url, process_state=False)
                 if not task_result:
                     LOGGER.warning(f"Could not fetch task info for {task_url}")
                     continue
@@ -551,7 +551,7 @@ def delete_logs_from_task(rp: ReportPortalLaunch) -> int:
         for task_url in request_url_list:
             LOGGER.info(f"Processing task: {task_url}")
             with ConcurrentRequestParser() as parser:
-                task_result = parser._fetch_task_info(task_url)
+                task_result = parser._fetch_task_info(task_url, process_state=False)
                 if not task_result:
                     LOGGER.warning(f"Could not fetch task info for {task_url}")
                     continue
@@ -679,14 +679,14 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
 
     launches = rp.get_all_in_progress_launches()
     if not launches:
-        LOGGER.warning("No IN_PROGRESS launches found")
-        return 1
+        LOGGER.info("No IN_PROGRESS launches found")
+        return 0
 
     fallback_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     processed = 0
 
     for launch in launches:
-        launch_uuid = launch.get("uuid") or launch.get("id", "")
+        launch_uuid = launch.get("uuid")
         launch_name = launch.get("name", "Unknown")
         numeric_id = launch.get("id")
 
@@ -705,15 +705,42 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
             )
             continue
 
-        status = derive_status_from_items(items)
-
-        # Skip launches whose test pipeline is still running
-        if status == "IN_PROGRESS":
+        # Skip launches that still have explicitly IN_PROGRESS items
+        if has_in_progress_items(items):
             LOGGER.info(
                 f"Launch '{launch_name}' ({launch_uuid}) still "
                 f"has IN_PROGRESS items, skipping"
             )
             continue
+
+        # Check TF task state — skip if still running, use state +
+        # overall result to derive RP status when available.
+        artifacts_url = extract_artifacts_url_from_items(items)
+        tf_info: Optional[Dict[str, Any]] = None
+        if artifacts_url:
+            task_uuid_from_url = _extract_tf_uuid(artifacts_url)
+            if task_uuid_from_url:
+                tf_info = _get_tf_task_info(task_uuid_from_url)
+
+        tf_state = (tf_info or {}).get("state", "")
+        if tf_state and tf_state.upper() in ("NEW", "QUEUED", "RUNNING"):
+            LOGGER.info(
+                f"TF task for launch '{launch_name}' " f"is '{tf_state}', skipping"
+            )
+            continue
+
+        # Derive RP status from TF info when available
+        if tf_state and tf_state.upper() in ("ERROR", "FAILED"):
+            status = "FAILED"
+        elif tf_state and tf_state.upper() in ("CANCELED", "CANCELLED"):
+            status = "STOPPED"
+        elif tf_info and tf_info.get("overall"):
+            overall = tf_info["overall"].lower()
+            status = {"passed": "PASSED", "failed": "FAILED"}.get(
+                overall, derive_status_from_items(items)
+            )
+        else:
+            status = derive_status_from_items(items)
 
         end_time = latest_end_time_from_items(items)
         if not end_time:
@@ -722,8 +749,6 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
                 f"'{launch_name}', using current time"
             )
             end_time = fallback_time
-
-        artifacts_url = extract_artifacts_url_from_items(items)
         description = f"\n{artifacts_url}" if artifacts_url else None
 
         existing_attrs = launch.get("attributes")
@@ -761,10 +786,9 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
     action = "shown" if is_dryrun else "finished"
     if processed > 0:
         LOGGER.info(f"Successfully {action} {processed} launch(es)")
-        return 0
     else:
-        LOGGER.warning(f"No launches were {action}")
-        return 1
+        LOGGER.info("No launches required finishing")
+    return 0
 
 
 def delete_logs_all_launches(rp: ReportPortalLaunch) -> int:
@@ -878,8 +902,8 @@ def enrich_all_launches(
         LOGGER.info(f"Found {len(launches)} launch(es) to consider " f"for enrichment")
 
     if not launches:
-        LOGGER.warning("No launches found for enrichment")
-        return 1
+        LOGGER.info("No launches found for enrichment")
+        return 0
 
     enriched_count = 0
 
@@ -894,7 +918,7 @@ def enrich_all_launches(
         # Layer 1: coarse dedup — skip already-enriched launches
         if is_launch_enriched(launch):
             LOGGER.debug(
-                f"Launch '{launch_name}' ({launch_uuid}) already " f"enriched, skipping"
+                f"Launch '{launch_name}' ({launch_uuid}) already enriched, skipping"
             )
             continue
 
@@ -906,8 +930,29 @@ def enrich_all_launches(
 
         artifacts_url = extract_artifacts_url_from_items(items)
         if not artifacts_url:
-            LOGGER.debug(f"No artifacts URL in launch '{launch_name}', " f"skipping")
+            LOGGER.debug(f"No artifacts URL in launch '{launch_name}', skipping")
             continue
+
+        # Check TF task state — skip if still running (no logs yet)
+        # or if complete with all passed (nothing to enrich)
+        task_uuid_from_url = _extract_tf_uuid(artifacts_url)
+        if task_uuid_from_url:
+            tf_info = _get_tf_task_info(task_uuid_from_url)
+            if tf_info:
+                tf_state = (tf_info.get("state") or "").upper()
+                if tf_state in ("NEW", "QUEUED", "RUNNING"):
+                    LOGGER.info(
+                        f"TF task {task_uuid_from_url} for launch "
+                        f"'{launch_name}' is '{tf_state}', "
+                        f"skipping enrichment"
+                    )
+                    continue
+                if tf_state == "COMPLETE" and tf_info.get("overall") == "passed":
+                    LOGGER.info(
+                        f"TF task {task_uuid_from_url} for launch "
+                        f"'{launch_name}' PASSED — nothing to enrich"
+                    )
+                    continue
 
         # Fetch results.xml from the artifacts endpoint
         results_xml_url = artifacts_url.rstrip("/") + "/results.xml"
@@ -1000,8 +1045,7 @@ def enrich_all_launches(
 
     action = "shown" if is_dryrun else "enriched"
     if enriched_count > 0:
-        LOGGER.info(f"Enrichment complete: {enriched_count} launch(es) " f"{action}")
-        return 0
+        LOGGER.info(f"Enrichment complete: {enriched_count} launch(es) {action}")
     else:
-        LOGGER.warning("No launches were enriched")
-        return 1
+        LOGGER.info("No launches required enrichment")
+    return 0
