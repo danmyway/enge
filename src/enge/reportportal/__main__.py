@@ -920,10 +920,8 @@ def main() -> int:
                     "finishing all IN_PROGRESS launches"
                 )
                 enrich_rc = enrich_all_launches(rp_launch, status_filter="IN_PROGRESS")
-                if enrich_rc != 0:
-                    LOGGER.warning("Log enrichment finished with " "warnings/errors")
                 finish_rc = finish_all_in_progress_launches(rp_launch)
-                return finish_rc if finish_rc != 0 else enrich_rc
+                return enrich_rc or finish_rc
 
             # --enrich-logs --all-launches
             # → enrich all launches regardless of status
@@ -956,15 +954,13 @@ def main() -> int:
                 "ReportPortal module - " "Enriching launch logs from TF artifacts"
             )
             enrich_rc = enrich_logs_from_task(rp_launch)
-            if enrich_rc != 0:
-                LOGGER.warning("Log enrichment finished with warnings/errors")
 
             if wants_finish:
                 LOGGER.info(
-                    "ReportPortal module - " "Finishing launches (after enrichment)"
+                    "ReportPortal module - Finishing launches (after enrichment)"
                 )
                 finish_rc = finish_launch_from_task(rp_launch)
-                return finish_rc if finish_rc != 0 else enrich_rc
+                return enrich_rc or finish_rc
 
             return enrich_rc
 

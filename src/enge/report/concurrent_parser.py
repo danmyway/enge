@@ -88,7 +88,9 @@ class ConcurrentRequestParser:
         """Get shortened UUID for debug logging."""
         return uuid.split("-")[0]
 
-    def _fetch_task_info(self, url: str) -> Optional[TaskResult]:
+    def _fetch_task_info(
+        self, url: str, process_state: bool = True
+    ) -> Optional[TaskResult]:
         """Fetch task information with comprehensive state and error handling."""
         if not self.session:
             LOGGER.error("Session not initialized")
@@ -209,8 +211,8 @@ class ConcurrentRequestParser:
                     task_result.skip_reason = "canceled"
                     # Don't return early - let _process_task_state handle display
 
-                # Process state and display information
-                self._process_task_state(task_result)
+                if process_state:
+                    self._process_task_state(task_result)
 
                 return task_result
 
@@ -276,7 +278,9 @@ class ConcurrentRequestParser:
 
         # Handle waiting for running tasks
         if task_result.request_state in ("QUEUED", "RUNNING"):
-            if parsed_opts.cli_args.action == "rerun" or parsed_opts.cli_args.wait:
+            if parsed_opts.cli_args.action == "rerun" or getattr(
+                parsed_opts.cli_args, "wait", False
+            ):
                 self._wait_for_completion(task_result)
             else:
                 # Don't log individual warnings - will show general warning later
