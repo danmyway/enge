@@ -633,6 +633,47 @@ enge reportportal --delete-logs --all-launches
 enge reportportal --delete-logs --all-launches --dryrun
 ```
 
+**Deleting Stale Launches (`--delete-stale`):**
+
+Delete launches that are stopped or interrupted and have no test items — empty launches left behind by failed or aborted dispatches.
+
+```bash
+# Delete all stale launches
+enge reportportal --delete-stale
+
+# Preview which launches would be deleted
+enge reportportal --delete-stale --dryrun
+
+# Only stale launches started before a given date
+enge reportportal --delete-stale --until 2025-12-31
+
+# Combine both bounds
+enge reportportal --delete-stale --since 2025-01-01 --until 2025-06-30
+```
+
+**Date Filters (`--since` / `--until`):**
+
+Narrow any launch-listing operation by date. Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y` — meaning "that many units ago from now"). Effective with `--all-launches` and `--delete-stale`; ignored for task-based operations.
+
+```bash
+# Finish only launches started after a date
+enge reportportal --finish --all-launches --since 2025-07-01
+
+# Delete stale launches from the last 3 days
+enge reportportal --delete-stale --since 3d
+
+# Delete stale launches older than 2 weeks
+enge reportportal --delete-stale --until 2w
+
+# Enrich launches within a relative window
+enge reportportal --enrich-logs --all-launches --since 1m
+
+# Mix absolute and relative
+enge reportportal --enrich-logs --all-launches --since 2025-01-01 --until 3m
+```
+
+The same `--since` / `--until` flags are also available on the `report` subcommand — see [Report](#report).
+
 **Testing Connection (`--test`):**
 
 Verify your ReportPortal configuration and connectivity.
@@ -656,6 +697,7 @@ All task-based operations (`--finish`, `--enrich-logs`, `--delete-logs` without 
 | `--enrich-logs --all-launches` | All statuses | Enriches every launch; skips already-enriched (`logs_attached`) |
 | `--finish --enrich-logs --all-launches` | IN_PROGRESS | Enriches first, then finishes |
 | `--delete-logs --all-launches` | IN_PROGRESS | Deletes all logs from each launch |
+| `--delete-stale` | STOPPED / INTERRUPTED | Deletes empty launches (no test items); standalone, no `--all-launches` needed |
 
 ##### Report
 With the report command you are able to get the results of the requested jobs straight to the command line.<br>
@@ -685,6 +727,21 @@ enge report --show-tests --input 9f42645f-bcaa-4c73-87e2-6e1efef16635 --short
 
 # Display only UUIDs from the requested inputs
 enge report --show-ids --file ~/my_jobs_file
+```
+
+**Date Filters (`--since` / `--until`):**
+
+When used with `--get-tag`, `--since` and `--until` filter archived task files by the timestamp embedded in their filename (`enge_jobs_archive_YYYYMMDDHHMMSS`). Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y`). Files provided via `-f` or `-i` are not filtered.
+
+```bash
+# Report only archives from the last week
+enge report --get-tag regression --since 1w
+
+# Report archives within a date range
+enge report --get-tag tier0 --since 2025-01-01 --until 2025-06-30
+
+# Report archives from the last 12 hours
+enge report --get-tag smoke --since 12h
 ```
 
 ## Troubleshooting configuration and validation

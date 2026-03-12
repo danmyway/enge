@@ -459,7 +459,9 @@ class ReportPortalLaunch:
                     break
                 page += 1
 
-            LOGGER.info(f"Found {len(items)} test item(s) in launch {launch_id}")
+            LOGGER.debug(f"Found {len(items)} test item(s) in launch {launch_id}")
+            if getattr(parsed_opts.cli_args, "delete_stale", False) and len(items) == 0:
+                LOGGER.info(f"Found stale launch {launch_id} with no test items")
             if items:
                 for item in items[:10]:
                     LOGGER.debug(
@@ -850,12 +852,12 @@ class ReportPortalLaunch:
     # All-launches query helpers
     # ===================================================================
 
-    def get_all_in_progress_launches(self) -> List[Dict[str, Any]]:
-        """Fetch all IN_PROGRESS launches in the project (paginated)."""
+    def get_all_launches(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Fetch all launches in the project, optionally filtered by status."""
         all_launches: List[Dict[str, Any]] = []
         seen_ids: set = set()
         for page in range(1, 51):
-            launches = self.list_launches(size=50, page=page, status="IN_PROGRESS")
+            launches = self.list_launches(size=50, page=page, status=status)
             if not launches:
                 break
             for launch in launches:
@@ -863,11 +865,33 @@ class ReportPortalLaunch:
                 if lid and lid not in seen_ids:
                     seen_ids.add(lid)
                     all_launches.append(launch)
+        status_label = status or "any"
         LOGGER.info(
-            f"Found {len(all_launches)} IN_PROGRESS launch(es) "
-            f"in project '{self.project}'"
+            f"Found {len(all_launches)} launch(es) "
+            f"(status={status_label}) in project '{self.project}'"
         )
         return all_launches
+
+    def delete_launch(self, launch_id: int) -> bool:
+        """Delete a launch by its numeric ID."""
+        try:
+            response = http_delete(
+                f"{self.api_base}/launch/{launch_id}",
+                headers=self.headers,
+                timeout=30,
+            )
+            if response.status_code in (200, 204):
+                LOGGER.info(f"Deleted launch {launch_id}")
+                return True
+            else:
+                LOGGER.error(
+                    f"Failed to delete launch {launch_id}: "
+                    f"HTTP {response.status_code}"
+                )
+                return False
+        except RequestException as e:
+            LOGGER.error(f"Network error deleting launch {launch_id}: {e}")
+            return False
 
     def derive_launch_status(self, launch_id: int) -> str:
         """Derive an overall status for a launch from its test items."""
@@ -899,6 +923,7 @@ def main() -> int:
         test_connection_and_data,
         finish_all_in_progress_launches,
         delete_logs_all_launches,
+        delete_stale_launches,
     )
 
     try:
@@ -908,7 +933,13 @@ def main() -> int:
         wants_finish = getattr(parsed_opts.cli_args, "finish", False)
         wants_test = getattr(parsed_opts.cli_args, "test", False)
         wants_delete_logs = getattr(parsed_opts.cli_args, "delete_logs", False)
+        wants_delete_stale = getattr(parsed_opts.cli_args, "delete_stale", False)
         wants_all = getattr(parsed_opts.cli_args, "all_launches", False)
+
+        # --delete-stale (standalone, no task input needed)
+        if wants_delete_stale:
+            LOGGER.info("ReportPortal module - Deleting stale launches")
+            return delete_stale_launches(rp_launch)
 
         # --all-launches mode
         if wants_all:

@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import uuid
+from datetime import datetime
 
 from prettytable import PrettyTable
 
@@ -25,6 +26,31 @@ ERROR_HERE = 3
 NO_RESULT = 4
 
 LOGGER = logging.getLogger(__name__)
+
+_ARCHIVE_TS_RE = re.compile(r"enge_jobs_archive_(\d{14})")
+
+
+def _file_in_date_range(
+    filename: str,
+    since: "datetime | None",
+    until: "datetime | None",
+) -> bool:
+    """Check whether an archive file's timestamp falls within a date range.
+
+    Extracts the ``YYYYMMDDHHMMSS`` timestamp embedded in the standard
+    archive filename.  Files that don't match the naming convention are
+    passed through unfiltered.
+    """
+    m = _ARCHIVE_TS_RE.search(filename)
+    if not m:
+        return True
+
+    file_dt = datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
+    if since and file_dt < since:
+        return False
+    if until and file_dt > until:
+        return False
+    return True
 
 
 def _latest_tasks_file():
@@ -63,33 +89,57 @@ def _parse_tasks_impl():
 
                     raise ValidationError("Input file does not exist")
 
-        if parsed_opts.cli_args.get_tag:
+        since_str = getattr(parsed_opts.cli_args, "since", None)
+        until_str = getattr(parsed_opts.cli_args, "until", None)
+        has_tags = bool(parsed_opts.cli_args.get_tag)
+        has_date_filter = bool(since_str or until_str)
+
+        if has_tags or has_date_filter:
             default_path = parsed_opts.archive_tasks_default
             if not os.path.exists(default_path):
                 LOGGER.critical(f"The given path {default_path} does not exist!")
 
                 raise ValidationError("Archive path does not exist")
 
-            # Compile regex patterns for efficiency
             compiled_patterns = []
-            for tag in parsed_opts.cli_args.get_tag:
-                try:
-                    compiled_patterns.append(re.compile(tag))
-                except re.error as e:
-                    LOGGER.error(f"Invalid regex pattern '{tag}': {e}")
+            if has_tags:
+                for tag in parsed_opts.cli_args.get_tag:
+                    try:
+                        compiled_patterns.append(re.compile(tag))
+                    except re.error as e:
+                        LOGGER.error(f"Invalid regex pattern '{tag}': {e}")
 
-                    raise ValidationError("Invalid regex in --get-tag")
+                        raise ValidationError("Invalid regex in --get-tag")
 
             source = []
             for file in os.listdir(default_path):
-                file_extension = file.split(".", 1)[-1] if "." in file else ""
+                if compiled_patterns:
+                    file_extension = file.split(".", 1)[-1] if "." in file else ""
+                    if not any(
+                        pattern.search(file_extension) or pattern.search(file)
+                        for pattern in compiled_patterns
+                    ):
+                        continue
+                source.append(file)
 
-                # Check if any pattern matches the extension or full filename
-                if any(
-                    pattern.search(file_extension) or pattern.search(file)
-                    for pattern in compiled_patterns
-                ):
-                    source.append(file)
+            if has_date_filter:
+                from enge.utils import parse_date_arg
+
+                since_dt = parse_date_arg(since_str) if since_str else None
+                until_dt = (
+                    parse_date_arg(until_str).replace(hour=23, minute=59, second=59)
+                    if until_str
+                    else None
+                )
+                before = len(source)
+                source = [
+                    f for f in source if _file_in_date_range(f, since_dt, until_dt)
+                ]
+                if len(source) != before:
+                    LOGGER.info(
+                        f"Date filter narrowed {before} archive "
+                        f"file(s) to {len(source)}"
+                    )
 
             for file in source:
                 file = os.path.join(default_path, file)
@@ -101,7 +151,8 @@ def _parse_tasks_impl():
             (
                 parsed_opts.cli_args.file,
                 getattr(parsed_opts.cli_args, "input", None),
-                parsed_opts.cli_args.get_tag,
+                has_tags,
+                has_date_filter,
             )
         ):
             latest = _latest_tasks_file()
