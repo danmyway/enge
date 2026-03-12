@@ -76,6 +76,22 @@ def _add_dryrun_arg(
     )
 
 
+def _add_date_filter_args(parser: argparse.ArgumentParser) -> None:
+    """Add ``--since`` and ``--until`` date filter arguments to a parser."""
+    parser.add_argument(
+        "--since",
+        metavar="DATE",
+        help="Only consider items from on or after DATE "
+        "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).",
+    )
+    parser.add_argument(
+        "--until",
+        metavar="DATE",
+        help="Only consider items from on or before DATE "
+        "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).",
+    )
+
+
 def _add_tagging_args(parser: argparse.ArgumentParser) -> None:
     """
     Add common tagging arguments (--set-tag, --auto-tag) to a parser.
@@ -408,6 +424,9 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Display tables formatted for JIRA comments.",
     )
 
+    # Date filters (effective with --get-tag, filters by archive filename timestamp)
+    _add_date_filter_args(report)
+
     # ==================== RERUN SUBCOMMAND ====================
     rerun = subparsers.add_parser(
         "rerun",
@@ -465,6 +484,12 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "Uses the report module to find the matching launch via TMT context.",
     )
 
+    rp_action.add_argument(
+        "--delete-stale",
+        action="store_true",
+        help="Delete stale launches — stopped/interrupted launches with no test items.",
+    )
+
     # Log enrichment (can be combined with --finish to enrich then finish)
     reportportal.add_argument(
         "--enrich-logs",
@@ -487,6 +512,9 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "With --finish --enrich-logs: enriches then finishes IN_PROGRESS launches. "
         "Launches already enriched by enge are skipped automatically.",
     )
+
+    # Date filters (effective with --all-launches and --delete-stale)
+    _add_date_filter_args(reportportal)
 
     # Input sources (for --finish and --enrich-logs actions)
     _add_input_source_args(reportportal)

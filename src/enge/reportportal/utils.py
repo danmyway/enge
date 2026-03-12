@@ -867,3 +867,36 @@ def show_dryrun_delete_logs(
     )
     print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
     print()
+
+
+def show_dryrun_delete_stale(launches: List[Dict[str, Any]]) -> None:
+    """Display stale launches that would be deleted in dry-run mode."""
+    from enge.utils import FormatText
+
+    print()
+    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
+    print(
+        f"{FormatText.BLUE}DRY RUN - Stale Launch Deletion Preview" f"{FormatText.END}"
+    )
+    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
+    print()
+    print(
+        f"{FormatText.BOLD}Stale launches "
+        f"(stopped/interrupted, no items):{FormatText.END} {len(launches)}"
+    )
+    print()
+
+    for launch in launches:
+        name = launch.get("name", "Unknown")
+        uuid = launch.get("uuid", launch.get("id", "?"))
+        lid = launch.get("id", "?")
+        print(f"  - {name} (id={lid}, uuid={uuid})")
+    print()
+
+    word = "launch" if len(launches) == 1 else "launches"
+    print(
+        f"{FormatText.GREEN}Would delete "
+        f"{len(launches)} stale {word}{FormatText.END}"
+    )
+    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
+    print()

@@ -36,6 +36,7 @@ from enge.reportportal.utils import (
     show_dryrun_finish_data,
     show_dryrun_enrichment,
     show_dryrun_delete_logs,
+    show_dryrun_delete_stale,
 )
 
 if TYPE_CHECKING:
@@ -47,6 +48,52 @@ LOGGER = logging.getLogger(__name__)
 # ===================================================================
 # Internal helpers
 # ===================================================================
+
+
+def _apply_date_filters(
+    launches: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Narrow a list of launches using ``--since`` / ``--until`` CLI dates.
+
+    Compares each launch's ``startTime`` (epoch milliseconds) against
+    the user-supplied boundaries.  Returns the original list unchanged
+    when neither flag is set.
+    """
+    from enge.utils import parse_date_arg
+
+    since_str = getattr(parsed_opts.cli_args, "since", None)
+    until_str = getattr(parsed_opts.cli_args, "until", None)
+
+    if not since_str and not until_str:
+        return launches
+
+    since_ms: Optional[int] = None
+    until_ms: Optional[int] = None
+
+    if since_str:
+        since_ms = int(parse_date_arg(since_str).timestamp() * 1000)
+    if until_str:
+        until_dt = parse_date_arg(until_str).replace(hour=23, minute=59, second=59)
+        until_ms = int(until_dt.timestamp() * 1000)
+
+    filtered: List[Dict[str, Any]] = []
+    for launch in launches:
+        start_time = launch.get("startTime")
+        if start_time is None:
+            continue
+        if isinstance(start_time, str):
+            start_time = int(start_time)
+        if since_ms and start_time < since_ms:
+            continue
+        if until_ms and start_time > until_ms:
+            continue
+        filtered.append(launch)
+
+    if len(filtered) != len(launches):
+        LOGGER.info(
+            f"Date filter narrowed {len(launches)} launch(es) " f"to {len(filtered)}"
+        )
+    return filtered
 
 
 def _extract_tf_uuid(artifacts_url: str) -> Optional[str]:
@@ -677,7 +724,7 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
     """
     is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
 
-    launches = rp.get_all_in_progress_launches()
+    launches = _apply_date_filters(rp.get_all_launches("IN_PROGRESS"))
     if not launches:
         LOGGER.info("No IN_PROGRESS launches found")
         return 0
@@ -795,7 +842,7 @@ def delete_logs_all_launches(rp: ReportPortalLaunch) -> int:
     """Delete logs from all IN_PROGRESS launches in the project."""
     is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
 
-    launches = rp.get_all_in_progress_launches()
+    launches = _apply_date_filters(rp.get_all_launches("IN_PROGRESS"))
     if not launches:
         LOGGER.warning("No IN_PROGRESS launches found")
         return 1
@@ -876,30 +923,7 @@ def enrich_all_launches(
     max_size_str = rp.config.get("enrich_max_file_size", "5 MB")
     max_file_size = parse_size_string(str(max_size_str))
 
-    # Fetch launches — IN_PROGRESS only or all statuses
-    if status_filter == "IN_PROGRESS":
-        launches = rp.get_all_in_progress_launches()
-    else:
-        all_launches: List[Dict[str, Any]] = []
-        seen_ids: set = set()
-        for page in range(1, 51):
-            try:
-                batch = rp.list_launches(
-                    size=50,
-                    page=page,
-                    status=status_filter,
-                )
-            except Exception:
-                break
-            if not batch:
-                break
-            for launch in batch:
-                lid = launch.get("id")
-                if lid and lid not in seen_ids:
-                    seen_ids.add(lid)
-                    all_launches.append(launch)
-        launches = all_launches
-        LOGGER.info(f"Found {len(launches)} launch(es) to consider " f"for enrichment")
+    launches = _apply_date_filters(rp.get_all_launches(status=status_filter))
 
     if not launches:
         LOGGER.info("No launches found for enrichment")
@@ -1049,3 +1073,69 @@ def enrich_all_launches(
     else:
         LOGGER.info("No launches required enrichment")
     return 0
+
+
+# ===================================================================
+# --delete-stale
+# ===================================================================
+
+
+_STALE_STATUSES = ("STOPPED", "INTERRUPTED")
+
+
+def delete_stale_launches(rp: ReportPortalLaunch) -> int:
+    """
+    Delete stale launches — stopped/interrupted launches with no test items.
+
+    Fetches all STOPPED and INTERRUPTED launches, checks each for test
+    items, and deletes those that have none.
+    """
+    is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
+
+    launches: List[Dict[str, Any]] = []
+    seen_ids: set = set()
+    for status in _STALE_STATUSES:
+        for launch in rp.get_all_launches(status):
+            lid = launch.get("id")
+            if lid and lid not in seen_ids:
+                seen_ids.add(lid)
+                launches.append(launch)
+    launches = _apply_date_filters(launches)
+
+    if not launches:
+        LOGGER.info("No STOPPED/INTERRUPTED launches found")
+        return 0
+
+    stale: List[Dict[str, Any]] = []
+    for launch in launches:
+        numeric_id = launch.get("id")
+        if numeric_id is None:
+            continue
+        items = rp.get_launch_test_items(numeric_id)
+        if not items:
+            stale.append(launch)
+
+    if not stale:
+        LOGGER.info(
+            f"No stale launches found among "
+            f"{len(launches)} STOPPED/INTERRUPTED launch(es)"
+        )
+        return 0
+
+    if is_dryrun:
+        show_dryrun_delete_stale(stale)
+        return 0
+
+    deleted = 0
+    for launch in stale:
+        launch_id = launch.get("id")
+        launch_name = launch.get("name", "Unknown")
+        launch_uuid = launch.get("uuid", "")
+        if rp.delete_launch(launch_id):
+            LOGGER.info(f"Deleted stale launch '{launch_name}' ({launch_uuid})")
+            deleted += 1
+        else:
+            LOGGER.error(f"Failed to delete launch '{launch_name}' ({launch_uuid})")
+
+    LOGGER.info(f"Deleted {deleted}/{len(stale)} stale launch(es)")
+    return 0 if deleted > 0 else 1
