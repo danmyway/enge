@@ -17,6 +17,114 @@ from enge.utils.errors import ValidationError
 
 LOGGER = getLogger(__name__)
 
+# AMI source regex patterns (without architecture suffix) for sanity validation.
+# These mirror the regexes used on the Testing Farm backend.
+AMI_SOURCE_PATTERNS = {
+    "alma": re.compile(r"^AlmaLinux OS (\d+)\.(\d+)\.\d+$"),
+    "rocky": re.compile(r"^Rocky-\d+-[eE][cC]2(?:-Base|-LVM)?-(\d+)\.(\d+)-\d+\.\d+$"),
+}
+
+# Architecture suffix separators per AMI os_type
+AMI_ARCH_SEPARATORS = {"alma": " ", "rocky": "."}
+
+# Only these architectures are available for AMI sources on AWS EC2
+VALID_AMI_ARCHITECTURES = {"x86_64", "aarch64"}
+
+
+def _strip_ami_arch_suffix(spec: str) -> str:
+    """Strip a trailing architecture suffix (space- or dot-separated) from an AMI name."""
+    for sep in (" ", "."):
+        for arch in VALID_AMI_ARCHITECTURES:
+            suffix = f"{sep}{arch}"
+            if spec.endswith(suffix):
+                return spec[: -len(suffix)]
+    return spec
+
+
+def _parse_ami_source(spec: str, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Try to parse spec as an AMI source (Alma Linux or Rocky Linux).
+
+    Resolution order:
+    1. Alias lookup in config [sources.ami]
+    2. Direct regex match against full or base AMI name
+
+    Returns parsed spec dict or None if not an AMI source.
+    """
+    ami_aliases = config.get("sources", {}).get("ami", {})
+    base_name = None
+
+    # 1. Alias lookup (e.g., "alma97" -> "AlmaLinux OS 9.7.20251118")
+    if spec in ami_aliases:
+        base_name = str(ami_aliases[spec]).strip()
+        LOGGER.debug(f"Resolved AMI alias '{spec}' to: {base_name}")
+
+    if base_name is None:
+        # 2. Direct AMI name: strip arch suffix if present, then try regex
+        base_name = _strip_ami_arch_suffix(spec)
+
+    # Validate base name against known AMI patterns
+    for os_type, pattern in AMI_SOURCE_PATTERNS.items():
+        match = pattern.match(base_name)
+        if match:
+            major = int(match.group(1))
+            minor = int(match.group(2))
+            LOGGER.debug(
+                f"Parsed {os_type.title()} Linux AMI spec '{spec}' as: "
+                f"{base_name} (major={major}, minor={minor})"
+            )
+            return {
+                "major": major,
+                "minor": minor,
+                "compose_name": base_name,
+                "is_version_only": False,
+                "is_centos_stream": False,
+                "is_ami_source": True,
+                "is_major_only": False,
+                "os_type": os_type,
+            }
+
+    # If the alias resolved but didn't match any AMI pattern, fail with a clear message
+    if spec in ami_aliases:
+        raise ValueError(
+            f"AMI alias '{spec}' resolved to '{base_name}' which does not match "
+            f"any known AMI name pattern (Alma Linux or Rocky Linux)"
+        )
+
+    return None
+
+
+def format_ami_compose_name(source_spec: Dict[str, Any], arch: str) -> str:
+    """
+    Construct the full AMI compose name by appending the architecture suffix.
+
+    Alma uses space separator: 'AlmaLinux OS 9.7.20251118 x86_64'
+    Rocky uses dot separator: 'Rocky-9-EC2-Base-9.7-20251123.2.x86_64'
+    """
+    base = source_spec["compose_name"]
+    sep = AMI_ARCH_SEPARATORS[source_spec["os_type"]]
+    return f"{base}{sep}{arch}"
+
+
+def validate_ami_architectures(
+    source_spec: Dict[str, Any], architectures: List[str]
+) -> None:
+    """
+    Validate that requested architectures are available for AMI sources.
+
+    Only x86_64 and aarch64 are available for Alma/Rocky on AWS EC2.
+    Raises ValidationError for any unsupported architecture.
+    """
+    if not source_spec.get("is_ami_source"):
+        return
+    invalid = set(architectures) - VALID_AMI_ARCHITECTURES
+    if invalid:
+        raise ValidationError(
+            f"Architecture(s) {', '.join(sorted(invalid))} not available for "
+            f"{source_spec['os_type'].title()} Linux AMI sources. "
+            f"Supported: {', '.join(sorted(VALID_AMI_ARCHITECTURES))}"
+        )
+
 
 def parse_compose_spec(
     spec: str, config: Optional[Dict[str, Any]] = None
@@ -26,18 +134,21 @@ def parse_compose_spec(
 
     Args:
         spec: Either a version string like "8.10", full compose name like "RHEL-8.10.0-Nightly",
-              or CentOS Stream format like "CentOS-Stream-9"
+              CentOS Stream format like "CentOS-Stream-9", or an AMI source alias/name
+              for Alma Linux or Rocky Linux (e.g., "alma97", "AlmaLinux OS 9.7.20251118 x86_64")
         config: Configuration dictionary (optional, will be loaded if not provided)
 
     Returns:
         Dictionary containing parsed components:
         - major: Major version number
         - minor: Minor version number (0 for CentOS Stream)
-        - compose_name: Full compose name (translated via pin_compose if needed)
+        - compose_name: Full compose name (translated via pin_compose if needed);
+          for AMI sources this is the base AMI name without architecture suffix
         - is_version_only: True if input was just version, False if full compose name
         - is_centos_stream: True if source is CentOS Stream, False otherwise
+        - is_ami_source: True if source is an AMI-based system (Alma/Rocky), False otherwise
         - is_major_only: True if only a major version was requested, False otherwise
-        - os_type: OS type string ("rhel", "centos", etc.) for TARGET_OS generation
+        - os_type: OS type string ("rhel", "centos", "alma", "rocky") for context generation
 
     Raises:
         ValueError: If the specification format is invalid
@@ -71,9 +182,15 @@ def parse_compose_spec(
                 "compose_name": compose_name,
                 "is_version_only": False,
                 "is_centos_stream": True,
+                "is_ami_source": False,
                 "is_major_only": False,
                 "os_type": "centos",
             }
+
+    # Try parsing as AMI source (Alma Linux / Rocky Linux)
+    ami_result = _parse_ami_source(spec_stripped, config)
+    if ami_result is not None:
+        return ami_result
 
     # Try parsing as version number (e.g., "8.10")
     version_match = re.match(r"^(\d+)\.(\d+)$", spec.strip())
@@ -113,6 +230,7 @@ def parse_compose_spec(
             "compose_name": compose_name,
             "is_version_only": True,
             "is_centos_stream": False,
+            "is_ami_source": False,
             "is_major_only": False,
             "os_type": "rhel",
         }
@@ -134,6 +252,7 @@ def parse_compose_spec(
             "compose_name": compose_name,
             "is_version_only": False,
             "is_centos_stream": False,
+            "is_ami_source": False,
             "is_major_only": False,
             "os_type": "rhel",
         }
@@ -294,9 +413,9 @@ def generate_tmt_context(
             return f"{prefix}-{spec['major']}"
         return f"{prefix}-{spec['major']}.{spec['minor']}"
 
-    # Determine prefixes based on distro type
-    source_prefix = "centos" if source_spec.get("is_centos_stream", False) else "rhel"
-    target_prefix = "centos" if target_spec.get("is_centos_stream", False) else "rhel"
+    # Determine prefixes based on os_type (rhel, centos, alma, rocky, etc.)
+    source_prefix = source_spec.get("os_type", "rhel")
+    target_prefix = target_spec.get("os_type", "rhel")
 
     distro = _format_distro(source_prefix, source_spec)
     target_distro = _format_distro(target_prefix, target_spec)

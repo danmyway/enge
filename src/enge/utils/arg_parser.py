@@ -152,7 +152,9 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         required=False,  # Will be validated later based on whether --set is provided
         help="Source compose to be upgraded. "
         "Can be provided in a format of <major>.<minor> (e.g. 8.10), explicit compose name (e.g. RHEL-8.10.0-Nightly), "
-        "or CentOS Stream format (e.g. CentOS-Stream-9, stream-9, cs-9, stream9, cs9). "
+        "CentOS Stream format (e.g. CentOS-Stream-9, stream-9, cs-9, stream9, cs9), "
+        "or AMI source alias/name for Alma Linux or Rocky Linux (e.g. alma97, rocky97, "
+        "'AlmaLinux OS 9.7.20251118 x86_64'). AMI aliases are configured in [sources.ami]. "
         "If --target is not specified, the path is resolved to <major + 1>.<minor - 6> (e.g. 8.10 -> 9.4). "
         "Required unless --set is provided.",
     )

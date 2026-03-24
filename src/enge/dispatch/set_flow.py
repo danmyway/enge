@@ -11,6 +11,7 @@ from enge.utils.source_target_parser import (
     parse_environment_variables,
     merge_set_environment_variables,
     merge_tmt_context,
+    format_ami_compose_name,
 )
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.dispatch.artifacts import ArtifactResolver
@@ -431,9 +432,12 @@ def process_request_spec(
             return False
         # Populate artifacts
         first_build = info[0]
-        # For CentOS Stream, use the compose name directly from source_spec
-        # Otherwise, use the compose from artifact resolution
-        if source_spec.get("is_centos_stream", False):
+        # AMI sources: construct compose name with architecture suffix
+        # CentOS Stream: use symbolic compose name directly
+        # RHEL: use compose from artifact resolution (pinned/repinned)
+        if source_spec.get("is_ami_source", False):
+            submit_test.compose = format_ami_compose_name(source_spec, arch)
+        elif source_spec.get("is_centos_stream", False):
             submit_test.compose = source_spec["compose_name"]
         else:
             submit_test.compose = first_build["compose"]
