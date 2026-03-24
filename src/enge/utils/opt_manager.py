@@ -26,6 +26,7 @@ from enge.utils.source_target_parser import (
     merge_tmt_context,
     parse_architectures,
     resolve_effective_values,
+    validate_ami_architectures,
     merge_set_environment_variables,
 )
 from enge.utils.errors import ConfigurationError, ValidationError
@@ -881,6 +882,10 @@ class ParsedOpts:
                         set_source_spec, set_target_spec = parse_source_target_config(
                             set_source, set_target, self.config
                         )
+                        # Validate architectures for AMI sources within this set
+                        set_archs = effective_values.get("architectures", [])
+                        if set_archs and set_source_spec:
+                            validate_ami_architectures(set_source_spec, set_archs)
                     else:
                         set_source_spec, set_target_spec = None, None
 
@@ -1091,6 +1096,9 @@ class ParsedOpts:
                 raise ValidationError("No architectures specified in CLI or config")
 
             self.architectures = parse_architectures(arch_input)
+
+            # Validate architectures for AMI sources (only x86_64 and aarch64 supported)
+            validate_ami_architectures(self.source_spec, self.architectures)
 
             # Store effective tiers for use in dispatch and context generation
             self.effective_tiers = effective_values.get("tiers")

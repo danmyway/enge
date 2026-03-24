@@ -1,10 +1,14 @@
 import unittest
 
+from enge.utils.errors import ValidationError
 from enge.utils.source_target_parser import (
     apply_centos_context_overrides,
+    format_ami_compose_name,
     generate_environment_variables,
     generate_tmt_context,
+    parse_compose_spec,
     parse_source_target_config,
+    validate_ami_architectures,
 )
 
 
@@ -135,6 +139,240 @@ class TestSourceTargetParser(unittest.TestCase):
 
         env_vars = generate_environment_variables(source_spec, target_spec)
         self.assertNotIn("TARGET_OS", env_vars)
+
+
+class TestAMISourceParser(unittest.TestCase):
+    """Tests for Alma Linux and Rocky Linux AMI source parsing."""
+
+    def setUp(self):
+        self.config_with_aliases = {
+            "testing_farm": {"composes_prod_url": ""},
+            "sources": {
+                "ami": {
+                    "alma97": "AlmaLinux OS 9.7.20251118",
+                    "alma96": "AlmaLinux OS 9.6.20250313",
+                    "rocky97": "Rocky-9-EC2-Base-9.7-20251123.2",
+                    "rocky96": "Rocky-9-EC2-Base-9.6-20250310.0",
+                }
+            },
+        }
+        self.config_no_aliases = {"testing_farm": {"composes_prod_url": ""}}
+
+    # -- Alias parsing --
+
+    def test_alma_alias_parsed_correctly(self):
+        spec = parse_compose_spec("alma97", self.config_with_aliases)
+        self.assertEqual(spec["major"], 9)
+        self.assertEqual(spec["minor"], 7)
+        self.assertEqual(spec["compose_name"], "AlmaLinux OS 9.7.20251118")
+        self.assertTrue(spec["is_ami_source"])
+        self.assertFalse(spec["is_centos_stream"])
+        self.assertEqual(spec["os_type"], "alma")
+
+    def test_rocky_alias_parsed_correctly(self):
+        spec = parse_compose_spec("rocky97", self.config_with_aliases)
+        self.assertEqual(spec["major"], 9)
+        self.assertEqual(spec["minor"], 7)
+        self.assertEqual(spec["compose_name"], "Rocky-9-EC2-Base-9.7-20251123.2")
+        self.assertTrue(spec["is_ami_source"])
+        self.assertFalse(spec["is_centos_stream"])
+        self.assertEqual(spec["os_type"], "rocky")
+
+    def test_alma96_alias(self):
+        spec = parse_compose_spec("alma96", self.config_with_aliases)
+        self.assertEqual(spec["major"], 9)
+        self.assertEqual(spec["minor"], 6)
+        self.assertEqual(spec["os_type"], "alma")
+
+    def test_rocky96_alias(self):
+        spec = parse_compose_spec("rocky96", self.config_with_aliases)
+        self.assertEqual(spec["major"], 9)
+        self.assertEqual(spec["minor"], 6)
+        self.assertEqual(spec["os_type"], "rocky")
+
+    # -- Direct AMI name parsing --
+
+    def test_alma_direct_name_without_arch(self):
+        spec = parse_compose_spec("AlmaLinux OS 9.7.20251118", self.config_no_aliases)
+        self.assertEqual(spec["major"], 9)
+        self.assertEqual(spec["minor"], 7)
+        self.assertEqual(spec["compose_name"], "AlmaLinux OS 9.7.20251118")
+        self.assertTrue(spec["is_ami_source"])
+        self.assertEqual(spec["os_type"], "alma")
+
+    def test_alma_direct_name_with_x86_64(self):
+        spec = parse_compose_spec(
+            "AlmaLinux OS 9.7.20251118 x86_64", self.config_no_aliases
+        )
+        self.assertEqual(spec["major"], 9)
+        self.assertEqual(spec["minor"], 7)
+        self.assertEqual(spec["compose_name"], "AlmaLinux OS 9.7.20251118")
+        self.assertEqual(spec["os_type"], "alma")
+
+    def test_alma_direct_name_with_aarch64(self):
+        spec = parse_compose_spec(
+            "AlmaLinux OS 9.7.20251118 aarch64", self.config_no_aliases
+        )
+        self.assertEqual(spec["compose_name"], "AlmaLinux OS 9.7.20251118")
+        self.assertEqual(spec["os_type"], "alma")
+
+    def test_rocky_direct_name_without_arch(self):
+        spec = parse_compose_spec(
+            "Rocky-9-EC2-Base-9.7-20251123.2", self.config_no_aliases
+        )
+        self.assertEqual(spec["major"], 9)
+        self.assertEqual(spec["minor"], 7)
+        self.assertEqual(spec["compose_name"], "Rocky-9-EC2-Base-9.7-20251123.2")
+        self.assertTrue(spec["is_ami_source"])
+        self.assertEqual(spec["os_type"], "rocky")
+
+    def test_rocky_direct_name_with_x86_64(self):
+        spec = parse_compose_spec(
+            "Rocky-9-EC2-Base-9.7-20251123.2.x86_64", self.config_no_aliases
+        )
+        self.assertEqual(spec["compose_name"], "Rocky-9-EC2-Base-9.7-20251123.2")
+        self.assertEqual(spec["os_type"], "rocky")
+
+    def test_rocky_ec2_lvm_variant(self):
+        spec = parse_compose_spec(
+            "Rocky-9-EC2-LVM-9.5-20241118.0", self.config_no_aliases
+        )
+        self.assertEqual(spec["major"], 9)
+        self.assertEqual(spec["minor"], 5)
+        self.assertEqual(spec["os_type"], "rocky")
+
+    def test_rocky_ec2_no_variant(self):
+        spec = parse_compose_spec("Rocky-9-Ec2-9.5-20241118.0", self.config_no_aliases)
+        self.assertEqual(spec["major"], 9)
+        self.assertEqual(spec["minor"], 5)
+        self.assertEqual(spec["os_type"], "rocky")
+
+    # -- Target derivation --
+
+    def test_alma_target_derivation(self):
+        """alma97 (9.7) should derive target as 10.1 (major+1, minor-6)."""
+        source_spec, target_spec = parse_source_target_config(
+            "alma97", None, self.config_with_aliases
+        )
+        self.assertEqual(source_spec["major"], 9)
+        self.assertEqual(source_spec["minor"], 7)
+        self.assertEqual(target_spec["major"], 10)
+        self.assertEqual(target_spec["minor"], 1)
+        self.assertEqual(target_spec["compose_name"], "RHEL-10.1.0-Nightly")
+
+    def test_rocky_target_derivation(self):
+        """rocky96 (9.6) should derive target as 10.0."""
+        source_spec, target_spec = parse_source_target_config(
+            "rocky96", None, self.config_with_aliases
+        )
+        self.assertEqual(source_spec["major"], 9)
+        self.assertEqual(source_spec["minor"], 6)
+        self.assertEqual(target_spec["major"], 10)
+        self.assertEqual(target_spec["minor"], 0)
+
+    # -- format_ami_compose_name --
+
+    def test_format_alma_compose_with_x86_64(self):
+        spec = {"compose_name": "AlmaLinux OS 9.7.20251118", "os_type": "alma"}
+        self.assertEqual(
+            format_ami_compose_name(spec, "x86_64"),
+            "AlmaLinux OS 9.7.20251118 x86_64",
+        )
+
+    def test_format_alma_compose_with_aarch64(self):
+        spec = {"compose_name": "AlmaLinux OS 9.7.20251118", "os_type": "alma"}
+        self.assertEqual(
+            format_ami_compose_name(spec, "aarch64"),
+            "AlmaLinux OS 9.7.20251118 aarch64",
+        )
+
+    def test_format_rocky_compose_with_x86_64(self):
+        spec = {
+            "compose_name": "Rocky-9-EC2-Base-9.7-20251123.2",
+            "os_type": "rocky",
+        }
+        self.assertEqual(
+            format_ami_compose_name(spec, "x86_64"),
+            "Rocky-9-EC2-Base-9.7-20251123.2.x86_64",
+        )
+
+    def test_format_rocky_compose_with_aarch64(self):
+        spec = {
+            "compose_name": "Rocky-9-EC2-Base-9.7-20251123.2",
+            "os_type": "rocky",
+        }
+        self.assertEqual(
+            format_ami_compose_name(spec, "aarch64"),
+            "Rocky-9-EC2-Base-9.7-20251123.2.aarch64",
+        )
+
+    # -- Architecture validation --
+
+    def test_valid_architectures_pass(self):
+        spec = {"is_ami_source": True, "os_type": "alma"}
+        validate_ami_architectures(spec, ["x86_64"])
+        validate_ami_architectures(spec, ["aarch64"])
+        validate_ami_architectures(spec, ["x86_64", "aarch64"])
+
+    def test_invalid_architecture_raises(self):
+        spec = {"is_ami_source": True, "os_type": "alma"}
+        with self.assertRaises(ValidationError):
+            validate_ami_architectures(spec, ["s390x"])
+
+    def test_mixed_valid_invalid_raises(self):
+        spec = {"is_ami_source": True, "os_type": "rocky"}
+        with self.assertRaises(ValidationError):
+            validate_ami_architectures(spec, ["x86_64", "ppc64le"])
+
+    def test_non_ami_source_skips_validation(self):
+        spec = {"is_ami_source": False, "os_type": "rhel"}
+        validate_ami_architectures(spec, ["s390x", "ppc64le"])
+
+    # -- TMT context --
+
+    def test_alma_tmt_context(self):
+        source_spec, target_spec = parse_source_target_config(
+            "alma97", None, self.config_with_aliases
+        )
+        context = generate_tmt_context(source_spec, target_spec)
+        self.assertEqual(context["distro"], "alma-9.7")
+        self.assertEqual(context["target_distro"], "rhel-10.1")
+        self.assertEqual(context["upgrade_path"], "9to10")
+        self.assertEqual(context["source_compose"], "AlmaLinux OS 9.7.20251118")
+
+    def test_rocky_tmt_context(self):
+        source_spec, target_spec = parse_source_target_config(
+            "rocky97", None, self.config_with_aliases
+        )
+        context = generate_tmt_context(source_spec, target_spec)
+        self.assertEqual(context["distro"], "rocky-9.7")
+        self.assertEqual(context["target_distro"], "rhel-10.1")
+
+    # -- Environment variables --
+
+    def test_alma_environment_variables(self):
+        source_spec, target_spec = parse_source_target_config(
+            "alma97", None, self.config_with_aliases
+        )
+        env_vars = generate_environment_variables(source_spec, target_spec)
+        self.assertEqual(env_vars["SOURCE_RELEASE"], "9.7")
+        self.assertEqual(env_vars["TARGET_RELEASE"], "10.1")
+        self.assertNotIn("TARGET_OS", env_vars)
+
+    # -- Error cases --
+
+    def test_unknown_alias_without_ami_pattern_raises(self):
+        with self.assertRaises(ValueError):
+            parse_compose_spec("nonexistent99", self.config_no_aliases)
+
+    def test_bad_ami_alias_value_raises(self):
+        """Alias that resolves to a non-matching AMI name should raise."""
+        bad_config = {
+            "testing_farm": {"composes_prod_url": ""},
+            "sources": {"ami": {"bad_alias": "NotAnAMIName"}},
+        }
+        with self.assertRaises(ValueError):
+            parse_compose_spec("bad_alias", bad_config)
 
 
 if __name__ == "__main__":

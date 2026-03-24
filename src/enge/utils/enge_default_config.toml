@@ -44,6 +44,21 @@ composes_prod_url = '' # REQUIRED: URL for compose translation service (used for
 
 
 # ============================================================================
+# SOURCES.AMI (Non-RHEL AMI source aliases)
+# - Maps short aliases to AWS AMI base names (without architecture suffix)
+# - Architecture is appended dynamically based on the requested test architecture
+# - Supported: Alma Linux (x86_64, aarch64), Rocky Linux (x86_64, aarch64)
+# - Usage: --source alma97 resolves to the configured AMI name + requested arch
+# ============================================================================
+[sources.ami]
+# Example aliases (update AMI dates/versions as needed):
+# alma97 = 'AlmaLinux OS 9.7.20251118'
+# alma96 = 'AlmaLinux OS 9.6.20250313'
+# rocky97 = 'Rocky-9-EC2-Base-9.7-20251123.2'
+# rocky96 = 'Rocky-9-EC2-Base-9.6-20250310.0'
+
+
+# ============================================================================
 # COPR_API (COPR build settings for artifacts)
 # - Configuration for COPR build artifact resolution
 # - REQUIRED when using --copr with alias:reference format (e.g., lp:pr123)
