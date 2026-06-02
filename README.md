@@ -238,6 +238,15 @@ enge test --source CentOS-Stream-9 --plan /plans/tier0
 enge test --source stream-9 --plan /plans/tier0
 enge test --source cs-9 --plan /plans/tier0
 enge test --source stream9 --plan /plans/tier0
+
+# Test with Alma Linux / Rocky Linux as source (AMI-based)
+# (configure aliases under [sources.ami] in enge.toml)
+enge test --source alma97 --plan /plans/tier0 --arch x86_64
+enge test --source rocky97 --plan /plans/tier0 --arch aarch64
+
+# Or pass direct AMI names
+enge test --source "AlmaLinux OS 9.7.20251118 x86_64" --plan /plans/tier0
+enge test --source "Rocky-9-EC2-Base-9.7-20251123.2.aarch64" --plan /plans/tier0
 ```
 
 ###### RHSM-Specific Filtering
@@ -299,6 +308,10 @@ enge test --source 9.7 --plan /plans/subscription --only-rhsm-stage-cdn
   - `stream-9`, `cs-9` (short format with hyphen)
   - `stream9`, `cs9` (short format without hyphen)
   - When CentOS Stream is used as source, the compose name in the request body is set to `CentOS-Stream-<major>`, `SOURCE_RELEASE`/`TARGET_RELEASE` environment variables use the major version only, and the TMT context `distro`/`target_distro` default to `centos-<major>` and `rhel-<major>` respectively (with `target_distro` switching to `centos-<major>` when `TARGET_OS=centos` is provided via `--environment`).
+- **Alma Linux / Rocky Linux sources** are supported as AMI-based sources:
+  - **Alias mode**: define aliases in `[sources.ami]` in `enge.toml`, e.g. `alma97 = 'AlmaLinux OS 9.7.20251118'`, `rocky97 = 'Rocky-9-EC2-Base-9.7-20251123.2'`, then use `--source alma97` / `--source rocky97`.
+  - **Direct mode**: pass full AMI source names directly (with or without architecture suffix), e.g. `AlmaLinux OS 9.7.20251118 x86_64`, `Rocky-9-EC2-Base-9.7-20251123.2.aarch64`.
+  - For AMI sources, only `x86_64` and `aarch64` architectures are supported.
 - When CentOS Stream is the source, the `--target` argument may be provided as a major version only (e.g., `10`); it is automatically interpreted internally as `<major>.0` for compose pinning.
 - When a simple version is provided, enge attempts to pin it to an actual compose name by consulting `testing_farm.composes_prod_url` from the configuration. It tries the following formats in order:
   - `RHEL-MAJOR.MINOR.0-Nightly` (RHEL 8/9 style)
@@ -431,6 +444,19 @@ Merge order and overrides (warnings are logged on overrides):
   "distro": "centos-9",
   "target_distro": "rhel-10",
   "source_compose": "CentOS-Stream-9",
+  "upgrade_path": "9to10",
+  "arch": "x86_64",
+  "event": "pre-release-smoke",
+  "tier": "tier0"
+}
+```
+
+**Example TMT Context (Alma Linux source):**
+```json
+{
+  "distro": "alma-9.7",
+  "target_distro": "rhel-10.1",
+  "source_compose": "AlmaLinux OS 9.7.20251118",
   "upgrade_path": "9to10",
   "arch": "x86_64",
   "event": "pre-release-smoke",
