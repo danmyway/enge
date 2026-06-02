@@ -340,6 +340,27 @@ class TestAMISourceParser(unittest.TestCase):
         self.assertEqual(context["upgrade_path"], "9to10")
         self.assertEqual(context["source_compose"], "AlmaLinux OS 9.7.20251118")
 
+    def test_normalize_tmt_compose_context_replaces_spaces(self):
+        from enge.utils.source_target_parser import normalize_tmt_compose_context
+
+        context = {
+            "distro": "alma-9.7",
+            "source_compose": "AlmaLinux OS 9.7.20251118",
+            "target_compose": "RHEL-10.0-19700101.0",
+            "event": "my event",
+        }
+        normalized = normalize_tmt_compose_context(context)
+        self.assertEqual(normalized["source_compose"], "AlmaLinux-OS-9.7.20251118")
+        self.assertEqual(normalized["target_compose"], "RHEL-10.0-19700101.0")
+        self.assertEqual(normalized["event"], "my event")
+        self.assertEqual(context["source_compose"], "AlmaLinux OS 9.7.20251118")
+
+    def test_normalize_tmt_compose_context_empty(self):
+        from enge.utils.source_target_parser import normalize_tmt_compose_context
+
+        self.assertEqual(normalize_tmt_compose_context({}), {})
+        self.assertEqual(normalize_tmt_compose_context(None), {})
+
     def test_rocky_tmt_context(self):
         source_spec, target_spec = parse_source_target_config(
             "rocky97", None, self.config_with_aliases
