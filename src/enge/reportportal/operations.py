@@ -50,14 +50,30 @@ LOGGER = logging.getLogger(__name__)
 # ===================================================================
 
 
+def _launch_start_time_ms(start_time: Any) -> Optional[int]:
+    """Normalize a launch ``startTime`` to epoch milliseconds.
+
+    ReportPortal may return ``startTime`` as an int (ms since epoch) or as
+    an ISO-8601 UTC string (e.g. ``2026-03-03T08:42:50.878Z``).
+    """
+    if isinstance(start_time, (int, float)):
+        return int(start_time)
+    if isinstance(start_time, str):
+        if start_time.isdigit():
+            return int(start_time)
+        normalized = start_time.replace("Z", "+00:00")
+        return int(datetime.fromisoformat(normalized).timestamp() * 1000)
+    return None
+
+
 def _apply_date_filters(
     launches: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Narrow a list of launches using ``--since`` / ``--until`` CLI dates.
 
-    Compares each launch's ``startTime`` (epoch milliseconds) against
-    the user-supplied boundaries.  Returns the original list unchanged
-    when neither flag is set.
+    Compares each launch's ``startTime`` (epoch milliseconds or ISO-8601)
+    against the user-supplied boundaries.  Returns the original list
+    unchanged when neither flag is set.
     """
     from enge.utils import parse_date_arg
 
@@ -78,14 +94,12 @@ def _apply_date_filters(
 
     filtered: List[Dict[str, Any]] = []
     for launch in launches:
-        start_time = launch.get("startTime")
-        if start_time is None:
+        start_time_ms = _launch_start_time_ms(launch.get("startTime"))
+        if start_time_ms is None:
             continue
-        if isinstance(start_time, str):
-            start_time = int(start_time)
-        if since_ms and start_time < since_ms:
+        if since_ms and start_time_ms < since_ms:
             continue
-        if until_ms and start_time > until_ms:
+        if until_ms and start_time_ms > until_ms:
             continue
         filtered.append(launch)
 
