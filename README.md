@@ -388,7 +388,7 @@ Enge automatically populates TMT context variables that are available to test sc
 **Standard Context Fields:**
 - `distro`: Source release (e.g., "rhel-9.7" for RHEL, "centos-9" for CentOS Stream)
 - `target_distro`: Target release (e.g., "rhel-10.1" for RHEL sources, "rhel-10" for CentOS Stream sources, or "centos-10" when `TARGET_OS=centos`)
-- `source_compose`: Source compose name (e.g., "RHEL-9.7.0-Nightly" for RHEL, "CentOS-Stream-9" for CentOS Stream)
+- `source_compose`: Source compose name (e.g., "RHEL-9.7.0-Nightly" for RHEL, "CentOS-Stream-9" for CentOS Stream). Spaces in compose names (e.g. Alma Linux AMI names) are replaced with dashes in TMT context so values work when passed to tmt.
 - `upgrade_path`: Generated upgrade path (e.g., "9to10")
 - `arch`: Target architecture (e.g., "x86_64")
 
@@ -456,7 +456,7 @@ Merge order and overrides (warnings are logged on overrides):
 {
   "distro": "alma-9.7",
   "target_distro": "rhel-10.1",
-  "source_compose": "AlmaLinux OS 9.7.20251118",
+  "source_compose": "AlmaLinux-OS-9.7.20251118",
   "upgrade_path": "9to10",
   "arch": "x86_64",
   "event": "pre-release-smoke",

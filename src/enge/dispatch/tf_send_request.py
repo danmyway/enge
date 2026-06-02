@@ -9,6 +9,7 @@ from enge.utils.http_client import http_get, http_post
 
 from enge.utils import FormatText, get_datetime
 from enge.utils.opt_manager import parsed_opts
+from enge.utils.source_target_parser import normalize_tmt_compose_context
 from enge.utils.globals import (
     REQUEST_TIMEOUT_DEFAULT,
     REQUEST_POLL_TIMEOUT,
@@ -321,6 +322,8 @@ class SubmitTest:
 
         # Add NVR information to TMT context if we have brew artifacts via shared helper
         base_tmt_context = self._enrich_tmt_context_with_brew_nvrs(base_tmt_context)
+
+        base_tmt_context = normalize_tmt_compose_context(base_tmt_context)
 
         # Get architectures - use set-specific data if available
         architectures = (

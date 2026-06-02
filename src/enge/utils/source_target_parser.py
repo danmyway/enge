@@ -436,6 +436,28 @@ def generate_tmt_context(
     return context
 
 
+TMT_COMPOSE_CONTEXT_KEYS = ("source_compose", "target_compose")
+
+
+def normalize_tmt_compose_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return a copy of TMT context with compose values safe for tmt -c CLI usage.
+
+    Testing Farm passes context to tmt as shell arguments. Values containing
+    spaces (e.g. Alma Linux AMI names) break unless quoted; dashes avoid that.
+    Only source_compose and target_compose are normalized; provisioning compose
+    names are unchanged elsewhere in the payload.
+    """
+    if not context:
+        return {}
+    normalized = dict(context)
+    for key in TMT_COMPOSE_CONTEXT_KEYS:
+        value = normalized.get(key)
+        if isinstance(value, str) and " " in value:
+            normalized[key] = value.replace(" ", "-")
+    return normalized
+
+
 def apply_centos_context_overrides(
     tmt_context: Dict[str, Any],
     source_spec: Dict[str, Any],
