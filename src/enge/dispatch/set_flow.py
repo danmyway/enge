@@ -418,7 +418,10 @@ def process_request_spec(
         temp_opts.tmt_context["product_phase"] = "rc"
         LOGGER.debug("Applied RHSM stage settings: RHSM_MODE=stage, product_phase=rc")
 
-    submit_test.set_specific_data([arch], merged_env_vars, temp_opts.tmt_context)
+    pool = effective_values.get("pool")
+    submit_test.set_specific_data(
+        [arch], merged_env_vars, temp_opts.tmt_context, pool=pool
+    )
 
     # Artifacts
     # Temporarily override parsed_opts for artifact resolution using a context manager
@@ -492,7 +495,9 @@ def process_request_spec(
                 upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
                 rp_env[upload_key] = launch_uuid_effective
 
-                submit_test.set_specific_data([arch], rp_env, complete_tmt_context)
+                submit_test.set_specific_data(
+                    [arch], rp_env, complete_tmt_context, pool=pool
+                )
         except Exception as e:
             LOGGER.error(f"Failed to create ReportPortal launch for request {idx}: {e}")
             return False

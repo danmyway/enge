@@ -884,6 +884,13 @@ def resolve_effective_values(
         or config.get("tests", {}).get("architectures")
     )
 
+    # Resolve pool (CLI > Set > Config)
+    resolved["pool"] = (
+        getattr(cli_args, "pool", None)
+        or set_config.get("pool")
+        or config.get("tests", {}).get("pool")
+    )
+
     # Resolve git ref (CLI > Set > Config)
     resolved["git_ref"] = (
         getattr(cli_args, "git_ref", None)

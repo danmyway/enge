@@ -301,6 +301,11 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     test.add_argument(
+        "--pool",
+        help="Specify a provisioning pool from Testing Farm.",
+    )
+
+    test.add_argument(
         "--parallel-limit",
         type=int,
         metavar="N",
