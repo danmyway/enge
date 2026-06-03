@@ -711,6 +711,7 @@ class ParsedOpts:
             "source",
             "target",
             "architectures",
+            "pool",
             "git_url",
             "git_ref",
             "parallel_limit",
@@ -1099,6 +1100,9 @@ class ParsedOpts:
 
             # Validate architectures for AMI sources (only x86_64 and aarch64 supported)
             validate_ami_architectures(self.source_spec, self.architectures)
+
+            # Store pool for provisioning
+            self.pool = effective_values.get("pool")
 
             # Store effective tiers for use in dispatch and context generation
             self.effective_tiers = effective_values.get("tiers")

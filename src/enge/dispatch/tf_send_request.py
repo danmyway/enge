@@ -63,6 +63,7 @@ class SubmitTest:
         )
         # Set-specific data (will be overridden by set_specific_data if provided)
         self.set_architectures: Optional[List[str]] = None
+        self.set_pool: Optional[str] = None
         self.set_environment_variables: Optional[Dict[str, str]] = None
         self.set_tmt_context: Optional[Dict[str, Any]] = None
         self.request_status: Optional[str] = None
@@ -194,9 +195,11 @@ class SubmitTest:
         architectures: List[str],
         environment_variables: Dict[str, str],
         tmt_context: Dict[str, Any],
+        pool: Optional[str] = None,
     ):
         """Set test set-specific data that overrides global configuration."""
         self.set_architectures = architectures
+        self.set_pool = pool
         self.set_environment_variables = environment_variables
         self.set_tmt_context = tmt_context
 
@@ -235,13 +238,15 @@ class SubmitTest:
         architectures = request_data.get("architectures", [])
         tmt_context = request_data.get("tmt_context", {})
         env_vars = request_data.get("environment_variables", {})
+        pool = request_data.get("pool")
 
         if architectures:
-            self.set_specific_data(architectures, env_vars, tmt_context)
+            self.set_specific_data(architectures, env_vars, tmt_context, pool=pool)
         else:
             # Fallback: set TMT context and env vars directly if no architectures
             self.set_tmt_context = tmt_context
             self.set_environment_variables = env_vars
+            self.set_pool = pool
 
     def record_task_ids(self, task_id):
         self.latest_tasks_file = parsed_opts.archive_tasks_latest
@@ -332,6 +337,13 @@ class SubmitTest:
             else getattr(parsed_opts, "architectures", [])
         )
 
+        # Get pool - use set-specific data if available
+        pool = (
+            self.set_pool
+            if self.set_pool is not None
+            else getattr(parsed_opts, "pool", None)
+        )
+
         # Build environment configurations for each architecture
         environments = []
         for arch in architectures:
@@ -385,14 +397,18 @@ class SubmitTest:
             environment_config = {
                 "arch": arch,
                 "os": {"compose": self.compose},
-                "settings": {
-                    "provisioning": {
-                        "tags": {"BusinessUnit": self.business_unit_tag},
-                    }
-                },
-                "tmt": tmt_config,
-                "variables": regular_env_vars,
             }
+
+            if pool:
+                environment_config["pool"] = pool
+
+            environment_config["settings"] = {
+                "provisioning": {
+                    "tags": {"BusinessUnit": self.business_unit_tag},
+                }
+            }
+            environment_config["tmt"] = tmt_config
+            environment_config["variables"] = regular_env_vars
 
             # Only include artifacts if we have any artifacts (for copr/brew builds)
             if self.artifacts:
@@ -522,6 +538,14 @@ class SubmitTest:
         else:
             arch_info = f"   Architectures:    {', '.join(architectures)}\n"
 
+        # Format pool information
+        pool = (
+            self.set_pool
+            if self.set_pool is not None
+            else getattr(parsed_opts, "pool", None)
+        )
+        pool_info = f"   Pool:             {pool}\n" if pool else ""
+
         # Format target compose information
         target_compose_info = ""
         if self.target_compose:
@@ -533,6 +557,7 @@ class SubmitTest:
             + target_compose_info
             + plan_info
             + arch_info
+            + pool_info
             + artifact_info
             + f"   Test results:     {self.log_artifact_url}\n"
             "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
