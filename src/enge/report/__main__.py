@@ -5,10 +5,12 @@ import sys
 import uuid
 from datetime import datetime
 
-from prettytable import PrettyTable
+from rich import box
+from rich.console import Console
+from rich.table import Table
 
 from enge.utils.errors import ValidationError
-from enge.utils import FormatText
+from enge.utils.console import console
 from enge.utils.opt_manager import parsed_opts
 
 RETURN_VALUE = None
@@ -254,7 +256,7 @@ def build_table_comparison():
         testname_split_index = -1
 
     parsed_dict = parse_request_xunit(skip_pass=parsed_opts.cli_args.skip_pass)
-    result_table = PrettyTable()
+    result_table = Table(box=box.ROUNDED)
 
     # Sort UUIDs by architecture first, then by creation date within each architecture
     def get_arch_and_timestamp(uuid):
@@ -285,7 +287,8 @@ def build_table_comparison():
         uuid_mapping[i] = {"uuid": uuid, "url": result_url, "arch": arch}
 
     fields = ["Test Plan"] + headers
-    result_table.field_names = fields
+    for field in fields:
+        result_table.add_column(field, justify="left")
     # plan_name -> uuid run result for particular plan
     regroup_results_plans = {}
     # plan_name -> test_name -> uuid run result for particular test
@@ -338,14 +341,13 @@ def build_table_comparison():
 
     for plan_name, plan_data in regroup_results_plans.items():
         if getattr(parsed_opts.cli_args, "show_tests", False):
-            # Append first row with plan name only
-            result_table.add_row([plan_name] + [""] * len(uuids))
-            result_table.add_row(["*"] + [""] * len(uuids))
-            for test_name, test_data in regroup_results_tests[plan_name].items():
-                row_data = [f'{"*" * 4} {test_name}']
+            result_table.add_row(escape(plan_name), *[""] * len(uuids))
+            test_items = list(regroup_results_tests[plan_name].items())
+            for i, (test_name, test_data) in enumerate(test_items):
+                row_data = [f'{"*" * 4} {escape(test_name)}']
                 for uuid in uuids:
                     row_data.append(colorize(test_data.get(uuid, "-")))
-                result_table.add_row(row_data)
+                result_table.add_row(*row_data, end_section=(i == len(test_items) - 1))
         else:
             row_data = [plan_name]
             for uuid in uuids:
@@ -355,8 +357,7 @@ def build_table_comparison():
                     row_data.append("-")
                 else:
                     row_data.append(colorize(plan_data[uuid]["result"]))
-            result_table.add_row(row_data)
-    result_table.align = "l"
+            result_table.add_row(*row_data)
 
     tables_list.append((result_table, uuid_mapping))
 
@@ -387,14 +388,15 @@ def build_table():
             data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
         )
 
-        result_table = PrettyTable()
+        result_table = Table(box=box.ROUNDED)
         # Keep table title clean - metadata will be displayed separately
 
         # prepare field names - no more UUID, Target, Arch columns
         fields = ["Test Plan", "Plan Result"]
         if getattr(parsed_opts.cli_args, "show_tests", False):
             fields += ["Test Case", "Test Result"]
-        result_table.field_names = fields
+        for field in fields:
+            result_table.add_column(field, justify="left")
 
         def _gen_row(
             testplan="",
@@ -411,8 +413,10 @@ def build_table():
             if "Test Result" in fields:
                 yield testcase_result
 
-        def add_row(*args, **kwargs):
-            result_table.add_row(list(_gen_row(*args, **kwargs)))
+        def add_row(*args, end_section=False, **kwargs):
+            result_table.add_row(
+                *list(_gen_row(*args, **kwargs)), end_section=end_section
+            )
 
         # Build table for this specific UUID
         for testsuite_data in data["testsuites"]:
@@ -427,9 +431,12 @@ def build_table():
                 testplan_result=colorize(testsuite_result),
             )
             if "Test Case" in fields:
-                for testcase in testsuite_data["testcases"]:
-                    if testcase["testcase_result"] == "SKIPPED":
-                        continue
+                visible = [
+                    tc
+                    for tc in testsuite_data["testcases"]
+                    if tc["testcase_result"] != "SKIPPED"
+                ]
+                for i, testcase in enumerate(visible):
                     testcase_result = testcase["testcase_result"]
                     add_row(
                         testcase=colorize(
@@ -439,9 +446,8 @@ def build_table():
                             ),
                         ),
                         testcase_result=colorize(testcase_result),
+                        end_section=(i == len(visible) - 1),
                     )
-
-        result_table.align = "l"
 
         # Store metadata for display
         metadata = {
@@ -461,26 +467,29 @@ def build_table():
     return tables_list
 
 
-def get_color_format(result):
-    color_format_default = FormatText.END
+def _rich_style_for_result(result):
+    """Return the rich markup style name for a test result."""
     if result == "PASSED":
-        return FormatText.GREEN + FormatText.BOLD
+        return "bold green"
     elif result == "FAILED":
-        return FormatText.RED + FormatText.BOLD
+        return "bold red"
     elif result in ("ERROR", "UNDEFINED", "PENDING"):
-        return FormatText.YELLOW + FormatText.BOLD
-    return color_format_default
+        return "bold yellow"
+    return ""
 
 
-def colorize(result, label=None, color_format_default=FormatText.END):
+def colorize(result, label=None):
     """
-    Colorize provided label (or result) using color associated to the provided result.
+    Colorize provided label (or result) using rich markup for the given result.
 
-    :return: Colorized label (if provided) or result (if label is not provided)
+    :return: Rich-markup-wrapped label (if provided) or result (if label is not provided)
     :rtype: str
     """
     label = label if label else result
-    return get_color_format(result) + label + color_format_default
+    style = _rich_style_for_result(result)
+    if style:
+        return f"[{style}]{label}[/]"
+    return label
 
 
 def main(result_table=None):
@@ -506,47 +515,38 @@ def main(result_table=None):
     # Handle list of (table, metadata) tuples
     has_content = False
     for table, metadata in result_table:
-        if table.rowcount > 0:
-            print()
-            print(
-                FormatText.format_text(
-                    "~~~ REQUEST METADATA ~~~~~~~~~~~~~~", text_col=FormatText.DIM
-                )
-            )
+        if table.row_count > 0:
+            console.print()
+            console.print("~~~ REQUEST METADATA ~~~~~~~~~~~~~~", style="dim")
 
-            # Display metadata block before table (only for non-comparison mode)
             if not parsed_opts.cli_args.compare:
                 for title, value in metadata.items():
                     if value is None:
                         continue
-                    print(
-                        FormatText.format_text(
-                            f"{title:<20}{value}", text_col=FormatText.DIM
-                        )
-                    )
+                    console.print(f"{title:<20}{value}", style="dim")
 
-            if parsed_opts.cli_args.jira:
+            jira_mode = (
+                getattr(parsed_opts.cli_args, "jira", False)
+                or getattr(parsed_opts.cli_args, "output_format", "terminal")
+                == "gitlab"
+            )
+            if jira_mode:
+                plain = Console(no_color=True, highlight=False)
                 print("{noformat}")
-                print(table)
+                plain.print(table)
                 print("{noformat}")
             else:
-                print(table)
+                console.print(table)
 
             # Display UUID mapping for comparison mode
             if parsed_opts.cli_args.compare:
-                print()
-                print(
-                    FormatText.format_text(
-                        "~~~ TASK REFERENCE ~~~~~~~~~~~~~~~~", text_col=FormatText.DIM
-                    )
-                )
+                console.print()
+                console.print("~~~ TASK REFERENCE ~~~~~~~~~~~~~~~~", style="dim")
                 for index, info in metadata.items():
                     if isinstance(info, dict) and "uuid" in info:
-                        print(
-                            FormatText.format_text(
-                                f"({index}) {info['arch']}: {info['url']}",
-                                text_col=FormatText.DIM,
-                            )
+                        console.print(
+                            f"({index}) {info['arch']}: {info['url']}",
+                            style="dim",
                         )
 
             has_content = True

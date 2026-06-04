@@ -4,15 +4,17 @@ import sys
 from typing import List
 
 import requests
+from rich import box
+from rich.table import Table
+
 from enge.utils.http_client import http_delete
-from prettytable import PrettyTable
 
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks
+from enge.utils.console import console
 from enge.utils.errors import ValidationError, UserAbort, EngeError
 from enge.utils.opt_manager import parsed_opts
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT
-from enge.utils import FormatText
 
 LOGGER = logging.getLogger(__name__)
 
@@ -128,55 +130,44 @@ class CancelJobs:
             return
 
         # Create results table
-        table = PrettyTable()
-        table.field_names = ["Task ID", "Status", "Message"]
-        table.align = "l"
+        table = Table(box=box.ROUNDED)
+        table.add_column("Task ID")
+        table.add_column("Status")
+        table.add_column("Message")
 
         successful_count = 0
         failed_count = 0
 
         for result in self.cancel_results:
-            status_symbol = "✓" if result["success"] else "✗"
-            status_text = (
-                FormatText.format_text(
-                    status_symbol, text_col=FormatText.GREEN, bold=True
-                )
-                if result["success"]
-                else FormatText.format_text(
-                    status_symbol, text_col=FormatText.RED, bold=True
-                )
-            )
+            status_text = "[bold green]✓[/]" if result["success"] else "[bold red]✗[/]"
 
             # Keep full task ID for display
-            table.add_row([result["task_id"], status_text, result["message"]])
+            table.add_row(result["task_id"], status_text, result["message"])
 
             if result["success"]:
                 successful_count += 1
             else:
                 failed_count += 1
 
-        print("\n" + FormatText.format_text("CANCELLATION RESULTS", bold=True))
-        print(table)
+        console.print()
+        console.print("[bold]CANCELLATION RESULTS[/]")
+        console.print(table)
 
         # Summary
         total_count = len(self.cancel_results)
-        print(
+        console.print(
             f"\nSummary: {successful_count}/{total_count} tasks processed successfully"
         )
 
         if failed_count > 0:
-            print(
-                FormatText.format_text(
-                    f"Warning: {failed_count} task(s) failed to cancel",
-                    text_col=FormatText.YELLOW,
-                    bold=True,
-                )
+            console.print(
+                f"[bold yellow]Warning: {failed_count} task(s) failed to cancel[/]"
             )
-            print("\nFailed to cancel task URLs:")
+            console.print("\nFailed to cancel task URLs:")
             for result in self.cancel_results:
                 if not result["success"]:
                     task_url = f"{parsed_opts.testing_farm.get('log_artifact_baseurl')}/{result['task_id']}"
-                    print(f"  - {task_url}")
+                    console.print(f"  - {task_url}")
 
 
 def main():
