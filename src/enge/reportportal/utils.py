@@ -728,7 +728,11 @@ def show_dryrun_finish_data(
 ) -> None:
     """Display what would be sent to ReportPortal in dry run mode."""
     import json
-    from enge.utils import FormatText
+
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from enge.utils.console import console
 
     finish_data: Dict[str, Any] = {
         "endTime": end_time,
@@ -739,41 +743,40 @@ def show_dryrun_finish_data(
     if attributes:
         finish_data["attributes"] = attributes
 
-    print()
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print(
-        f"{FormatText.BLUE}DRY RUN - ReportPortal Launch Finish "
-        f"Request{FormatText.END}"
+    kv = Table.grid(padding=(0, 2))
+    kv.add_column(style="bold")
+    kv.add_column()
+    kv.add_row("Task UUID:", task_uuid)
+    kv.add_row("Launch UUID:", launch_uuid)
+    kv.add_row(
+        "API Endpoint:",
+        f"PUT {api_base}/launch/{launch_uuid}/finish",
     )
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print()
-    print(f"{FormatText.BOLD}Task UUID:{FormatText.END} {task_uuid}")
-    print(f"{FormatText.BOLD}Launch UUID:{FormatText.END} {launch_uuid}")
-    print(
-        f"{FormatText.BOLD}API Endpoint:{FormatText.END} "
-        f"PUT {api_base}/launch/{launch_uuid}/finish"
-    )
-    print()
-    print(f"{FormatText.BOLD}Request Headers:{FormatText.END}")
-    print(f"  Authorization: Bearer {token[:10]}...")
-    print("  Content-Type: application/json")
-    print()
-    print(f"{FormatText.BOLD}Request Body:{FormatText.END}")
-    print(json.dumps(finish_data, indent=2, ensure_ascii=False))
-    print()
+    kv.add_row()
+    kv.add_row("Request Headers:", "")
+    kv.add_row("", f"Authorization: Bearer {token[:10]}...")
+    kv.add_row("", "Content-Type: application/json")
+    kv.add_row()
+    kv.add_row("Request Body:", "")
 
     if attributes:
-        print(f"{FormatText.BOLD}Attributes Details:{FormatText.END}")
+        kv.add_row()
+        kv.add_row("Attributes Details:", "")
         for attr in attributes:
-            print(f"  • {attr['key']}: {attr['value']}")
-        print()
+            kv.add_row("", f"  {attr['key']}: {attr['value']}")
 
-    print(
-        f"{FormatText.GREEN}Would finish launch {launch_uuid} "
-        f"for task {task_uuid}{FormatText.END}"
+    panel = Panel(
+        kv,
+        title="[bold]DRY RUN - ReportPortal Launch Finish Request[/]",
+        subtitle=(
+            f"[success]Would finish launch {launch_uuid} " f"for task {task_uuid}[/]"
+        ),
+        border_style="blue",
     )
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print()
+    console.print()
+    console.print(panel)
+    print(json.dumps(finish_data, indent=2, ensure_ascii=False))
+    console.print()
 
 
 def show_dryrun_enrichment(
@@ -782,45 +785,45 @@ def show_dryrun_enrichment(
     mapped: List[Tuple[ArtifactFile, Optional[str]]],
 ) -> None:
     """Display what would be uploaded in dry-run mode."""
-    from enge.utils import FormatText
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from enge.utils.console import console
 
     launch_level = [a for a, uid in mapped if uid is None]
     item_level = [a for a, uid in mapped if uid is not None]
 
-    print()
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print(f"{FormatText.BLUE}DRY RUN - Log Enrichment Preview" f"{FormatText.END}")
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print()
-    print(f"{FormatText.BOLD}Task UUID:{FormatText.END} {task_uuid}")
-    print(f"{FormatText.BOLD}Launch UUID:{FormatText.END} {launch_uuid}")
-    print(f"{FormatText.BOLD}Total artifacts:{FormatText.END} " f"{len(mapped)}")
-    print()
+    kv = Table.grid(padding=(0, 2))
+    kv.add_column(style="bold")
+    kv.add_column()
+    kv.add_row("Task UUID:", task_uuid)
+    kv.add_row("Launch UUID:", launch_uuid)
+    kv.add_row("Total artifacts:", str(len(mapped)))
 
     if item_level:
-        print(
-            f"{FormatText.BOLD}Artifacts mapped to test items "
-            f"({len(item_level)}):{FormatText.END}"
-        )
+        kv.add_row()
+        kv.add_row(f"Artifacts mapped to test items ({len(item_level)}):", "")
         for artifact, _ in [(a, u) for a, u in mapped if u is not None]:
-            print(f"  -> {artifact.relative_path}")
-        print()
+            kv.add_row("", f"  -> {artifact.relative_path}")
 
     if launch_level:
-        print(
-            f"{FormatText.BOLD}Artifacts at launch level "
-            f"({len(launch_level)}):{FormatText.END}"
-        )
+        kv.add_row()
+        kv.add_row(f"Artifacts at launch level ({len(launch_level)}):", "")
         for artifact in launch_level:
-            print(f"  -> {artifact.relative_path}")
-        print()
+            kv.add_row("", f"  -> {artifact.relative_path}")
 
-    print(
-        f"{FormatText.GREEN}Would upload {len(mapped)} artifact(s) "
-        f"to launch {launch_uuid}{FormatText.END}"
+    panel = Panel(
+        kv,
+        title="[bold]DRY RUN - Log Enrichment Preview[/]",
+        subtitle=(
+            f"[success]Would upload {len(mapped)} artifact(s) "
+            f"to launch {launch_uuid}[/]"
+        ),
+        border_style="blue",
     )
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print()
+    console.print()
+    console.print(panel)
+    console.print()
 
 
 def show_dryrun_delete_logs(
@@ -829,24 +832,24 @@ def show_dryrun_delete_logs(
     logs: List[Dict[str, Any]],
 ) -> None:
     """Display what would be deleted in dry-run mode."""
-    from enge.utils import FormatText
+    from rich.panel import Panel
+    from rich.table import Table
 
-    print()
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print(f"{FormatText.BLUE}DRY RUN - Log Deletion Preview" f"{FormatText.END}")
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print()
-    print(f"{FormatText.BOLD}Task UUID:{FormatText.END} {task_uuid}")
-    print(f"{FormatText.BOLD}Launch UUID:{FormatText.END} {launch_uuid}")
-    print(f"{FormatText.BOLD}Total log entries:{FormatText.END} " f"{len(logs)}")
-    print()
+    from enge.utils.console import console
+
+    kv = Table.grid(padding=(0, 2))
+    kv.add_column(style="bold")
+    kv.add_column()
+    kv.add_row("Task UUID:", task_uuid)
+    kv.add_row("Launch UUID:", launch_uuid)
+    kv.add_row("Total log entries:", str(len(logs)))
 
     if logs:
         sample_size = min(10, len(logs))
-        print(
-            f"{FormatText.BOLD}Sample log entries "
-            f"(showing {sample_size} of {len(logs)}):"
-            f"{FormatText.END}"
+        kv.add_row()
+        kv.add_row(
+            f"Sample log entries (showing {sample_size} of {len(logs)}):",
+            "",
         )
         for log in logs[:sample_size]:
             log_id = log.get("id", "?")
@@ -855,48 +858,53 @@ def show_dryrun_delete_logs(
             if len(message) > 80:
                 message = message[:77] + "..."
             message = message.replace("\n", " ")
-            print(f"  [{level}] (id={log_id}) {message}")
+            kv.add_row("", f"  [{level}] (id={log_id}) {message}")
         if len(logs) > sample_size:
-            print(f"  ... and {len(logs) - sample_size} more")
-        print()
+            kv.add_row("", f"  ... and {len(logs) - sample_size} more")
 
     log_word = "entry" if len(logs) == 1 else "entries"
-    print(
-        f"{FormatText.GREEN}Would delete {len(logs)} log {log_word} "
-        f"from launch {launch_uuid}{FormatText.END}"
+    panel = Panel(
+        kv,
+        title="[bold]DRY RUN - Log Deletion Preview[/]",
+        subtitle=(
+            f"[success]Would delete {len(logs)} log {log_word} "
+            f"from launch {launch_uuid}[/]"
+        ),
+        border_style="blue",
     )
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print()
+    console.print()
+    console.print(panel)
+    console.print()
 
 
 def show_dryrun_delete_stale(launches: List[Dict[str, Any]]) -> None:
     """Display stale launches that would be deleted in dry-run mode."""
-    from enge.utils import FormatText
+    from rich.panel import Panel
+    from rich.table import Table
 
-    print()
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print(
-        f"{FormatText.BLUE}DRY RUN - Stale Launch Deletion Preview" f"{FormatText.END}"
-    )
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print()
-    print(
-        f"{FormatText.BOLD}Stale launches "
-        f"(stopped/interrupted, no items):{FormatText.END} {len(launches)}"
-    )
-    print()
+    from enge.utils.console import console
 
+    kv = Table.grid(padding=(0, 2))
+    kv.add_column(style="bold")
+    kv.add_column()
+    kv.add_row(
+        "Stale launches (stopped/interrupted, no items):",
+        str(len(launches)),
+    )
+    kv.add_row()
     for launch in launches:
         name = launch.get("name", "Unknown")
         uuid = launch.get("uuid", launch.get("id", "?"))
         lid = launch.get("id", "?")
-        print(f"  - {name} (id={lid}, uuid={uuid})")
-    print()
+        kv.add_row("", f"  - {name} (id={lid}, uuid={uuid})")
 
     word = "launch" if len(launches) == 1 else "launches"
-    print(
-        f"{FormatText.GREEN}Would delete "
-        f"{len(launches)} stale {word}{FormatText.END}"
+    panel = Panel(
+        kv,
+        title="[bold]DRY RUN - Stale Launch Deletion Preview[/]",
+        subtitle=(f"[success]Would delete " f"{len(launches)} stale {word}[/]"),
+        border_style="blue",
     )
-    print(f"{FormatText.BLUE}{'=' * 60}{FormatText.END}")
-    print()
+    console.print()
+    console.print(panel)
+    console.print()

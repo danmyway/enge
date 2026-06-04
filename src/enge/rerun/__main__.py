@@ -6,17 +6,16 @@ from typing import Optional, Dict, Any, Iterable, List
 from datetime import datetime
 
 from enge.utils.http_client import http_get
-from prettytable import PrettyTable
+from rich.table import Table
+from rich import box
 
 from enge.dispatch.pin_compose import repin_compose
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks_with_map, parse_request_xunit
 from enge.utils.opt_manager import parsed_opts
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
-from enge.utils import FormatText
+from enge.utils.console import console
 from enge.utils.reportportal_helper import create_launch as rp_create_launch
-
-colorize = FormatText()
 
 logger = logging.getLogger(__name__)
 
@@ -242,22 +241,26 @@ class RerunJobs:
 
         # Log and display qualifying plans for a re-run
         if self.processed_data:
-            info_table = PrettyTable()
-            info_table.field_names = [
-                "Original Request",
-                "Source Compose Name",
-                "Arch",
-                "Re-run Plans",
-                "Re-run Tests",
-            ]
+            info_table = Table(box=box.ROUNDED, show_lines=True)
+            info_table.add_column("Original Request")
+            info_table.add_column("Source Compose Name")
+            info_table.add_column("Arch")
+            info_table.add_column("Re-run Plans")
+            info_table.add_column("Re-run Tests")
 
             logger.info("The following plans qualify for a re-run:")
             for req in self.processed_data.keys():
                 data = self.processed_data[req]
                 # Handle fallback entries (data[0] is None)
                 if data[0] is None:
-                    row = [req, "N/A", "Unknown", "FALLBACK (Original Filter)", ""]
-                    info_table.add_row(row, divider=True)
+                    info_table.add_row(
+                        req,
+                        "N/A",
+                        "Unknown",
+                        "FALLBACK (Original Filter)",
+                        "",
+                        end_section=True,
+                    )
                     continue
 
                 suite_names_list = [s.replace("$", "") for s in data[0].split("|")]
@@ -279,8 +282,12 @@ class RerunJobs:
                     # Divider needed only if this is the last plan AND no tests follow
                     is_plan_row_final = is_last_plan and not failed_tests
                     info_table.add_row(
-                        [req_col, comp_col, arch_col, suite_name, ""],
-                        divider=is_plan_row_final,
+                        req_col,
+                        comp_col,
+                        arch_col,
+                        suite_name,
+                        "",
+                        end_section=is_plan_row_final,
                     )
 
                     # Add Test rows
@@ -292,21 +299,20 @@ class RerunJobs:
                             is_test_row_final = is_last_plan and is_last_test
 
                             info_table.add_row(
-                                ["", "", "", "", display_name],
-                                divider=is_test_row_final,
+                                "",
+                                "",
+                                "",
+                                "",
+                                display_name,
+                                end_section=is_test_row_final,
                             )
-            info_table.align = "l"
-            print(info_table)
+            console.print(info_table)
             if parsed_opts.cli_args.dryrun:
                 return
         else:
             logger.info("None of the provided tasks qualify for a re-run.")
             logger.debug(
-                colorize.format_text(
-                    "All the results seem to be PASSing, time to celebrate! \U0001f389",
-                    text_col=colorize.GREEN,
-                    bold=True,
-                )
+                "All the results seem to be PASSing, time to celebrate! \U0001f389"
             )
 
     def drop_payload_keys(self, keys_to_drop: list) -> None:
@@ -705,21 +711,10 @@ def _create_rerun_launch_for_payload(
             else:
                 payload_data["tags"] = ["rerun"]
 
-            try:
-                from pygments import highlight, lexers, formatters
-                import json
+            import json
 
-                payload_formatted = json.dumps(payload_data, indent=4)
-                colorful_json = highlight(
-                    payload_formatted,
-                    lexers.JsonLexer(),
-                    formatters.TerminalFormatter(),
-                )
-                logger.info("DRY RUN | ReportPortal launch payload that would be sent:")
-                print(colorful_json)
-            except Exception:
-                logger.info("DRY RUN | ReportPortal launch payload that would be sent:")
-                print(json.dumps(payload_data, indent=4))
+            logger.info("DRY RUN | ReportPortal launch payload that would be sent:")
+            print(json.dumps(payload_data, indent=4))
             return "dryrun_placeholder"
         except Exception as e:
             logger.warning(f"DRY RUN | Could not generate ReportPortal payload: {e}")

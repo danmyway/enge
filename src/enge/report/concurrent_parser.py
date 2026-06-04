@@ -11,7 +11,7 @@ import requests
 import requests.adapters
 from requests.exceptions import ConnectionError, RequestException
 
-from enge.utils import FormatText
+from enge.utils.console import console
 from enge.utils.opt_manager import parsed_opts
 
 LOGGER = logging.getLogger(__name__)
@@ -250,25 +250,25 @@ class ConcurrentRequestParser:
         uuid_short = self._get_short_uuid(task_result.request_uuid)
 
         # Handle colored state display
-        background = None
-        if task_result.request_state == "COMPLETE":
-            background = FormatText.BG_GREEN
-        elif task_result.request_state in ("NEW", "QUEUED"):
-            background = FormatText.BG_BLUE
-        elif task_result.request_state == "RUNNING":
-            background = FormatText.BG_CYAN
-        elif task_result.request_state == "ERROR":
-            background = FormatText.BG_YELLOW
+        state_styles = {
+            "COMPLETE": "state.complete",
+            "QUEUED": "state.queued",
+            "RUNNING": "state.running",
+            "ERROR": "state.error",
+            "CANCELED": "state.canceled",
+        }
+        if task_result.request_state == "ERROR":
             update_retval(ERROR_HERE)
-        elif task_result.request_state == "CANCELED":
-            background = FormatText.BG_YELLOW
 
-        colored_state = FormatText.format_text(
-            task_result.request_state, background, FormatText.BLACK
+        style = state_styles.get(task_result.request_state, "")
+        colored_state = (
+            f"[{style}] {task_result.request_state} [/]"
+            if style
+            else task_result.request_state
         )
 
         # Display task information concisely
-        LOGGER.info(f"[{task_result.request_uuid}] task status: {colored_state}")
+        console.print(f"\\[{task_result.request_uuid}] task status: {colored_state}")
         LOGGER.debug(f"[{uuid_short}]    URL: {task_result.url}")
 
         # Handle canceled tasks
@@ -327,54 +327,45 @@ class ConcurrentRequestParser:
         if not self.session:
             return
 
-        clear_line = "\x1b[2K"
-        spacer = " " * 10
-        loading_chars = ["/", "-", "\\", "|"]
-        index = 0
+        start_time = time.time()
 
-        while True:
-            try:
-                response = self.session.get(task_result.url, timeout=self.timeout)
-                response.raise_for_status()
-                current_state = response.json()["state"]
+        with console.status("Waiting for the job to finish...") as status:
+            while True:
+                try:
+                    response = self.session.get(task_result.url, timeout=self.timeout)
+                    response.raise_for_status()
+                    current_state = response.json()["state"]
 
-                if current_state in ("complete", "error", "canceled"):
-                    print(end=clear_line)  # Clear the loading animation
-                    LOGGER.info(
-                        f"[{task_result.request_uuid}] {FormatText.GREEN}Job finished!{FormatText.END}"
+                    if current_state in ("complete", "error", "canceled"):
+                        # Update task result with final state
+                        task_data = response.json()
+                        if task_data:
+                            task_result.request_state = task_data["state"].upper()
+                            # Safely extract result data
+                            result_data = task_data.get("result") or {}
+                            if isinstance(result_data, dict):
+                                task_result.request_summary = result_data.get(
+                                    "summary", "Undefined"
+                                )
+                                task_result.request_result_overall = result_data.get(
+                                    "overall", "Undefined"
+                                )
+                                xunit_url = result_data.get("xunit_url")
+                                if xunit_url:
+                                    task_result.results_xml_url = xunit_url
+                        break
+
+                    elapsed = int(time.time() - start_time)
+                    status.update(f"Waiting for the job to finish... ({elapsed}s)")
+                    time.sleep(30)
+
+                except RequestException as e:
+                    LOGGER.error(
+                        f"[{task_result.request_uuid}] Error while waiting for task completion: {e}"
                     )
-                    # Update task result with final state
-                    task_data = response.json()
-                    if task_data:
-                        task_result.request_state = task_data["state"].upper()
-                        # Safely extract result data
-                        result_data = task_data.get("result") or {}
-                        if isinstance(result_data, dict):
-                            task_result.request_summary = result_data.get(
-                                "summary", "Undefined"
-                            )
-                            task_result.request_result_overall = result_data.get(
-                                "overall", "Undefined"
-                            )
-                            xunit_url = result_data.get("xunit_url")
-                            if xunit_url:
-                                task_result.results_xml_url = xunit_url
                     break
 
-                print(end=clear_line)
-                print(
-                    f"Waiting for the job to finish.{spacer}{loading_chars[index]}",
-                    end="\r",
-                    flush=True,
-                )
-                index = (index + 1) % len(loading_chars)
-                time.sleep(30)
-
-            except RequestException as e:
-                LOGGER.error(
-                    f"[{task_result.request_uuid}] Error while waiting for task completion: {e}"
-                )
-                break
+        console.print(f"\\[{task_result.request_uuid}] [success]Job finished![/]")
 
     def _fetch_xml_results(self, task_result: TaskResult) -> TaskResult:
         """Fetch XML results for a task with fallback handling."""
@@ -428,11 +419,9 @@ class ConcurrentRequestParser:
             and task_result.request_summary != "Undefined"
         ):
             LOGGER.debug(
-                f"[{uuid_short}]    Result: {FormatText.BOLD}{task_result.request_result_overall}{FormatText.END}"
+                f"[{uuid_short}]    Result: {task_result.request_result_overall}"
             )
-            LOGGER.debug(
-                f"[{uuid_short}]    Summary: {FormatText.BOLD}{task_result.request_summary}{FormatText.END}"
-            )
+            LOGGER.debug(f"[{uuid_short}]    Summary: {task_result.request_summary}")
         else:
             LOGGER.warning(
                 f"[{task_result.request_uuid}] Couldn't find any valuable information"
@@ -450,10 +439,8 @@ class ConcurrentRequestParser:
         if not request_url_list:
             return []
 
-        LOGGER.info(
-            f"{FormatText.BLUE}Reporting for the requested tasks{FormatText.END}"
-        )
-        LOGGER.info(f"{FormatText.DIM}{'─' * 60}{FormatText.END}")
+        LOGGER.info("Reporting for the requested tasks")
+        console.print("─" * 60, style="dim")
 
         # Phase 1: Fetch task information concurrently
         task_results = []
@@ -486,10 +473,8 @@ class ConcurrentRequestParser:
         if not tasks_for_xml:
             return task_results  # Return all tasks (including skipped) for summary
 
-        LOGGER.info(
-            f"{FormatText.BLUE}Fetching XML results for {len(tasks_for_xml)} tasks{FormatText.END}"
-        )
-        LOGGER.info(f"{FormatText.DIM}{'─' * 60}{FormatText.END}")
+        LOGGER.info(f"Fetching XML results for {len(tasks_for_xml)} tasks")
+        console.print("─" * 60, style="dim")
 
         # Check for running/queued tasks and show general warning
         running_or_queued_tasks = [
@@ -523,9 +508,7 @@ class ConcurrentRequestParser:
                     # Only log "Processed XML" if XML was actually fetched successfully
                     if result.xunit_content:
                         uuid_short = self._get_short_uuid(task.request_uuid)
-                        LOGGER.debug(
-                            f"[{uuid_short}] {FormatText.GREEN}Processed XML{FormatText.END}"
-                        )
+                        LOGGER.debug(f"[{uuid_short}] Processed XML")
                 except Exception as e:
                     uuid_short = self._get_short_uuid(task.request_uuid)
                     LOGGER.error(f"[{task.request_uuid}] Exception fetching XML: {e}")
@@ -625,9 +608,7 @@ class XMLParser:
             if parsed_opts.cli_args.action != "rerun" and getattr(
                 parsed_opts.cli_args, "download", False
             ):
-                LOGGER.info(
-                    f"{FormatText.BLUE}Requested download of the logs. This might take a minute.{FormatText.END}"
-                )
+                LOGGER.info("Requested download of the logs. This might take a minute.")
 
             parsed_data = {
                 "request_uuid": task_result.request_uuid,
@@ -876,16 +857,15 @@ def parse_request_xunit_concurrent(
     total_skipped = canceled_tasks + queued_tasks + running_tasks + skipped_due_to_pass
     failed_tasks = total_processed - tasks_with_data - total_skipped
 
-    LOGGER.info(f"{FormatText.DIM}{'─' * 60}{FormatText.END}")
-    LOGGER.info(f"{FormatText.BLUE}Summary:{FormatText.END}")
-    LOGGER.info(f"   {'Task IDs provided:':<28}{input_count:>3}")
-    LOGGER.info(f"   {'Tasks processed:':<28}{total_processed:>3}")
-    LOGGER.info(
-        f"   {FormatText.GREEN}{'Tasks with reportable data:':<28}{tasks_with_data:>3}{FormatText.END}"
+    console.print("─" * 60, style="dim")
+    LOGGER.info("Summary:")
+    console.print(f"   {'Task IDs provided:':<28}{input_count:>3}")
+    console.print(f"   {'Tasks processed:':<28}{total_processed:>3}")
+    console.print(
+        f"   {'Tasks with reportable data:':<28}{tasks_with_data:>3}",
+        style="success",
     )
-    LOGGER.info(
-        f"   {FormatText.YELLOW}{'Skipped:':<28}{total_skipped:>3}{FormatText.END}"
-    )
+    console.print(f"   {'Skipped:':<28}{total_skipped:>3}", style="warning")
 
     # Build the breakdown display for skipped tasks
     skip_categories = []
@@ -903,19 +883,17 @@ def parse_request_xunit_concurrent(
         for i, (category, count) in enumerate(skip_categories):
             if i == len(skip_categories) - 1:
                 # Last item
-                LOGGER.info(
-                    f"     {FormatText.DIM}{'└─ ' + category + ':':<26}{count:>3}{FormatText.END}"
+                console.print(
+                    f"     {'└─ ' + category + ':':<26}{count:>3}", style="dim"
                 )
             else:
                 # Not last item
-                LOGGER.info(
-                    f"     {FormatText.DIM}{'├─ ' + category + ':':<26}{count:>3}{FormatText.END}"
+                console.print(
+                    f"     {'├─ ' + category + ':':<26}{count:>3}", style="dim"
                 )
 
-    LOGGER.info(
-        f"   {FormatText.RED}{'No reportable data:':<28}{failed_tasks:>3}{FormatText.END}"
-    )
-    LOGGER.info(f"{FormatText.DIM}{'─' * 60}{FormatText.END}")
+    console.print(f"   {'No reportable data:':<28}{failed_tasks:>3}", style="error")
+    console.print("─" * 60, style="dim")
 
     return parsed_dict
 

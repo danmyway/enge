@@ -61,20 +61,10 @@ def create_launch(
             payload = rp_launch.generate_launch_payload(
                 name=launch_name, context=context, tmt_context=tmt_context
             )
-            try:
-                from pygments import highlight, lexers, formatters
+            from enge.utils.console import console
 
-                payload_formatted = json.dumps(payload, indent=4)
-                colorful_json = highlight(
-                    payload_formatted,
-                    lexers.JsonLexer(),
-                    formatters.TerminalFormatter(),
-                )
-                LOGGER.info("DRY RUN | ReportPortal launch payload that would be sent:")
-                print(colorful_json)
-            except Exception:
-                LOGGER.info("DRY RUN | ReportPortal launch payload that would be sent:")
-                print(json.dumps(payload, indent=4))
+            LOGGER.info("DRY RUN | ReportPortal launch payload that would be sent:")
+            print(json.dumps(payload, indent=4))
         except Exception as e:
             LOGGER.warning(f"DRY RUN | Could not generate ReportPortal payload: {e}")
         return None
