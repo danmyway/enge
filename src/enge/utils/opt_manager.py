@@ -30,6 +30,7 @@ from enge.utils.source_target_parser import (
     merge_set_environment_variables,
 )
 from enge.utils.errors import ConfigurationError, ValidationError
+from enge.utils.globals import VERBOSE
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +331,14 @@ class ParsedOpts:
     def _validate_required_config(self):
         """Validate required configuration for operations that need it."""
         if getattr(self.cli_args, "action", None) in ["test", "rerun"]:
+            _HINTS = {
+                "api_key": "Set in config or export TESTING_FARM_API_TOKEN",
+                "cloud_resources_tag": "Ask your team for the BusinessUnit tag",
+                "api_endpoint_url": "Set the Testing Farm API endpoint in config",
+                "log_artifact_baseurl": "Set the artifact base URL in config",
+                "composes_prod_url": "Set the composes API URL in config",
+            }
+
             required_sections = {
                 "testing_farm": [
                     "api_key",
@@ -354,8 +363,12 @@ class ParsedOpts:
 
                 for key in required_keys:
                     value = section.get(key)
-                    if not value:  # Empty string, None, or empty list/dict
-                        errors.append(f"Missing required value: [{section_name}].{key}")
+                    if not value:
+                        hint = _HINTS.get(key, "")
+                        msg = f"Missing required value: [{section_name}].{key}"
+                        if hint:
+                            msg += f"\n    Hint: {hint}"
+                        errors.append(msg)
 
             # Conditional requirements based on artifact usage (brew)
             try:
@@ -438,11 +451,18 @@ class ParsedOpts:
                     if not isinstance(rp_cfg, dict):
                         errors.append("[reportportal] section must be a dictionary")
                     else:
+                        _RP_HINTS = {
+                            "token": "Set in config or export REPORTPORTAL_API_TOKEN",
+                            "url": "Set the ReportPortal instance URL in config",
+                            "project": "Set the ReportPortal project name in config",
+                        }
                         for key in ["token", "url", "project"]:
                             if not rp_cfg.get(key):
-                                errors.append(
-                                    f"Missing required value: [reportportal].{key} (required when event is set for ReportPortal)"
-                                )
+                                hint = _RP_HINTS.get(key, "")
+                                msg = f"Missing required value: [reportportal].{key} (required when event is set)"
+                                if hint:
+                                    msg += f"\n    Hint: {hint}"
+                                errors.append(msg)
             except Exception:
                 # Do not block on detection failures here; other validation will catch structural issues
                 pass
@@ -461,7 +481,10 @@ class ParsedOpts:
                 logger.critical("[reportportal] section must be a dictionary")
                 raise ConfigurationError("ReportPortal configuration invalid")
             if not rp_cfg.get("token"):
-                logger.critical("Missing required value: [reportportal].token")
+                logger.critical(
+                    "Missing required value: [reportportal].token\n"
+                    "    Hint: Set in config or export REPORTPORTAL_API_TOKEN"
+                )
                 raise ConfigurationError("ReportPortal configuration missing")
 
     def _validate_static_configuration(self):
@@ -477,17 +500,24 @@ class ParsedOpts:
         if not isinstance(archive_default, str):
             errors.append("archive_tasks_default must be a string")
 
-        # Validate essential configuration sections (from dispatch/__main__.py)
         if not self.testing_farm or not self.testing_farm.get("api_key"):
-            errors.append("Testing Farm API key not configured!")
+            errors.append(
+                "Testing Farm API key not configured!\n"
+                "    Hint: Set [testing_farm].api_key or export TESTING_FARM_API_TOKEN"
+            )
 
         if not self.project or not self.project.get("name"):
-            errors.append("Project name not configured!")
+            errors.append(
+                "Project name not configured!\n"
+                "    Hint: Set [project].name in config"
+            )
 
-        # Validate git repository configuration
         tests_repo_url = self.tests.get("git_url") or self.project.get("repo_url")
         if not tests_repo_url:
-            errors.append("Tests repository URL not configured!")
+            errors.append(
+                "Tests repository URL not configured!\n"
+                "    Hint: Set [tests].git_url or [project].repo_url in config"
+            )
 
         # Validate [tests].context type if present
         tests_section = (
@@ -559,7 +589,8 @@ class ParsedOpts:
             has_source_cfg = bool(self.config.get("tests", {}).get("source"))
             if not has_source_cli and not has_sets and not has_source_cfg:
                 errors.append(
-                    "--source is required unless provided via [tests].source or --set"
+                    "--source is required unless provided via [tests].source or --set\n"
+                    "    Hint: enge test -s 9.7 ... or enge test -S <set-name>"
                 )
 
         if errors:
@@ -846,7 +877,9 @@ class ParsedOpts:
                 self.individual_test_sets = []
                 for set_name in cli_sets:
                     set_config = self.config["tests"]["set"][set_name]
-                    logger.debug(f"Processing test set '{set_name}': {set_config}")
+                    logger.log(
+                        VERBOSE, f"Processing test set '{set_name}': {set_config}"
+                    )
 
                     # Resolve effective values for this specific set (CLI > Set > Config)
                     effective_values = resolve_effective_values(
@@ -1164,16 +1197,10 @@ class ParsedOpts:
             # Handle RHSM-related flags
             only_rhsm_stage_cdn = getattr(self.cli_args, "only_rhsm_stage_cdn", False)
             if only_rhsm_stage_cdn:
-                # Add RHSM_MODE=stage to environment variables
                 self.environment_variables["RHSM_MODE"] = "stage"
-                logger.info(
-                    "Added RHSM_MODE=stage to environment variables (--only-rhsm-stage-cdn)"
-                )
-
-                # Add product_phase=rc to TMT context
                 self.tmt_context["product_phase"] = "rc"
                 logger.info(
-                    "Added product_phase=rc to TMT context (--only-rhsm-stage-cdn)"
+                    "Applied --only-rhsm-stage-cdn (RHSM_MODE=stage, product_phase=rc)"
                 )
 
             # Handle CLI planfilter (tier-based filtering is handled in dispatch)
@@ -1191,18 +1218,15 @@ class ParsedOpts:
                 {}
             )  # No longer needed as test sets are processed individually
 
-            logger.info(f"Source: {self.source_spec['compose_name']}")
-            logger.info(f"Upgrade path: {self.upgrade_path_alias}")
-
-            # Log architectures
-            if len(self.architectures) == 1:
-                logger.info(f"Architecture: {self.architectures[0]}")
-            else:
-                logger.info(f"Architectures: {', '.join(self.architectures)}")
-
-            # Log effective tiers if set
-            if self.effective_tiers:
-                logger.info(f"Tiers: {', '.join(self.effective_tiers)}")
+            if not cli_sets:
+                logger.info(f"Source: {self.source_spec['compose_name']}")
+                logger.info(f"Upgrade path: {self.upgrade_path_alias}")
+                if len(self.architectures) == 1:
+                    logger.info(f"Architecture: {self.architectures[0]}")
+                else:
+                    logger.info(f"Architectures: {', '.join(self.architectures)}")
+                if self.effective_tiers:
+                    logger.info(f"Tiers: {', '.join(self.effective_tiers)}")
 
             # Log target compose if TARGET_COMPOSE_URL is specified via --environment
             if "TARGET_COMPOSE_URL" in cli_env_vars:
@@ -1222,14 +1246,13 @@ class ParsedOpts:
                         f"Target compose: {os.path.basename(target_compose_url.strip('/'))}"
                     )
 
-            # Log any overridden automatic variables
             for var_name, cli_value in cli_env_vars.items():
                 if var_name in auto_env_vars and auto_env_vars[var_name] != cli_value:
-                    logger.warning(
-                        f"Environment variable {var_name} overridden: {auto_env_vars[var_name]} -> {cli_value}"
+                    logger.log(
+                        VERBOSE,
+                        f"Environment variable {var_name} overridden: {auto_env_vars[var_name]} -> {cli_value}",
                     )
 
-            # Log test set environment variables if any
             if set_env_vars:
                 logger.debug(f"Test set environment variables: {set_env_vars}")
                 for var_name, set_value in set_env_vars.items():
@@ -1237,8 +1260,9 @@ class ParsedOpts:
                         var_name in auto_env_vars
                         and auto_env_vars[var_name] != set_value
                     ):
-                        logger.info(
-                            f"Environment variable {var_name} overridden by test set: {auto_env_vars[var_name]} -> {set_value}"
+                        logger.log(
+                            VERBOSE,
+                            f"Environment variable {var_name} overridden by test set: {auto_env_vars[var_name]} -> {set_value}",
                         )
 
         except ValueError as e:

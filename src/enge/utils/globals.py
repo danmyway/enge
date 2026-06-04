@@ -59,6 +59,9 @@ RP_COMPATIBLE_EVENT: Tuple[str, ...] = (
 
 # ==================== EXIT CODES & DEFAULTS ====================
 
+# Custom log level between INFO (20) and DEBUG (10)
+VERBOSE: int = 15
+
 # Standardized exit codes for CLI entrypoints
 EXIT_GENERAL_ERROR: int = 1
 EXIT_ALL_PASS: int = 0

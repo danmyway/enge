@@ -13,6 +13,7 @@ from logging import getLogger
 
 from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
 from enge.utils.globals import RP_COMPATIBLE_EVENT
+from enge.utils.globals import VERBOSE
 from enge.utils.errors import ValidationError
 
 LOGGER = getLogger(__name__)
@@ -561,7 +562,6 @@ def parse_environment_variables(env_args: Optional[list] = None) -> Dict[str, st
             raise ValueError(f"Empty variable name in: {env_arg}")
 
         env_vars[var_name] = var_value
-        LOGGER.debug(f"Parsed environment variable: {var_name}={var_value}")
 
     return env_vars
 
@@ -600,7 +600,6 @@ def parse_tmt_context(context_args: Optional[list] = None) -> Dict[str, Any]:
                 f"TMT context '{key}' overridden by CLI duplicate: {context[key]} -> {value}"
             )
         context[key] = value
-        LOGGER.debug(f"Parsed TMT context: {key}={value}")
 
     return context
 
@@ -732,7 +731,7 @@ def generate_tier_plan_filter(
 
         tier_filter = tier_config[tier]
         tier_filters.append(tier_filter)
-        LOGGER.debug(f"Mapped tier '{tier}' to filter '{tier_filter}'")
+        LOGGER.log(VERBOSE, f"Mapped tier '{tier}' to filter '{tier_filter}'")
 
     # Combine upgrade path with tier filters using & operator
     all_filters = [f"tag:{upgrade_path}"] + tier_filters
@@ -767,7 +766,7 @@ def parse_source_target_config(
 
     try:
         source_spec = parse_compose_spec(source, config)
-        LOGGER.debug(f"Parsed source spec: {source_spec}")
+        LOGGER.log(VERBOSE, f"Parsed source spec: {source_spec}")
 
         target_input = target
         target_major_only = False
@@ -787,10 +786,10 @@ def parse_source_target_config(
             target_spec["is_major_only"] = (
                 target_spec.get("is_major_only", False) or target_major_only
             )
-            LOGGER.debug(f"Parsed target spec: {target_spec}")
+            LOGGER.log(VERBOSE, f"Parsed target spec: {target_spec}")
         else:
             target_spec = derive_target_from_source(source_spec)
-            LOGGER.debug(f"Derived target spec: {target_spec}")
+            LOGGER.log(VERBOSE, f"Derived target spec: {target_spec}")
 
         return source_spec, target_spec
 
@@ -1080,8 +1079,9 @@ def merge_set_environment_variables(
         # Merge with warnings and ignore empty overrides
         for k, v in reportportal_vars.items():
             if k in merged_vars and merged_vars[k] != v and v not in (None, ""):
-                LOGGER.warning(
-                    f"Environment variable {k} overridden by reportportal config: {merged_vars[k]} -> {v}"
+                LOGGER.log(
+                    VERBOSE,
+                    f"Environment variable {k} overridden by reportportal config: {merged_vars[k]} -> {v}",
                 )
             if v not in (None, ""):
                 merged_vars[k] = v
@@ -1089,8 +1089,9 @@ def merge_set_environment_variables(
     # Apply test set environment overrides with warnings; ignore empty overrides
     for k, v in (set_env_vars or {}).items():
         if k in merged_vars and merged_vars[k] != v and v not in (None, ""):
-            LOGGER.warning(
-                f"Environment variable {k} overridden by test set: {merged_vars[k]} -> {v}"
+            LOGGER.log(
+                VERBOSE,
+                f"Environment variable {k} overridden by test set: {merged_vars[k]} -> {v}",
             )
         if v not in (None, ""):
             merged_vars[k] = v
@@ -1098,8 +1099,9 @@ def merge_set_environment_variables(
     # Apply CLI environment overrides with warnings; ignore empty overrides
     for k, v in (cli_env_vars or {}).items():
         if k in merged_vars and merged_vars[k] != v and v not in (None, ""):
-            LOGGER.warning(
-                f"Environment variable {k} overridden by CLI: {merged_vars[k]} -> {v}"
+            LOGGER.log(
+                VERBOSE,
+                f"Environment variable {k} overridden by CLI: {merged_vars[k]} -> {v}",
             )
         if v not in (None, ""):
             merged_vars[k] = v

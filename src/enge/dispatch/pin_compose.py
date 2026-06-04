@@ -2,6 +2,7 @@ from calendar import c
 from enge.utils.opt_manager import parsed_opts
 import requests
 from enge.utils.http_client import http_get
+from enge.utils.globals import VERBOSE
 import logging
 import re
 
@@ -73,43 +74,23 @@ def _filter_relevant_composes(compose_list, version_info):
         if not compose or not isinstance(compose, str):
             continue
 
-        # Parse each compose to see if it's relevant
         if target_distro == "rhel" and compose.startswith("RHEL-"):
             compose_match = re.match(r"^RHEL-(\d+)\.(\d+)\.(\d+)-(.+)$", compose)
             if compose_match:
                 compose_major = int(compose_match.group(1))
                 compose_minor = int(compose_match.group(2))
-
-                LOGGER.debug(
-                    f"Checking compose {compose}: major={compose_major}, minor={compose_minor}"
-                )
-
                 if compose_major == target_major and compose_minor == target_minor:
-                    # Exact major.minor match (any micro version)
-                    LOGGER.debug(f"  -> MATCH: Adding {compose}")
                     exact_matches.append(compose)
-                else:
-                    LOGGER.debug(
-                        f"  -> NO MATCH: {compose_major}.{compose_minor} != {target_major}.{target_minor}"
-                    )
-
         elif target_distro.lower() in compose.lower():
-            # For non-RHEL distros, show if distro name matches
-            LOGGER.debug(f"Non-RHEL match: {compose}")
             other_distro.append(compose)
-        else:
-            LOGGER.debug(f"Skipping compose {compose} (doesn't match {target_distro})")
 
-    # Sort and limit results
     exact_matches.sort()
     other_distro.sort()
 
-    # Prioritize exact matches, then other distro matches
     result = exact_matches[:10] + other_distro[:5]
     LOGGER.debug(
-        f"Filter result: {len(exact_matches)} exact matches, {len(other_distro)} other distro matches"
+        f"Compose filter: {len(exact_matches)} exact + {len(other_distro)} other matches for {target_distro} {target_major}.{target_minor}"
     )
-    LOGGER.debug(f"Final filtered list: {result}")
     return result[:15]
 
 
@@ -428,6 +409,6 @@ def repin_compose(compose_name, composes_prod_url):
     if result != compose_name:
         LOGGER.warning("Compose re-pinned: %s -> %s", compose_name, result)
     else:
-        LOGGER.debug("Compose validated: %s", compose_name)
+        LOGGER.log(VERBOSE, "Compose validated: %s", compose_name)
     _repin_cache[cache_key] = result
     return result

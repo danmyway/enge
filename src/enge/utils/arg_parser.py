@@ -8,6 +8,8 @@ ensuring clear, consistent, and conflict-free argument definitions.
 
 import argparse
 import pathlib
+
+import argcomplete
 from typing import Optional
 
 
@@ -70,8 +72,11 @@ def _add_dryrun_arg(
         "Print the payload that would be sent to Testing Farm without sending it."
     )
     parser.add_argument(
+        "-n",
+        "--dry-run",
         "--dryrun",
         action="store_true",
+        dest="dryrun",
         help=help_text or default_help,
     )
 
@@ -89,6 +94,22 @@ def _add_date_filter_args(parser: argparse.ArgumentParser) -> None:
         metavar="DATE",
         help="Only consider items from on or before DATE "
         "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).",
+    )
+
+
+def _add_format_arg(parser: argparse.ArgumentParser, choices=None) -> None:
+    """Add -o/--format output format argument to a parser."""
+    parser.add_argument(
+        "-o",
+        "--format",
+        dest="output_format",
+        choices=choices or ["terminal", "gitlab", "json"],
+        nargs="?",
+        default="terminal",
+        const="gitlab",
+        help="Output format. 'terminal' (default): colored output. "
+        "'gitlab' (default when -o is used without value): markdown code blocks and tables. "
+        "'json': machine-readable JSON to stdout (suppresses other output).",
     )
 
 
@@ -128,7 +149,17 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-c", "--config", help="Custom path to the config file.")
     common.add_argument(
-        "-d", "--debug", action="store_true", help="Print out additional information."
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase output verbosity. -v for verbose, -vv for full debug.",
+    )
+    common.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
 
     parser = argparse.ArgumentParser(
@@ -145,9 +176,19 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Dispatch a job to the Testing Farm API endpoint.",
         description="Send requests to Testing Farm conveniently.",
         parents=[common],
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  enge test -s 9.7 -T tier0                           # compose build\n"
+            "  enge test --copr lp:pr123 -s 9.7 -T tier0           # COPR PR build\n"
+            "  enge test --brew leapp-0.1-2.el9 -T tier0            # brew build\n"
+            "  enge test -S pre-release-smoke                       # pre-configured test set\n"
+            "  enge test -S pre-release-smoke -n                    # preview payload\n"
+        ),
     )
 
     test.add_argument(
+        "-s",
         "--source",
         required=False,  # Will be validated later based on whether --set is provided
         help="Source compose to be upgraded. "
@@ -161,6 +202,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     test.add_argument(
+        "-t",
         "--target",
         help="Target compose for upgrade. "
         "Can be provided in a format of <major>.<minor> (e.g. 9.4) or explicit compose name (e.g. RHEL-9.4.0-Nightly). "
@@ -178,9 +220,9 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         nargs="?",
         default=None,
         const=None,
-        help="Test a fedora-copr-build. "
-        "The pull request reference (pr123) or BuildID can be provided either in the config file or as an argument."
-        "If neither of copr/brew is specified, the compose build is tested.",
+        help="COPR build reference: alias:version (e.g., lp:pr123, lpr:main) or numeric BuildID. "
+        "Aliases: lp=leapp, lpr=leapp-repository. "
+        "If neither --copr nor --brew is specified, compose artifacts are used.",
     )
 
     artifact_type.add_argument(
@@ -198,6 +240,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
 
     # Test planning and filtering
     test.add_argument(
+        "-T",
         "--tier",
         action="append",
         help="Test tier(s) to be executed. Multiple tiers can be provided. "
@@ -205,6 +248,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     test.add_argument(
+        "-S",
         "--set",
         action="append",
         help="Test set to be executed. Multiple sets can be provided. "
@@ -223,6 +267,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     test.add_argument(
+        "-p",
         "--plan",
         action="append",
         help=(
@@ -240,13 +285,17 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     )
 
     test.add_argument(
+        "--test-filter",
         "--testfilter",
+        dest="testfilter",
         help="Filter tests using FMF filter syntax. "
         "This allows fine-grained filtering of which tests to run.",
     )
 
     test.add_argument(
+        "--plan-filter",
         "--planfilter",
+        dest="planfilter",
         help="Filter plans using FMF filter syntax. "
         "This overrides any automatically generated plan filters from --tier.",
     )
@@ -296,9 +345,8 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "--architectures",
         "--arch",
         action="append",
-        help="Target architectures for testing. "
-        "Specify multiple architectures as separate arguments (e.g., --architectures x86_64 aarch64). "
-        "If not specified, uses the default ones from the config file.",
+        help="Target architecture. Can be specified multiple times: --arch x86_64 --arch aarch64. "
+        "If not specified, uses the default from the config file.",
     )
 
     test.add_argument(
@@ -352,9 +400,22 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help="Wait for successful API response after submitting request.",
     )
 
-    # Execution control
     _add_dryrun_arg(test)
     _add_tagging_args(test)
+    _add_format_arg(test)
+
+    # Discovery
+    test.add_argument(
+        "--list-sets",
+        action="store_true",
+        help="List available test sets from config and exit.",
+    )
+
+    test.add_argument(
+        "--list-sets-detail",
+        action="store_true",
+        help="List available test sets with full configuration detail and exit.",
+    )
 
     # ==================== REPORT SUBCOMMAND ====================
     report = subparsers.add_parser(
@@ -363,6 +424,16 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         description="Parse task IDs, Testing Farm artifact URLs, "
         "or Testing Farm API request URLs from multiple sources.",
         parents=[common],
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  enge report                                          # report latest run\n"
+            "  enge report -i <uuid>                                # report specific task\n"
+            "  enge report --get-tag pr123 --show-tests             # detailed test view by tag\n"
+            "  enge report --get-tag pr123 -o                       # gitlab/markdown output\n"
+            "  enge report -f tasks.txt -w                          # wait for completion\n"
+            "  enge report --get-tag v1 --get-tag v2 --compare      # compare runs\n"
+        ),
     )
 
     # Input sources
@@ -429,8 +500,10 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     report.add_argument(
         "--jira",
         action="store_true",
-        help="Display tables formatted for JIRA comments.",
+        help=argparse.SUPPRESS,
     )
+
+    _add_format_arg(report, choices=["terminal", "gitlab"])
 
     # Date filters (effective with --get-tag, filters by archive filename timestamp)
     _add_date_filter_args(report)
@@ -449,6 +522,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     # Rerun control
     _add_tagging_args(rerun)
     _add_dryrun_arg(rerun)
+    _add_format_arg(rerun)
 
     rerun.add_argument(
         "--error",
@@ -550,6 +624,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help_text="Show which tasks would be cancelled without actually cancelling them.",
     )
 
+    argcomplete.autocomplete(parser)
     parsed_args = parser.parse_args(args)
 
     return parsed_args
