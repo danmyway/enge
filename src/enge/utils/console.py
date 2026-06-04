@@ -1,10 +1,14 @@
 """
 Shared Rich console for enge.
 
-Provides a module-level Console instance with a semantic theme
-that maps the codebase's color conventions to rich styles.
-Call configure_console() after parsing CLI args to adjust for
-json/jira output modes.
+Provides a module-level Console proxy with a semantic theme.
+The proxy delegates attribute access to a mutable backing instance
+so that ``from enge.utils.console import console`` always reflects
+the current configuration — even when configure_console() is called
+after the import.
+
+Logging always goes to stderr via a dedicated Console so that
+``-o json`` can silence stdout without losing diagnostics.
 """
 
 import logging
@@ -29,18 +33,30 @@ ENGE_THEME = Theme(
     }
 )
 
-console = Console(theme=ENGE_THEME)
+_current = Console(theme=ENGE_THEME)
+
+_log_console = Console(stderr=True, theme=ENGE_THEME)
+
+
+class _ConsoleProxy:
+    """Thin proxy so import-by-value bindings track reconfiguration."""
+
+    def __getattr__(self, name):
+        return getattr(_current, name)
+
+
+console = _ConsoleProxy()
 
 
 def configure_console(output_format: str) -> None:
     """Reconfigure the shared console for the given output format."""
-    global console
+    global _current
     if output_format == "json":
-        console = Console(theme=ENGE_THEME, no_color=True, quiet=True)
+        _current = Console(theme=ENGE_THEME, no_color=True, quiet=True)
     elif output_format == "gitlab":
-        console = Console(theme=ENGE_THEME, no_color=True, highlight=False)
+        _current = Console(theme=ENGE_THEME, no_color=True, highlight=False)
     else:
-        console = Console(theme=ENGE_THEME)
+        _current = Console(theme=ENGE_THEME)
 
 
 _LEVEL_STYLES = {
@@ -54,10 +70,7 @@ _LEVEL_STYLES = {
 
 
 class EngeLogHandler(logging.Handler):
-    """Log handler that colors the entire line (level + message) uniformly.
-
-    Supports per-message style overrides via ``extra={"style": "bold"}``.
-    """
+    """Log handler that renders to stderr so stdout stays clean for data."""
 
     def emit(self, record):
         try:
@@ -66,7 +79,7 @@ class EngeLogHandler(logging.Handler):
                 record.levelname, ""
             )
             level = f"{record.levelname:<8}"
-            console.print(
+            _log_console.print(
                 f"{level} {msg}",
                 style=style,
                 highlight=False,

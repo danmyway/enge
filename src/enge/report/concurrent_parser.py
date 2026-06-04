@@ -11,6 +11,7 @@ import requests
 import requests.adapters
 from requests.exceptions import ConnectionError, RequestException
 
+from rich.markup import escape
 from enge.utils.console import console
 from enge.utils.opt_manager import parsed_opts
 
@@ -253,6 +254,7 @@ class ConcurrentRequestParser:
         state_styles = {
             "COMPLETE": "state.complete",
             "QUEUED": "state.queued",
+            "NEW": "state.queued",
             "RUNNING": "state.running",
             "ERROR": "state.error",
             "CANCELED": "state.canceled",
@@ -262,9 +264,9 @@ class ConcurrentRequestParser:
 
         style = state_styles.get(task_result.request_state, "")
         colored_state = (
-            f"[{style}] {task_result.request_state} [/]"
+            f"[{style}]{escape(task_result.request_state)}[/]"
             if style
-            else task_result.request_state
+            else escape(task_result.request_state)
         )
 
         # Display task information concisely

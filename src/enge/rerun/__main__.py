@@ -7,6 +7,7 @@ from datetime import datetime
 
 from enge.utils.http_client import http_get
 from rich.table import Table
+from rich.markup import escape
 from rich import box
 
 from enge.dispatch.pin_compose import repin_compose
@@ -254,7 +255,7 @@ class RerunJobs:
                 # Handle fallback entries (data[0] is None)
                 if data[0] is None:
                     info_table.add_row(
-                        req,
+                        escape(req),
                         "N/A",
                         "Unknown",
                         "FALLBACK (Original Filter)",
@@ -282,10 +283,10 @@ class RerunJobs:
                     # Divider needed only if this is the last plan AND no tests follow
                     is_plan_row_final = is_last_plan and not failed_tests
                     info_table.add_row(
-                        req_col,
-                        comp_col,
-                        arch_col,
-                        suite_name,
+                        escape(req_col),
+                        escape(comp_col),
+                        escape(arch_col),
+                        escape(suite_name),
                         "",
                         end_section=is_plan_row_final,
                     )
@@ -303,7 +304,7 @@ class RerunJobs:
                                 "",
                                 "",
                                 "",
-                                display_name,
+                                escape(display_name),
                                 end_section=is_test_row_final,
                             )
             console.print(info_table)
@@ -712,9 +713,10 @@ def _create_rerun_launch_for_payload(
                 payload_data["tags"] = ["rerun"]
 
             import json
+            from enge.utils import redact_sensitive
 
             logger.info("DRY RUN | ReportPortal launch payload that would be sent:")
-            print(json.dumps(payload_data, indent=4))
+            print(json.dumps(redact_sensitive(payload_data), indent=4))
             return "dryrun_placeholder"
         except Exception as e:
             logger.warning(f"DRY RUN | Could not generate ReportPortal payload: {e}")

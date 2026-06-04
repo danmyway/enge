@@ -10,10 +10,12 @@ import koji
 from copr.v3 import BuildProxy, CoprNoResultException
 from copr.v3 import exceptions as coprexcept
 
-from . import FormatText
 from .errors import ConfigurationError, ValidationError, UserAbort
+from .globals import VERBOSE
 
 LOGGER = getLogger(__name__)
+
+_logged_build_keys: set = set()
 
 
 class CoprRef:
@@ -121,9 +123,7 @@ class CoprRef:
         try:
             response = http_get(url, timeout=30)
             response.raise_for_status()
-            data = response.json()
-            LOGGER.debug(f"Successfully fetched packages for build {build_id}")
-            return data
+            return response.json()
         except Exception as e:
             LOGGER.error(f"Failed to fetch built packages for build {build_id}: {e}")
             raise ValidationError(f"Failed to fetch COPR built packages: {e}")
@@ -163,7 +163,7 @@ class CoprRef:
             if pkg.get("arch") != "src" and pkg.get("name")
         ]
 
-        LOGGER.info(
+        LOGGER.debug(
             f"Found {len(package_names)} packages for chroot {chroot}: {package_names}"
         )
         return package_names
@@ -203,8 +203,9 @@ class CoprRef:
             # Try parsing as alias:reference format
             parsed_package, version_ref = self._parse_copr_reference(ref_str)
             if parsed_package and version_ref:
-                LOGGER.info(
-                    f"Parsed reference '{ref_str}' as package '{parsed_package}', version ref '{version_ref}'"
+                LOGGER.log(
+                    VERBOSE,
+                    f"Parsed reference '{ref_str}' as package '{parsed_package}', version ref '{version_ref}'",
                 )
                 self.build_reference = [version_ref]
             else:
@@ -254,7 +255,7 @@ class CoprRef:
 
         # Handle reference-based search (alias:ref format)
         if self.build_reference and version_ref:
-            LOGGER.info(
+            LOGGER.debug(
                 f"Searching for COPR build matching package '{package}', version '{version_ref}'"
             )
 
@@ -303,11 +304,11 @@ class CoprRef:
 
             # Extract build ID from found build
             self.build_id = found_build.id
-            LOGGER.info(f"Found COPR build ID: {self.build_id}")
+            LOGGER.log(VERBOSE, f"Found COPR build ID: {self.build_id}")
 
         # Handle direct build ID lookup
         if self.build_id:
-            LOGGER.info(
+            LOGGER.debug(
                 f"Fetching COPR build information for build ID: {self.build_id}"
             )
 
@@ -327,13 +328,7 @@ class CoprRef:
 
             # Validate build state
             if hasattr(build_munch, "state") and build_munch.state == "failed":
-                LOGGER.critical(
-                    FormatText.format_text(
-                        f"Build {self.build_id} is in failed state!",
-                        text_col=FormatText.RED,
-                        bold=True,
-                    )
-                )
+                LOGGER.critical(f"Build {self.build_id} is in failed state!")
                 raise ValidationError(f"COPR build {self.build_id} is in failed state")
 
             # Optionally validate package name match (if we have expected package)
@@ -408,11 +403,11 @@ class CoprRef:
             LOGGER.error("Build object has no ID")
             return build_info
 
-        LOGGER.info(f"Processing build {build_id}: {package_name}-{package_version}")
+        LOGGER.debug(f"Processing build {build_id}: {package_name}-{package_version}")
 
         # Log build URL
         build_url = os.path.join(str(self.copr_build_baseurl), str(build_id))
-        LOGGER.debug(f"Build URL: {build_url}")
+        LOGGER.log(VERBOSE, f"Build URL: {build_url}")
 
         # Derive chroot from source specification
         try:
@@ -447,12 +442,14 @@ class CoprRef:
             "packages": package_list,
         }
 
-        buildid_fmt = FormatText.format_text(build_id, bold=True)
-        compose_fmt = FormatText.format_text(source_compose, bold=True)
-        LOGGER.info(
-            f"COPR build {buildid_fmt} for {compose_fmt}: {len(package_list)} packages"
-        )
-        LOGGER.debug(f"Packages: {', '.join(package_list)}")
+        log_key = ("copr", build_id, source_compose)
+        if log_key not in _logged_build_keys:
+            _logged_build_keys.add(log_key)
+            LOGGER.info(
+                f"COPR build {build_id} for {source_compose}: {len(package_list)} packages",
+                extra={"style": "dim"},
+            )
+            LOGGER.log(VERBOSE, f"Packages: {', '.join(package_list)}")
 
         build_info.append(copr_info_dict)
         return build_info
@@ -685,26 +682,32 @@ class BrewRef:
         info = []
         source_compose = options.source_spec["compose_name"]
 
-        # Log summary of builds being included
         if task_ids_dict:
-            build_count = len(task_ids_dict)
-            if build_count == 1:
-                task_id, (volume_name, nvr) = next(iter(task_ids_dict.items()))
-                LOGGER.info(
-                    f"Including brew build {nvr} ({effective_package_name}) from {volume_name}"
-                )
-            else:
-                volume_names = list(set(item[0] for item in task_ids_dict.values()))
-                volume_str = (
-                    ", ".join(volume_names)
-                    if len(volume_names) > 1
-                    else volume_names[0] if volume_names else "unknown"
-                )
-                LOGGER.info(
-                    f"Including {build_count} brew builds for {effective_package_name} from {volume_str}"
-                )
-                for task_id, (volume_name, nvr) in task_ids_dict.items():
-                    LOGGER.debug(f"  • Build {nvr} (task {task_id}) from {volume_name}")
+            brew_log_key = ("brew", frozenset(task_ids_dict.keys()))
+            if brew_log_key not in _logged_build_keys:
+                _logged_build_keys.add(brew_log_key)
+                build_count = len(task_ids_dict)
+                if build_count == 1:
+                    task_id, (volume_name, nvr) = next(iter(task_ids_dict.items()))
+                    LOGGER.info(
+                        f"Including brew build {nvr} ({effective_package_name}) from {volume_name}",
+                        extra={"style": "dim"},
+                    )
+                else:
+                    volume_names = list(set(item[0] for item in task_ids_dict.values()))
+                    volume_str = (
+                        ", ".join(volume_names)
+                        if len(volume_names) > 1
+                        else volume_names[0] if volume_names else "unknown"
+                    )
+                    LOGGER.info(
+                        f"Including {build_count} brew builds for {effective_package_name} from {volume_str}",
+                        extra={"style": "dim"},
+                    )
+                    for task_id, (volume_name, nvr) in task_ids_dict.items():
+                        LOGGER.debug(
+                            f"  • Build {nvr} (task {task_id}) from {volume_name}"
+                        )
 
         for task_id, (volume_name, nvr) in task_ids_dict.items():
             # Parse package name from each individual NVR to handle multiple different packages
@@ -782,7 +785,7 @@ class BrewRef:
                     tasks.append(latest_build.get("task_id"))
                     volume_names.append(latest_build.get("volume_name"))
                     nvrs.append(latest_build.get("nvr"))
-                    LOGGER.info(
+                    LOGGER.debug(
                         f"Selected build for '{ref}': task_id={latest_build.get('task_id')}, nvr={latest_build.get('nvr')}"
                     )
                 else:

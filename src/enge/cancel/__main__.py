@@ -5,6 +5,7 @@ from typing import List
 
 import requests
 from rich import box
+from rich.markup import escape
 from rich.table import Table
 
 from enge.utils.http_client import http_delete
@@ -142,7 +143,9 @@ class CancelJobs:
             status_text = "[bold green]✓[/]" if result["success"] else "[bold red]✗[/]"
 
             # Keep full task ID for display
-            table.add_row(result["task_id"], status_text, result["message"])
+            table.add_row(
+                escape(result["task_id"]), status_text, escape(result["message"])
+            )
 
             if result["success"]:
                 successful_count += 1
