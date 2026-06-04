@@ -13,6 +13,7 @@ from enge.utils.source_target_parser import (
     merge_tmt_context,
     format_ami_compose_name,
 )
+from enge.utils.globals import VERBOSE
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.dispatch.artifacts import ArtifactResolver
 from enge.utils.reportportal_helper import create_launch as rp_create_launch
@@ -150,8 +151,11 @@ def process_request_spec(
     shared_archive_filename: str,
     artifact_type: str,
     artifact_resolver: Optional[ArtifactResolver] = None,
-) -> bool:
-    """Prepare SubmitTest, optionally create RP launch, and send the request."""
+) -> Optional[Dict[str, Any]]:
+    """Prepare SubmitTest, optionally create RP launch, and send the request.
+
+    Returns a summary dict on success (for aggregated dispatch table), or None on failure.
+    """
     resolved_opts = _get_parsed_opts()
     set_name = spec.set_name
     tier = spec.tier
@@ -163,23 +167,15 @@ def process_request_spec(
     arch = spec.arch
     effective_values = spec.effective_values
 
-    # Log
-    if set_name and tier and specific_plan:
-        LOGGER.info(
-            f"Processing request {idx}/{total_expected_requests}: {set_name} tier '{tier}' plan '{specific_plan}' [{arch}]"
-        )
-    elif tier and specific_plan:
-        LOGGER.info(
-            f"Processing request {idx}/{total_expected_requests}: tier '{tier}' plan '{specific_plan}' [{arch}]"
-        )
-    elif specific_plan:
-        LOGGER.info(
-            f"Processing request {idx}/{total_expected_requests}: plan '{specific_plan}' [{arch}]"
-        )
-    else:
-        LOGGER.info(
-            f"Processing request {idx}/{total_expected_requests}: {set_name} tier '{tier}' [{arch}]"
-        )
+    label_parts = [f"[{idx}/{total_expected_requests}]"]
+    if set_name:
+        label_parts.append(set_name)
+    if tier:
+        label_parts.append(tier)
+    if specific_plan:
+        label_parts.append(specific_plan)
+    label_parts.append(arch)
+    LOGGER.info(" ".join(label_parts), extra={"style": "bold"})
 
     # RP context (global + per request)
     launch_uuid = None
@@ -231,7 +227,6 @@ def process_request_spec(
         or getattr(resolved_opts, "parallel_limit", None)
         or resolved_opts.tests.get("parallel_limit")
     )
-    submit_test.print_header = idx == 1
 
     # Auto tags if enabled
     submit_test.set_auto_tags(
@@ -254,11 +249,9 @@ def process_request_spec(
         )
         if only_rhsm_mock_cdn or only_rhsm_stage_cdn:
             additional_filters.append("tag:rhsm")
-            LOGGER.debug("Adding tag:rhsm to plan filter")
         elif no_rhsm:
             additional_filters.append("tag:-rhsm")
             LOGGER.info("Excluding RHSM-tagged tests from execution")
-            LOGGER.debug("Adding tag:-rhsm to plan filter")
 
         tier_plan_filter = None
         base_plan_filter = None
@@ -270,7 +263,9 @@ def process_request_spec(
                 upgrade_path,
                 additional_filters if additional_filters else None,
             )
-            LOGGER.debug(f"Generated plan filter for tier '{tier}': {tier_plan_filter}")
+            LOGGER.log(
+                VERBOSE, f"Generated plan filter for tier '{tier}': {tier_plan_filter}"
+            )
         else:
             base_plan_filter = generate_tier_plan_filter(
                 [],
@@ -278,14 +273,16 @@ def process_request_spec(
                 upgrade_path,
                 additional_filters if additional_filters else None,
             )
-            LOGGER.debug(f"Generated base non-tier plan filter: {base_plan_filter}")
+            LOGGER.log(
+                VERBOSE, f"Generated base non-tier plan filter: {base_plan_filter}"
+            )
         cli_planfilter = getattr(resolved_opts.cli_args, "planfilter", None)
         submit_test.planfilter = cli_planfilter or tier_plan_filter or base_plan_filter
         if specific_plan:
-            LOGGER.debug(f"Using specific plan: {specific_plan}")
+            LOGGER.log(VERBOSE, f"Using specific plan: {specific_plan}")
     except ValueError as e:
         LOGGER.error(f"Failed to generate plan filter for tier '{tier}': {e}")
-        return False
+        return None
 
     # Prepare TMT context and environment variables
     class TempOpts:
@@ -432,7 +429,7 @@ def process_request_spec(
             LOGGER.warning(
                 f"No artifact information found for {set_name} tier: {tier} arch: {arch}"
             )
-            return False
+            return None
         # Populate artifacts
         first_build = info[0]
         # AMI sources: construct compose name with architecture suffix
@@ -500,9 +497,35 @@ def process_request_spec(
                 )
         except Exception as e:
             LOGGER.error(f"Failed to create ReportPortal launch for request {idx}: {e}")
-            return False
+            return None
 
     # Send request
+    output_format = getattr(resolved_opts.cli_args, "output_format", "terminal")
+    submit_test.compact_output = output_format != "json"
+    submit_test.silent_output = output_format == "json"
     req_header, req_payload = submit_test.build_payload()
     submit_test.send_request(req_payload, req_header)
-    return True
+
+    task_id = None
+    if submit_test.log_artifact_url:
+        task_id = submit_test.log_artifact_url.rsplit("/", 1)[-1]
+
+    return {
+        "summary": submit_test.dispatch_summary,
+        "set_name": set_name,
+        "tier": tier,
+        "plan": specific_plan,
+        "arch": arch,
+        "compose": submit_test.compose,
+        "artifacts": [
+            {
+                "type": a.get("type"),
+                "id": a.get("id"),
+                "nvr": a.get("nvr"),
+                "packages": a.get("packages", []),
+            }
+            for a in submit_test.artifacts
+        ],
+        "results_url": submit_test.log_artifact_url,
+        "task_id": task_id,
+    }

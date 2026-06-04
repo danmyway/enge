@@ -7,6 +7,7 @@ from datetime import datetime
 
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from enge.utils.errors import ValidationError
@@ -488,8 +489,8 @@ def colorize(result, label=None):
     label = label if label else result
     style = _rich_style_for_result(result)
     if style:
-        return f"[{style}]{label}[/]"
-    return label
+        return f"[{style}]{escape(str(label))}[/]"
+    return escape(str(label))
 
 
 def main(result_table=None):
@@ -525,16 +526,18 @@ def main(result_table=None):
                         continue
                     console.print(f"{title:<20}{value}", style="dim")
 
-            jira_mode = (
-                getattr(parsed_opts.cli_args, "jira", False)
-                or getattr(parsed_opts.cli_args, "output_format", "terminal")
-                == "gitlab"
-            )
+            output_fmt = getattr(parsed_opts.cli_args, "output_format", "terminal")
+            jira_mode = getattr(parsed_opts.cli_args, "jira", False)
             if jira_mode:
                 plain = Console(no_color=True, highlight=False)
                 print("{noformat}")
                 plain.print(table)
                 print("{noformat}")
+            elif output_fmt == "gitlab":
+                plain = Console(no_color=True, highlight=False)
+                print("```")
+                plain.print(table)
+                print("```")
             else:
                 console.print(table)
 

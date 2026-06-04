@@ -21,11 +21,13 @@ Key responsibilities delegated to helpers:
 
 Errors are surfaced as exceptions and mapped to exit codes in the top-level CLI.
 """
+import json
 import logging
 import sys
 from typing import List, Dict, Any, Optional
 
 from enge.utils.globals import ARTIFACT_MAPPING
+from enge.utils.console import console
 from enge.utils.opt_manager import parsed_opts
 from .tf_send_request import SubmitTest
 from enge.utils.reportportal_helper import create_launch as rp_create_launch
@@ -114,7 +116,6 @@ def setup_submit_test(shared_archive_filename: Optional[str] = None) -> SubmitTe
         )
 
         submit_test.parallel_limit = getattr(parsed_opts, "parallel_limit", None)
-        submit_test.print_header = True
 
         # Validate essential fields
         if not submit_test.api_key:
@@ -344,10 +345,60 @@ def _maybe_create_rp_launch(
     )
 
 
+def _print_dispatch_summaries(
+    results: List[Dict[str, Any]], output_format: str
+) -> None:
+    """Print all collected request summaries in the requested format."""
+    if output_format == "json":
+        json_output = {
+            "requests": [
+                {k: v for k, v in r.items() if k != "summary"} for r in results
+            ],
+            "total": len(results),
+            "successful": len(results),
+        }
+        print(json.dumps(json_output, indent=2))
+    elif output_format == "gitlab":
+        print("```")
+        for r in results:
+            summary = r.get("summary")
+            if summary:
+                print(summary)
+        print("```")
+        print()
+        print("| Set | Tier | Arch | Results |")
+        print("|---|---|---|---|")
+        for r in results:
+            set_name = r.get("set_name") or "-"
+            tier = r.get("tier") or "-"
+            arch = r.get("arch") or "-"
+            if r.get("status") == "failed":
+                cell = f"FAILED: {r.get('error', 'unknown')}"
+            elif r.get("results_url"):
+                cell = r["results_url"]
+            else:
+                cell = "dry run"
+            print(f"| {set_name} | {tier} | {arch} | {cell} |")
+    else:
+        for r in results:
+            if r.get("status") == "failed":
+                console.print(
+                    f"FAILED  {r.get('set_name', '?')}/{r.get('tier', '?')}/{r.get('arch', '?')}: {r.get('error', 'unknown')}",
+                    style="error",
+                )
+            else:
+                summary = r.get("summary")
+                if summary:
+                    print(summary)
+
+
 def main() -> int:
     global artifact_type
     try:
-        # tests_repo_base_url is validated by centralized validation in opt_manager.py
+        output_format = getattr(parsed_opts.cli_args, "output_format", "terminal")
+        if output_format == "json":
+            logging.getLogger().setLevel(logging.WARNING)
+
         if getattr(parsed_opts.cli_args, "copr", None):
             # Resolve repo URL lazily
             repo_url = parsed_opts.tests.get("git_url") or parsed_opts.project.get(
@@ -405,22 +456,19 @@ def main() -> int:
         tiers, plans = _compute_tiers_and_plans()
         artifact_type = _determine_artifact_type()
 
+        dispatch_results: List[Dict[str, Any]] = []
+
         # Check if we have individual test sets (new approach)
         if (
             hasattr(parsed_opts, "individual_test_sets")
             and parsed_opts.individual_test_sets
         ):
-            # Process each test set independently
             all_set_requests = expand_set_requests()
-
-            # Process all set requests using helper
             total_expected_requests = len(all_set_requests)
-            LOGGER.info(
-                f"Preparing to process {total_expected_requests} request(s) from test sets"
-            )
+            LOGGER.info(f"Dispatching {total_expected_requests} request(s)")
             resolver = ArtifactResolver()
             for idx, spec in enumerate(all_set_requests, 1):
-                ok = process_request_spec(
+                result = process_request_spec(
                     idx,
                     total_expected_requests,
                     spec,
@@ -428,42 +476,19 @@ def main() -> int:
                     artifact_type,
                     resolver,
                 )
-                if ok:
+                if result:
+                    dispatch_results.append({**result, "idx": idx})
                     successful_requests += 1
-                    total_requests += 1
+                total_requests += 1
 
         else:
-            # Fall back to original logic for non-test-set requests
             submit_test = setup_submit_test(
                 shared_archive_filename=shared_archive_filename
             )
 
-            # Import tier generation function if needed
             if tiers:
                 tier_config = parsed_opts.tests.get("tier", {})
                 upgrade_path = parsed_opts.upgrade_path_alias
-
-            # Calculate total requests to show progress - now we combine tiers with plans
-            if tiers:
-                # When we have tiers, we process one request per tier (or tier+plan combination)
-                if plans:
-                    # Create one request per (tier, plan) combination
-                    total_expected_requests = len(tiers) * len(plans)
-                    LOGGER.info(
-                        f"Preparing to process {total_expected_requests} request(s) ({len(tiers)} tier(s) × {len(plans)} plan(s))"
-                    )
-                else:
-                    # Just tiers, no specific plans
-                    total_expected_requests = len(tiers)
-                    LOGGER.info(
-                        f"Preparing to process {total_expected_requests} tier-based request(s)"
-                    )
-            else:
-                # When we have only plans, we process one request per plan
-                total_expected_requests = len(plans)
-                LOGGER.info(
-                    f"Preparing to process {total_expected_requests} plan-based request(s)"
-                )
 
             resolver = ArtifactResolver()
             validate_plan_filters(plans)
@@ -474,9 +499,9 @@ def main() -> int:
                     "No requests to process: no tiers/plans resolved into concrete requests."
                 )
                 return 1
+            LOGGER.info(f"Dispatching {total_expected_requests} request(s)")
             for i, spec in enumerate(specs, 1):
-                # Reuse set flow processor for uniformity
-                ok = process_request_spec(
+                result = process_request_spec(
                     i,
                     total_expected_requests,
                     spec,
@@ -484,13 +509,22 @@ def main() -> int:
                     artifact_type,
                     resolver,
                 )
-                if ok:
+                if result:
+                    dispatch_results.append({**result, "idx": i})
                     successful_requests += 1
                 total_requests += 1
 
-        LOGGER.info(
-            f"Completed processing: {successful_requests}/{total_requests} requests successful"
-        )
+        if output_format != "json":
+            done_style = (
+                "bold green" if successful_requests == total_requests else "bold yellow"
+            )
+            LOGGER.info(
+                f"Done: {successful_requests}/{total_requests} submitted",
+                extra={"style": done_style},
+            )
+
+        if dispatch_results:
+            _print_dispatch_summaries(dispatch_results, output_format)
 
         if successful_requests == 0:
             LOGGER.critical("No requests were successfully submitted!")

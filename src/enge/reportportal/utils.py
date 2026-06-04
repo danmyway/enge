@@ -14,6 +14,7 @@ from datetime import datetime
 from dataclasses import dataclass
 
 import lxml.etree
+from rich.markup import escape
 
 LOGGER = logging.getLogger(__name__)
 
@@ -754,7 +755,7 @@ def show_dryrun_finish_data(
     )
     kv.add_row()
     kv.add_row("Request Headers:", "")
-    kv.add_row("", f"Authorization: Bearer {token[:10]}...")
+    kv.add_row("", "Authorization: Bearer ***REDACTED***")
     kv.add_row("", "Content-Type: application/json")
     kv.add_row()
     kv.add_row("Request Body:", "")
@@ -763,7 +764,7 @@ def show_dryrun_finish_data(
         kv.add_row()
         kv.add_row("Attributes Details:", "")
         for attr in attributes:
-            kv.add_row("", f"  {attr['key']}: {attr['value']}")
+            kv.add_row("", f"  {escape(attr['key'])}: {escape(attr['value'])}")
 
     panel = Panel(
         kv,
@@ -773,9 +774,11 @@ def show_dryrun_finish_data(
         ),
         border_style="blue",
     )
+    from enge.utils import redact_sensitive
+
     console.print()
     console.print(panel)
-    print(json.dumps(finish_data, indent=2, ensure_ascii=False))
+    print(json.dumps(redact_sensitive(finish_data), indent=2, ensure_ascii=False))
     console.print()
 
 
@@ -858,7 +861,10 @@ def show_dryrun_delete_logs(
             if len(message) > 80:
                 message = message[:77] + "..."
             message = message.replace("\n", " ")
-            kv.add_row("", f"  [{level}] (id={log_id}) {message}")
+            kv.add_row(
+                "",
+                f"  [{escape(str(level))}] (id={escape(str(log_id))}) {escape(message)}",
+            )
         if len(logs) > sample_size:
             kv.add_row("", f"  ... and {len(logs) - sample_size} more")
 
@@ -896,7 +902,10 @@ def show_dryrun_delete_stale(launches: List[Dict[str, Any]]) -> None:
         name = launch.get("name", "Unknown")
         uuid = launch.get("uuid", launch.get("id", "?"))
         lid = launch.get("id", "?")
-        kv.add_row("", f"  - {name} (id={lid}, uuid={uuid})")
+        kv.add_row(
+            "",
+            f"  - {escape(str(name))} (id={escape(str(lid))}, uuid={escape(str(uuid))})",
+        )
 
     word = "launch" if len(launches) == 1 else "launches"
     panel = Panel(

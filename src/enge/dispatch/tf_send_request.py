@@ -7,7 +7,9 @@ from typing import Optional, Dict, Any, List
 
 from enge.utils.http_client import http_get, http_post
 
-from enge.utils import FormatText, get_datetime
+from enge.utils import get_datetime, redact_sensitive
+from rich.markup import escape
+from enge.utils.console import console
 from enge.utils.opt_manager import parsed_opts
 from enge.utils.source_target_parser import normalize_tmt_compose_context
 from enge.utils.globals import (
@@ -69,12 +71,13 @@ class SubmitTest:
         self.request_status: Optional[str] = None
         self.log_artifact_url: Optional[str] = None
         self.dispatch_summary: Optional[str] = None
-        self.print_header: bool = True
         self.set_tag: Optional[List[str]] = getattr(
             parsed_opts.cli_args, "set_tag", None
         )
         self.auto_tag_enabled: bool = getattr(parsed_opts.cli_args, "auto_tag", False)
         self.auto_generated_tags: List[str] = []
+        self.compact_output: bool = False
+        self.silent_output: bool = False
 
     def set_launch_uuid(self, launch_uuid: Optional[str]) -> None:
         """Set the ReportPortal launch UUID after creation."""
@@ -441,146 +444,129 @@ class SubmitTest:
         return self.authorization_header, self.payload_raw
 
     def _response_watcher(self, log_artifact_url):
-        # Hardcoded 20 second timeout for Testing Farm API response (as per README)
         response_timeout = RESPONSE_WATCHER_WAIT_SECONDS_DEFAULT
-        clear_line = "\x1b[2K"
-        while True:
-            response = http_get(log_artifact_url, timeout=REQUEST_POLL_TIMEOUT)
-            response_status = response.status_code
-            response_message = response.reason
-            print(end=clear_line)
-            print(
-                FormatText.format_text(
-                    f"Waiting for a successful response for {response_timeout} seconds. ",
-                    bold=True,
-                ),
-                f"Current response is: {response_status} {response_message}",
-                end="\r",
-                flush=True,
-            )
-            time.sleep(1)
-            response_timeout -= 1
-            if response_status > 200 and response_timeout == 0:
-                print(end=clear_line)
-                print(
-                    f"{FormatText.BOLD}Processing the request takes longer this time.\n"
-                    f"The request response is still {response_status} {response_message}\n"
-                    f"Here is the link for the requested job, try refreshing the website after a couple of minutes.\n",
-                    flush=True,
+        with console.status("Waiting for response...") as status:
+            while True:
+                response = http_get(log_artifact_url, timeout=REQUEST_POLL_TIMEOUT)
+                response_status = response.status_code
+                response_message = response.reason
+                status.update(
+                    f"Waiting for response ({response_timeout}s)... "
+                    f"{response_status} {response_message}"
                 )
-                print(self.dispatch_summary)
-                break
-            elif response_status == 200:
-                print("\nResponse successful!\n")
-                print(self.dispatch_summary)
-                break
+                time.sleep(1)
+                response_timeout -= 1
+                if response_status > 200 and response_timeout == 0:
+                    break
+                elif response_status == 200:
+                    break
+
+        if response_status == 200:
+            LOGGER.info("Response successful!")
+        else:
+            LOGGER.warning(
+                f"Processing the request takes longer this time. "
+                f"Response is still {response_status} {response_message}. "
+                f"Try refreshing the link after a couple of minutes."
+            )
+        print(self.dispatch_summary)
 
     def assess_summary_message(self):
-        # Always show a clear summary separator for consistency
-        if self.print_header:
-            # First request - show full context
-            summary_header = "\n~ REQUEST SUMMARY ~"
-        else:
-            # Subsequent requests - show simpler separator
-            summary_header = "\n~ SUMMARY ~"
+        from rich.panel import Panel
+        from rich.table import Table
+        from io import StringIO
+        from rich.console import Console as RenderConsole
 
-        # Build artifact information display
-        artifact_info = ""
-        if self.artifacts:
-            artifact_info = (
-                f"   Artifacts:        {len(self.artifacts)} build(s) included\n"
-            )
-            for artifact in self.artifacts:
-                # Show NVR and packages
-                packages = (
-                    artifact.get("packages", [])
-                    if artifact.get("packages")
-                    else [
-                        f"artifact type: {artifact.get('type', None)}, artifact id: {artifact.get('id', None)}"
-                    ]
-                )
-                pkg_count = len(packages)
+        kv = Table.grid(padding=(0, 2))
+        kv.add_column(style="bold")
+        kv.add_column()
 
-                if artifact.get("nvr"):
-                    artifact_info += f"                     • {artifact['type']}: {artifact['id']} ({artifact['nvr']})\n"
-                else:
-                    pkg_str = (
-                        f"{pkg_count} package(s)"
-                        if pkg_count > 1
-                        else (packages[0] if packages else "no packages")
-                    )
-                    artifact_info += f"                     • {artifact['type']}: {artifact['id']} ({pkg_str})\n"
+        kv.add_row("Source compose:", escape(self.compose or ""))
+        if self.target_compose:
+            kv.add_row("Target compose:", escape(self.target_compose))
 
-                # Always show package list if multiple packages
-                if pkg_count > 1:
-                    for pkg in packages:
-                        artifact_info += f"                       - {pkg}\n"
-        else:
-            artifact_info = "   Artifacts:        Using compose artifacts\n"
-
-        # Format plan information
-        plan_info = f"   Plan:             {self.plan if self.plan else 'Auto-selected via plan filter'}\n"
+        kv.add_row(
+            "Plan:", escape(self.plan) if self.plan else "Auto-selected via plan filter"
+        )
         if self.test_name:
-            plan_info += f"   Test name:        {self.test_name}\n"
+            kv.add_row("Test name:", escape(self.test_name))
         if self.planfilter:
-            plan_info += f"   Plan filter:      {self.planfilter}\n"
+            kv.add_row("Plan filter:", escape(self.planfilter))
         if self.testfilter:
-            plan_info += f"   Test filter:      {self.testfilter}\n"
+            kv.add_row("Test filter:", escape(self.testfilter))
 
-        # Format architecture information - use set-specific data if available
         architectures = (
             self.set_architectures
             if self.set_architectures is not None
             else getattr(parsed_opts, "architectures", [])
         )
         if len(architectures) == 1:
-            arch_info = f"   Architecture:     {architectures[0]}\n"
+            kv.add_row("Architecture:", architectures[0])
         else:
-            arch_info = f"   Architectures:    {', '.join(architectures)}\n"
+            kv.add_row("Architectures:", ", ".join(architectures))
 
-        # Format pool information
         pool = (
             self.set_pool
             if self.set_pool is not None
             else getattr(parsed_opts, "pool", None)
         )
-        pool_info = f"   Pool:             {pool}\n" if pool else ""
+        if pool:
+            kv.add_row("Pool:", pool)
 
-        # Format target compose information
-        target_compose_info = ""
-        if self.target_compose:
-            target_compose_info = f"   Target compose:   {self.target_compose}\n"
+        if self.artifacts:
+            artifact_lines = []
+            for artifact in self.artifacts:
+                packages = (
+                    artifact.get("packages", [])
+                    if artifact.get("packages")
+                    else [f"{artifact.get('type')}: {artifact.get('id')}"]
+                )
+                if artifact.get("nvr"):
+                    artifact_lines.append(
+                        f"• {artifact['type']}: {artifact['id']} ({artifact['nvr']})"
+                    )
+                else:
+                    pkg_str = (
+                        f"{len(packages)} package(s)"
+                        if len(packages) > 1
+                        else (packages[0] if packages else "no packages")
+                    )
+                    artifact_lines.append(
+                        f"• {artifact['type']}: {artifact['id']} ({pkg_str})"
+                    )
+                if len(packages) > 1:
+                    for pkg in packages:
+                        artifact_lines.append(f"  - {pkg}")
+            kv.add_row(f"Artifacts ({len(self.artifacts)}):", "\n".join(artifact_lines))
+        else:
+            kv.add_row("Artifacts:", "Using compose artifacts")
 
-        self.dispatch_summary = (
-            FormatText.format_text(f"{summary_header}\n", bold=True)
-            + f"   Source compose:   {self.compose}\n"
-            + target_compose_info
-            + plan_info
-            + arch_info
-            + pool_info
-            + artifact_info
-            + f"   Test results:     {self.log_artifact_url}\n"
-            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+        results_url = self.log_artifact_url or "[pending]"
+        kv.add_row("Test results:", results_url)
+
+        panel = Panel(
+            kv, title="[bold]REQUEST SUMMARY[/]", border_style="dim", expand=False
         )
 
-        def _handle_dry_run():
-            from pygments import highlight, lexers, formatters
+        buf = StringIO()
+        from enge.utils.console import console as _console
 
-            LOGGER.info("DRY RUN | Printing out requested payload:")
-            # Use stored payload if available (for rerun), otherwise build from attributes
+        terminal_width = min(_console.width, 200)
+        render_console = RenderConsole(file=buf, no_color=True, width=terminal_width)
+        render_console.print(panel)
+        self.dispatch_summary = buf.getvalue()
+
+        if getattr(parsed_opts.cli_args, "dryrun", False):
             if self.payload_raw:
                 payload_to_display = self.payload_raw
             else:
                 _, payload_to_display = self.build_payload()
-            payload_formatted = json.dumps(payload_to_display, indent=4)
-            colorful_json = highlight(
-                payload_formatted, lexers.JsonLexer(), formatters.TerminalFormatter()
-            )
-            self.dispatch_summary = colorful_json
-            return self.dispatch_summary
-
-        if getattr(parsed_opts.cli_args, "dryrun", False):
-            self.dispatch_summary = _handle_dry_run()
+            self.dryrun_payload = redact_sensitive(payload_to_display)
+            output_format = getattr(parsed_opts.cli_args, "output_format", "terminal")
+            if output_format != "json":
+                LOGGER.info("DRY RUN | Printing out requested payload:")
+                print(json.dumps(redact_sensitive(payload_to_display), indent=4))
+            self.dispatch_summary = None
 
         return self.dispatch_summary
 
@@ -588,10 +574,8 @@ class SubmitTest:
         # Check for dry run first - don't send actual request if dry run is enabled
         if getattr(parsed_opts.cli_args, "dryrun", False):
             LOGGER.debug("Dry run mode - skipping actual request to Testing Farm")
-            # Store the payload for dry run display (may be a pre-built payload for rerun)
             self.payload_raw = payload_raw
-            self.dispatch_summary = self.assess_summary_message()
-            print(self.dispatch_summary)
+            self.assess_summary_message()
             return
 
         try:
@@ -604,11 +588,18 @@ class SubmitTest:
             task_id = response.json()["id"]
             self.log_artifact_url = f"{self.log_artifact_base_url}/{task_id}"
             self.dispatch_summary = self.assess_summary_message()
-            # Only wait for response if --no-wait flag is not set
-            if getattr(parsed_opts.cli_args, "action", None) != "rerun" and getattr(
+            if self.silent_output:
+                pass
+            elif getattr(parsed_opts.cli_args, "action", None) != "rerun" and getattr(
                 parsed_opts.cli_args, "wait", False
             ):
                 self._response_watcher(self.log_artifact_url)
+                self.dispatch_summary = None
+            elif self.compact_output:
+                LOGGER.info(
+                    f"Submitted: {self.log_artifact_url}",
+                    extra={"style": "bold green"},
+                )
             else:
                 print(self.dispatch_summary)
 
