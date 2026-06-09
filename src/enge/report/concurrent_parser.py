@@ -253,7 +253,7 @@ class ConcurrentRequestParser:
         background = None
         if task_result.request_state == "COMPLETE":
             background = FormatText.BG_GREEN
-        elif task_result.request_state == "QUEUED":
+        elif task_result.request_state in ("NEW", "QUEUED"):
             background = FormatText.BG_BLUE
         elif task_result.request_state == "RUNNING":
             background = FormatText.BG_CYAN
@@ -276,8 +276,8 @@ class ConcurrentRequestParser:
             LOGGER.debug(f"[{uuid_short}] Task was canceled and will be skipped")
             return
 
-        # Handle waiting for running tasks
-        if task_result.request_state in ("QUEUED", "RUNNING"):
+        # Handle waiting for in-progress tasks
+        if task_result.request_state in ("NEW", "QUEUED", "RUNNING"):
             if parsed_opts.cli_args.action == "rerun" or getattr(
                 parsed_opts.cli_args, "wait", False
             ):
@@ -288,7 +288,7 @@ class ConcurrentRequestParser:
                 update_retval(NO_RESULT)
                 task_result.should_skip = True
                 # Set specific skip reason based on state
-                if task_result.request_state == "QUEUED":
+                if task_result.request_state in ("NEW", "QUEUED"):
                     task_result.skip_reason = "queued"
                 else:  # RUNNING
                     task_result.skip_reason = "running"
