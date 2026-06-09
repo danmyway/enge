@@ -30,6 +30,12 @@ AMI_ARCH_SEPARATORS = {"alma": " ", "rocky": "."}
 # Only these architectures are available for AMI sources on AWS EC2
 VALID_AMI_ARCHITECTURES = {"x86_64", "aarch64"}
 
+# Symbolic RHEL composes (pass-through to Testing Farm, no repinning)
+SYMBOLIC_RHEL_COMPOSE_PATTERN = re.compile(
+    r"^RHEL-(\d+)-(rhui|sap-rhui|sap-ha-rhui)$",
+    re.IGNORECASE,
+)
+
 
 def _strip_ami_arch_suffix(spec: str) -> str:
     """Strip a trailing architecture suffix (space- or dot-separated) from an AMI name."""
@@ -134,8 +140,9 @@ def parse_compose_spec(
 
     Args:
         spec: Either a version string like "8.10", full compose name like "RHEL-8.10.0-Nightly",
-              CentOS Stream format like "CentOS-Stream-9", or an AMI source alias/name
-              for Alma Linux or Rocky Linux (e.g., "alma97", "AlmaLinux OS 9.7.20251118 x86_64")
+              symbolic RHUI compose like "RHEL-8-rhui", CentOS Stream format like "CentOS-Stream-9",
+              or an AMI source alias/name for Alma Linux or Rocky Linux
+              (e.g., "alma97", "AlmaLinux OS 9.7.20251118 x86_64")
         config: Configuration dictionary (optional, will be loaded if not provided)
 
     Returns:
@@ -254,6 +261,24 @@ def parse_compose_spec(
             "is_centos_stream": False,
             "is_ami_source": False,
             "is_major_only": False,
+            "os_type": "rhel",
+        }
+
+    # Symbolic RHUI composes (e.g., RHEL-8-rhui) — pass through without repinning
+    rhui_match = SYMBOLIC_RHEL_COMPOSE_PATTERN.match(spec_stripped)
+    if rhui_match:
+        major = int(rhui_match.group(1))
+        suffix = rhui_match.group(2).lower()
+        compose_name = f"RHEL-{major}-{suffix}"
+        LOGGER.debug(f"Parsed symbolic RHUI spec '{spec_stripped}' as: {compose_name}")
+        return {
+            "major": major,
+            "minor": 0,
+            "compose_name": compose_name,
+            "is_version_only": False,
+            "is_centos_stream": False,
+            "is_ami_source": False,
+            "is_major_only": True,
             "os_type": "rhel",
         }
 
