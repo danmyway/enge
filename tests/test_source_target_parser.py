@@ -140,6 +140,40 @@ class TestSourceTargetParser(unittest.TestCase):
         env_vars = generate_environment_variables(source_spec, target_spec)
         self.assertNotIn("TARGET_OS", env_vars)
 
+    def test_symbolic_rhui_compose_specs(self):
+        cases = [
+            ("RHEL-8-rhui", "RHEL-8-rhui"),
+            ("RHEL-9-sap-rhui", "RHEL-9-sap-rhui"),
+            ("RHEL-8-sap-ha-rhui", "RHEL-8-sap-ha-rhui"),
+            ("rhel-8-rhui", "RHEL-8-rhui"),
+        ]
+        for spec, expected_compose in cases:
+            with self.subTest(spec=spec):
+                parsed = parse_compose_spec(spec, self.minimal_config)
+                self.assertEqual(parsed["compose_name"], expected_compose)
+                self.assertEqual(parsed["major"], int(expected_compose.split("-")[1]))
+                self.assertEqual(parsed["minor"], 0)
+                self.assertTrue(parsed["is_major_only"])
+                self.assertFalse(parsed["is_centos_stream"])
+                self.assertFalse(parsed["is_ami_source"])
+
+    def test_symbolic_rhui_source_target_config(self):
+        source_spec, target_spec = parse_source_target_config(
+            "RHEL-8-rhui", "9.4", self.minimal_config
+        )
+        self.assertEqual(source_spec["compose_name"], "RHEL-8-rhui")
+        self.assertEqual(source_spec["major"], 8)
+        self.assertTrue(source_spec["is_major_only"])
+
+        env_vars = generate_environment_variables(source_spec, target_spec)
+        self.assertEqual(env_vars["SOURCE_RELEASE"], "8")
+        self.assertEqual(env_vars["TARGET_RELEASE"], "9.4")
+
+        context = generate_tmt_context(source_spec, target_spec)
+        self.assertEqual(context["distro"], "rhel-8")
+        self.assertEqual(context["source_compose"], "RHEL-8-rhui")
+        self.assertEqual(context["upgrade_path"], "8to9")
+
 
 class TestAMISourceParser(unittest.TestCase):
     """Tests for Alma Linux and Rocky Linux AMI source parsing."""
