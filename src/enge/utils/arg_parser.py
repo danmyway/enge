@@ -9,7 +9,10 @@ ensuring clear, consistent, and conflict-free argument definitions.
 import argparse
 import pathlib
 
-import argcomplete
+try:
+    import argcomplete
+except ImportError:
+    argcomplete = None
 from typing import Optional
 
 
@@ -624,7 +627,8 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help_text="Show which tasks would be cancelled without actually cancelling them.",
     )
 
-    argcomplete.autocomplete(parser)
+    if argcomplete:
+        argcomplete.autocomplete(parser)
     parsed_args = parser.parse_args(args)
 
     return parsed_args
