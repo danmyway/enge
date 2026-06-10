@@ -63,8 +63,10 @@ def create_launch(
             )
             from enge.utils.console import console
 
+            from enge.utils import redact_sensitive
+
             LOGGER.info("DRY RUN | ReportPortal launch payload that would be sent:")
-            print(json.dumps(payload, indent=4))
+            print(json.dumps(redact_sensitive(payload), indent=4))
         except Exception as e:
             LOGGER.warning(f"DRY RUN | Could not generate ReportPortal payload: {e}")
         return None
