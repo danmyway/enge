@@ -132,6 +132,54 @@ Enge provides several commands for comprehensive test workflow management:<br>
 `rerun` re-dispatches failed or errored test jobs.<br>
 `cancel` cancels running or queued Testing Farm tasks.
 
+#### Common Options
+
+**Output format (`-o` / `--format`)**
+
+Controls how results are rendered. Available modes:
+- `terminal` (default) — colored rich output with panels and tables
+- `json` — machine-readable JSON on stdout; logs go to stderr
+- `gitlab` — plain text wrapped in triple-backtick fences for GitLab MR comments
+
+The hidden `--jira` flag produces `{noformat}` fences for Jira tickets.
+
+**Verbosity (`-v` / `--verbose`)**
+
+- Default — INFO-level messages
+- `-v` — VERBOSE-level (extra detail without full debug noise)
+- `-vv` or `--debug` — DEBUG-level (all internal tracing)
+
+**Dry run (`-n` / `--dryrun`)**
+
+Shows what would be sent without making API calls. Sensitive fields in payloads are redacted.
+
+**Short flags**
+
+| Long form | Short |
+|-----------|-------|
+| `--source` | `-s` |
+| `--target` | `-t` |
+| `--tier` | `-T` |
+| `--plan` | `-p` |
+| `--set` | `-S` |
+| `--dryrun` | `-n` |
+
+**Test set discovery (`--list-sets` / `--list-sets-detail`)**
+
+Quick-look at configured test sets without running anything:
+```bash
+enge test --list-sets            # brief table: name, path, arch, tiers
+enge test --list-sets-detail     # full table: all set fields
+```
+
+**Shell completion**
+
+Tab completion is available when `argcomplete` is installed:
+```bash
+pip install argcomplete
+eval "$(register-python-argcomplete enge)"
+```
+
 ##### Test
 
 The goal of enge is to make requesting test jobs as easy as possible.<br>
