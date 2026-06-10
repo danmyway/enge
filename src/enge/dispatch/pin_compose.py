@@ -91,7 +91,10 @@ def _filter_relevant_composes(compose_list, version_info):
     LOGGER.debug(
         f"Compose filter: {len(exact_matches)} exact + {len(other_distro)} other matches for {target_distro} {target_major}.{target_minor}"
     )
-    return result[:15]
+    final = result[:15]
+    if final:
+        LOGGER.debug(f"Matched composes: {final}")
+    return final
 
 
 def _filter_relevant_symbolic_composes(symbolic_composes, version_info):

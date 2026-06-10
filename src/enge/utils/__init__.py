@@ -5,9 +5,10 @@ This module provides common utilities including date/time helpers.
 """
 
 import calendar
+import copy
 import re
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 
 _RELATIVE_DATE_RE = re.compile(r"^(\d+)([hdwmy])$", re.IGNORECASE)
@@ -74,3 +75,27 @@ def get_timestamp() -> str:
         Current timestamp in YYYY-MM-DD HH:MM:SS format
     """
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+_SENSITIVE_RE = re.compile(
+    r"(token|api_key|apikey|secret|password|authorization)", re.IGNORECASE
+)
+_REDACTED = "***REDACTED***"
+
+
+def redact_sensitive(obj: Any) -> Any:
+    """Return a deep copy of *obj* with sensitive values replaced.
+
+    Never mutates the input — the payloads sent to APIs keep real credentials.
+    """
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if _SENSITIVE_RE.search(k):
+                out[k] = _REDACTED
+            else:
+                out[k] = redact_sensitive(v)
+        return out
+    if isinstance(obj, list):
+        return [redact_sensitive(item) for item in obj]
+    return copy.deepcopy(obj) if isinstance(obj, (dict, list)) else obj
