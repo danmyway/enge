@@ -118,6 +118,70 @@ class TestSetFlow(unittest.TestCase):
         self.assertTrue(ok)
         mock_send.assert_called_once()
 
+    @patch("enge.dispatch.set_flow._get_parsed_opts")
+    def test_process_request_spec_failure_returns_dict(self, mock_parsed_opts):
+        """Failure paths must return a dict with status='failed', not None."""
+        po = MagicMock()
+        po.testing_farm = {"api_key": "token"}
+        po.tests = {
+            "git_url": "https://git.example/repo",
+            "git_ref": "main",
+            "parallel_limit": 5,
+            "tier": {},
+        }
+        po.project = {"repo_url": "https://git.example/repo", "name": "pkg"}
+        po.cli_args = MagicMock()
+        po.cli_args.testfilter = None
+        po.cli_args.test = None
+        po.cli_args.planfilter = None
+        po.cli_args.environment = None
+        po.cli_args.rp = False
+        po.cli_args.dryrun = False
+        po.config = {}
+        mock_parsed_opts.return_value = po
+
+        spec = RequestSpec(
+            set_name="fail-set",
+            tier="bad-tier",
+            plan="/plans/p1",
+            arch="x86_64",
+            source_spec={"major": 9, "minor": 2, "compose_name": "RHEL-9.2.0"},
+            target_spec={"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"},
+            upgrade_path="rhel-9.2-to-9.4",
+            effective_values={},
+        )
+
+        with patch(
+            "enge.dispatch.set_flow.generate_tier_plan_filter",
+            side_effect=ValueError("bad tier"),
+        ), patch(
+            "enge.dispatch.set_flow.generate_environment_variables", return_value={}
+        ), patch(
+            "enge.dispatch.set_flow.parse_environment_variables", return_value={}
+        ), patch(
+            "enge.dispatch.set_flow.merge_set_environment_variables", return_value={}
+        ), patch(
+            "enge.dispatch.tf_send_request.parsed_opts",
+            new=MagicMock(
+                testing_farm_endpoint=MagicMock(
+                    log_artifact_baseurl="http://logs",
+                    api_endpoint_url="http://api",
+                )
+            ),
+        ):
+            result = process_request_spec(
+                idx=1,
+                total_expected_requests=1,
+                spec=spec,
+                shared_archive_filename="shared",
+                artifact_type="compose",
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["set_name"], "fail-set")
+        self.assertIn("error", result)
+
 
 if __name__ == "__main__":
     unittest.main()
