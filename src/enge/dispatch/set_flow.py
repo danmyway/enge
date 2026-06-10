@@ -282,7 +282,13 @@ def process_request_spec(
             LOGGER.log(VERBOSE, f"Using specific plan: {specific_plan}")
     except ValueError as e:
         LOGGER.error(f"Failed to generate plan filter for tier '{tier}': {e}")
-        return None
+        return {
+            "status": "failed",
+            "set_name": set_name,
+            "tier": tier,
+            "arch": arch,
+            "error": str(e),
+        }
 
     # Prepare TMT context and environment variables
     class TempOpts:
@@ -429,7 +435,13 @@ def process_request_spec(
             LOGGER.warning(
                 f"No artifact information found for {set_name} tier: {tier} arch: {arch}"
             )
-            return None
+            return {
+                "status": "failed",
+                "set_name": set_name,
+                "tier": tier,
+                "arch": arch,
+                "error": "no artifact information found",
+            }
         # Populate artifacts
         first_build = info[0]
         # AMI sources: construct compose name with architecture suffix
@@ -497,7 +509,13 @@ def process_request_spec(
                 )
         except Exception as e:
             LOGGER.error(f"Failed to create ReportPortal launch for request {idx}: {e}")
-            return None
+            return {
+                "status": "failed",
+                "set_name": set_name,
+                "tier": tier,
+                "arch": arch,
+                "error": str(e),
+            }
 
     # Send request
     output_format = getattr(resolved_opts.cli_args, "output_format", "terminal")
@@ -510,7 +528,8 @@ def process_request_spec(
     if submit_test.log_artifact_url:
         task_id = submit_test.log_artifact_url.rsplit("/", 1)[-1]
 
-    return {
+    result = {
+        "status": "submitted",
         "summary": submit_test.dispatch_summary,
         "set_name": set_name,
         "tier": tier,
@@ -529,3 +548,6 @@ def process_request_spec(
         "results_url": submit_test.log_artifact_url,
         "task_id": task_id,
     }
+    if getattr(submit_test, "dryrun_payload", None) is not None:
+        result["payload"] = submit_test.dryrun_payload
+    return result

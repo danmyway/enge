@@ -350,12 +350,14 @@ def _print_dispatch_summaries(
 ) -> None:
     """Print all collected request summaries in the requested format."""
     if output_format == "json":
+        successful = sum(1 for r in results if r.get("status") == "submitted")
         json_output = {
             "requests": [
                 {k: v for k, v in r.items() if k != "summary"} for r in results
             ],
             "total": len(results),
-            "successful": len(results),
+            "successful": successful,
+            "failed": len(results) - successful,
         }
         print(json.dumps(json_output, indent=2))
     elif output_format == "gitlab":
@@ -396,8 +398,6 @@ def main() -> int:
     global artifact_type
     try:
         output_format = getattr(parsed_opts.cli_args, "output_format", "terminal")
-        if output_format == "json":
-            logging.getLogger().setLevel(logging.WARNING)
 
         if getattr(parsed_opts.cli_args, "copr", None):
             # Resolve repo URL lazily
@@ -478,7 +478,8 @@ def main() -> int:
                 )
                 if result:
                     dispatch_results.append({**result, "idx": idx})
-                    successful_requests += 1
+                    if result.get("status") == "submitted":
+                        successful_requests += 1
                 total_requests += 1
 
         else:
@@ -511,7 +512,8 @@ def main() -> int:
                 )
                 if result:
                     dispatch_results.append({**result, "idx": i})
-                    successful_requests += 1
+                    if result.get("status") == "submitted":
+                        successful_requests += 1
                 total_requests += 1
 
         if output_format != "json":
