@@ -89,6 +89,7 @@ class ReportPortalLaunch:
         description: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         tmt_context: Optional[Dict[str, Any]] = None,
+        extra_tags: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Generate the launch payload for the ReportPortal API.
@@ -98,6 +99,7 @@ class ReportPortalLaunch:
             description: Launch description.
             context: Context for name generation (event, tier, arch, ...).
             tmt_context: TMT context dict — stored as launch attributes.
+            extra_tags: Additional tags to append (duplicates silently skipped).
         """
         if not name:
             name = self.generate_launch_name(context)
@@ -110,6 +112,13 @@ class ReportPortalLaunch:
             "startTime": int(datetime.now().timestamp() * 1000),
             "tags": ["enge", "automated"],
         }
+
+        if extra_tags:
+            seen = set(launch_data["tags"])
+            for tag in extra_tags:
+                if tag not in seen:
+                    launch_data["tags"].append(tag)
+                    seen.add(tag)
 
         if tmt_context:
             attributes = []
@@ -135,6 +144,7 @@ class ReportPortalLaunch:
         description: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         tmt_context: Optional[Dict[str, Any]] = None,
+        extra_tags: Optional[List[str]] = None,
     ) -> str:
         """
         Create a new launch in ReportPortal.
@@ -143,7 +153,11 @@ class ReportPortalLaunch:
             str: UUID of the created launch
         """
         launch_data = self.generate_launch_payload(
-            name, description, context, tmt_context
+            name=name,
+            description=description,
+            context=context,
+            tmt_context=tmt_context,
+            extra_tags=extra_tags,
         )
 
         try:

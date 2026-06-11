@@ -663,17 +663,12 @@ def _create_rerun_launch_for_payload(
     if is_dryrun:
         try:
             rp_launch = ReportPortalLaunch()
-            # Pass full TMT context for attribute generation, mirroring dispatch flow
             payload_data = rp_launch.generate_launch_payload(
-                name=launch_name, context=rerun_context, tmt_context=tmt_context
+                name=launch_name,
+                context=rerun_context,
+                tmt_context=tmt_context,
+                extra_tags=["rerun"],
             )
-
-            # Add "rerun" tag manually if not present
-            if "tags" in payload_data:
-                if "rerun" not in payload_data["tags"]:
-                    payload_data["tags"].append("rerun")
-            else:
-                payload_data["tags"] = ["rerun"]
 
             import json
             from enge.utils import redact_sensitive
@@ -687,32 +682,11 @@ def _create_rerun_launch_for_payload(
     else:
         try:
             rp_launch = ReportPortalLaunch()
-            # Override generate_launch_payload temporarily or modify launch after creation?
-            # Better: The create_launch method uses generate_launch_payload internally.
-            # We can't easily inject tags into generate_launch_payload without modifying ReportPortalLaunch class
-            # or subclassing it.
-            # BUT: generate_launch_payload is a method on the instance.
-            # We can monkey-patch it or just rely on the standard tags + tmt_context attributes.
-            # Wait, the user wants 'rerun' tag in ADDITION to 'automated', 'enge'.
-
-            # Let's subclass temporarily to inject the tag
-            class RerunReportPortalLaunch(ReportPortalLaunch):
-                def generate_launch_payload(
-                    self, name=None, description=None, context=None, tmt_context=None
-                ):
-                    data = super().generate_launch_payload(
-                        name, description, context, tmt_context
-                    )
-                    if "tags" in data:
-                        if "rerun" not in data["tags"]:
-                            data["tags"].append("rerun")
-                    else:
-                        data["tags"] = ["rerun"]
-                    return data
-
-            rp_launch = RerunReportPortalLaunch()
             launch_uuid = rp_launch.create_launch(
-                name=launch_name, context=rerun_context, tmt_context=tmt_context
+                name=launch_name,
+                context=rerun_context,
+                tmt_context=tmt_context,
+                extra_tags=["rerun"],
             )
             return launch_uuid
         except Exception as e:
