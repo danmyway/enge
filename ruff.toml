@@ -1,0 +1,30 @@
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "C901", "BLE"]
+ignore = ["E501"]  # line length enforced by formatter
+
+[lint.mccabe]
+max-complexity = 12
+
+[lint.per-file-ignores]
+# Ratchet list — remove entries as modules are refactored. Do not add new entries.
+"src/enge/utils/opt_manager.py" = ["BLE001", "C901"]
+"src/enge/reportportal/operations.py" = ["BLE001", "C901"]
+"src/enge/reportportal/__main__.py" = ["BLE001", "C901"]
+"src/enge/report/concurrent_parser.py" = ["BLE001", "C901"]
+"src/enge/reportportal/utils.py" = ["BLE001", "C901"]
+"src/enge/utils/config_parser.py" = ["BLE001", "C901"]
+"src/enge/rerun/__main__.py" = ["BLE001", "C901"]
+"src/enge/utils/tf_artifact.py" = ["BLE001", "C901"]
+"src/enge/__main__.py" = ["BLE001", "C901"]
+"src/enge/dispatch/set_flow.py" = ["BLE001", "C901"]
+"src/enge/dispatch/__main__.py" = ["BLE001", "C901"]
+"src/enge/utils/reportportal_helper.py" = ["BLE001"]
+"src/enge/utils/http_client.py" = ["BLE001"]
+"src/enge/utils/console.py" = ["BLE001"]
+"src/enge/cancel/__main__.py" = ["BLE001"]
+"src/enge/dispatch/plan_flow.py" = ["C901"]
+"src/enge/dispatch/tf_send_request.py" = ["C901"]
+"src/enge/report/__main__.py" = ["C901"]
+"src/enge/utils/source_target_parser.py" = ["C901"]
