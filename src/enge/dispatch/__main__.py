@@ -30,8 +30,6 @@ from enge.utils.globals import ARTIFACT_MAPPING
 from enge.utils.console import console
 from enge.utils.opt_manager import parsed_opts
 from .tf_send_request import SubmitTest, clear_latest_jobs_file
-from enge.utils.reportportal_helper import create_launch as rp_create_launch
-from enge.utils.globals import RP_COMPATIBLE_EVENT
 from .set_flow import expand_set_requests, process_request_spec
 from .artifacts import ArtifactResolver
 from enge.utils.validators import (
@@ -315,34 +313,6 @@ def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
         from enge.utils.errors import ValidationError
 
         raise ValidationError("Failed to get artifact information") from e
-
-
-def _maybe_create_rp_launch(
-    *, context: Optional[Dict[str, Any]], tmt_context: Optional[Dict[str, Any]]
-) -> Optional[str]:
-    """Create ReportPortal launch when event is compatible.
-
-    Decision order (highest to lowest): CLI --event > first test set 'event' > None
-    """
-    event_name = getattr(parsed_opts.cli_args, "event", None)
-    if not event_name:
-        if (
-            hasattr(parsed_opts, "individual_test_sets")
-            and parsed_opts.individual_test_sets
-        ):
-            event_name = parsed_opts.individual_test_sets[0]["effective_values"].get(
-                "event"
-            )
-    if not event_name or event_name not in RP_COMPATIBLE_EVENT:
-        return None
-
-    return rp_create_launch(
-        context=context,
-        tmt_context=tmt_context,
-        config=parsed_opts.config,
-        cli_args=parsed_opts.cli_args,
-        dryrun=getattr(parsed_opts.cli_args, "dryrun", False),
-    )
 
 
 def _print_dispatch_summaries(

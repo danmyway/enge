@@ -629,26 +629,6 @@ def merge_tmt_context(
     return merged
 
 
-def merge_environment_variables(
-    auto_env_vars: Dict[str, str], cli_env_vars: Dict[str, str]
-) -> Dict[str, str]:
-    """
-    Merge automatically generated environment variables with CLI-provided ones.
-    CLI variables take precedence over automatic ones.
-
-    Args:
-        auto_env_vars: Automatically generated environment variables
-        cli_env_vars: Environment variables from CLI --environment option
-
-    Returns:
-        Merged environment variables dictionary
-    """
-    merged_vars = auto_env_vars.copy()
-    merged_vars.update(cli_env_vars)  # CLI vars override automatic ones
-
-    return merged_vars
-
-
 def parse_architectures(arch_input: List[str]) -> List[str]:
     """
     Parse architecture specification from command line or config.
@@ -796,45 +776,6 @@ def parse_source_target_config(
     except ValueError as e:
         LOGGER.error(f"Failed to parse source/target configuration: {e}")
         raise
-
-
-def parse_test_sets(set_names: List[str], config: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Parse and merge test set configurations.
-
-    Args:
-        set_names: List of test set names to load
-        config: Configuration dictionary containing test sets
-
-    Returns:
-        Merged configuration dictionary from all specified sets
-
-    Raises:
-        ValueError: If any test set is not found in configuration
-    """
-    if not set_names:
-        return {}
-
-    # Get test sets from config
-    test_sets = config.get("tests", {}).get("set", {})
-
-    merged_config = {}
-
-    for set_name in set_names:
-        if set_name not in test_sets:
-            available_sets = list(test_sets.keys())
-            raise ValueError(
-                f"Test set '{set_name}' not found in configuration. Available sets: {available_sets}"
-            )
-
-        set_config = test_sets[set_name]
-        LOGGER.debug(f"Loading test set '{set_name}': {set_config}")
-
-        # Merge this set's configuration
-        merged_config = merge_test_set_config(merged_config, set_config)
-
-    LOGGER.debug(f"Merged test set configuration: {merged_config}")
-    return merged_config
 
 
 def merge_test_set_config(
