@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 from enge.utils.validators import validate_git_repository, validate_plan_filters
-from enge.utils.errors import ValidationError, NetworkError
+from enge.utils.errors import ValidationError
 
 
 class TestValidators(unittest.TestCase):

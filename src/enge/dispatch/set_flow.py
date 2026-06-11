@@ -179,7 +179,6 @@ def process_request_spec(
 
     # RP context (global + per request)
     launch_uuid = None
-    shortened_uuid = None
     rp_request_context = None
     per_set_event = effective_values.get("event") or getattr(
         resolved_opts.cli_args, "event", None

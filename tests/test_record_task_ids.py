@@ -7,7 +7,6 @@ dispatch loop and record_task_ids() only appends.  Dry-run invocations must
 never clear the file.
 """
 
-import os
 import tempfile
 import unittest
 from pathlib import Path

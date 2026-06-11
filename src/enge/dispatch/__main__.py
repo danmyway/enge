@@ -380,29 +380,8 @@ def main() -> int:
         total_requests = 0
         successful_requests = 0
 
-        # Handle ReportPortal launch creation based on event compatibility (global context)
-        global_context = {
-            "source_release": (
-                f"{parsed_opts.source_spec['major']}.{parsed_opts.source_spec['minor']}"
-                if hasattr(parsed_opts, "source_spec")
-                else None
-            ),
-            "target_release": (
-                f"{parsed_opts.target_spec['major']}.{parsed_opts.target_spec['minor']}"
-                if hasattr(parsed_opts, "target_spec")
-                else None
-            ),
-            "source_compose": (
-                parsed_opts.source_spec.get("compose_name")
-                if hasattr(parsed_opts, "source_spec")
-                else None
-            ),
-        }
-
-        # Add event/set name and architecture for launch naming (used only when creating RP launch)
+        # Add event/set name for launch naming (used only when creating RP launch)
         event_name = getattr(parsed_opts.cli_args, "event", None)
-        set_name = None
-        architecture = None
         if (
             not event_name
             and hasattr(parsed_opts, "individual_test_sets")
@@ -410,12 +389,6 @@ def main() -> int:
         ):
             first_set = parsed_opts.individual_test_sets[0]
             event_name = first_set["effective_values"].get("event")
-            set_name = first_set["name"]
-        architectures = getattr(
-            parsed_opts.cli_args, "architectures", None
-        ) or parsed_opts.tests.get("architectures", [])
-        if architectures:
-            architecture = architectures[0]
 
         # Generate a single shared archive filename for all requests from this command
         from enge.utils import get_datetime
@@ -454,13 +427,7 @@ def main() -> int:
                 total_requests += 1
 
         else:
-            submit_test = setup_submit_test(
-                shared_archive_filename=shared_archive_filename
-            )
-
-            if tiers:
-                tier_config = parsed_opts.tests.get("tier", {})
-                upgrade_path = parsed_opts.upgrade_path_alias
+            setup_submit_test(shared_archive_filename=shared_archive_filename)
 
             resolver = ArtifactResolver()
             validate_plan_filters(plans)

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from enge.reportportal.operations import _launch_start_time_ms
+from enge.reportportal.__main__ import ReportPortalLaunch
 
 
 class TestLaunchStartTimeMs(unittest.TestCase):
@@ -26,8 +27,6 @@ class TestLaunchStartTimeMs(unittest.TestCase):
     def test_none_for_unsupported_type(self):
         self.assertIsNone(_launch_start_time_ms(None))
 
-
-from enge.reportportal.__main__ import ReportPortalLaunch
 
 _RP_CONFIG_STUB = SimpleNamespace(
     config={

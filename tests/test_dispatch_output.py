@@ -86,7 +86,7 @@ class TestPrintDispatchSummaries(unittest.TestCase):
             output = mock_out.getvalue()
         self.assertIn("FAILED: no artifact", output)
         lines = output.splitlines()
-        failed_row = [l for l in lines if "aarch64" in l][0]
+        failed_row = [line for line in lines if "aarch64" in line][0]
         self.assertNotIn("dry run", failed_row)
 
     def test_terminal_failed_emits_error_line(self):

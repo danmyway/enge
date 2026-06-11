@@ -2,7 +2,6 @@
 
 import unittest
 from unittest.mock import patch, MagicMock
-from io import StringIO
 
 from enge.__main__ import _handle_list_sets
 

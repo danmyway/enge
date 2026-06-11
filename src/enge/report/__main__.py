@@ -1,7 +1,6 @@
 import logging
 import os
 import re
-import sys
 import uuid
 from datetime import datetime
 
@@ -274,8 +273,8 @@ def build_table_comparison():
     headers = []
     uuid_mapping = {}
 
-    for i, uuid in enumerate(uuids, 1):
-        data = parsed_dict[uuid]
+    for i, uid in enumerate(uuids, 1):
+        data = parsed_dict[uid]
         # Get architecture from first testsuite or default to Unknown
         arch = (
             data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
@@ -284,8 +283,8 @@ def build_table_comparison():
         header = f"{arch} ({i})"
         headers.append(header)
         # Store mapping for display below table
-        result_url = f"{parsed_opts.testing_farm_endpoint.log_artifact_baseurl}/{uuid}"
-        uuid_mapping[i] = {"uuid": uuid, "url": result_url, "arch": arch}
+        result_url = f"{parsed_opts.testing_farm_endpoint.log_artifact_baseurl}/{uid}"
+        uuid_mapping[i] = {"uuid": uid, "url": result_url, "arch": arch}
 
     fields = ["Test Plan"] + headers
     for field in fields:
@@ -370,7 +369,6 @@ def build_table():
 
     # For multiple UUIDs, we'll create separate tables
     tables_list = []
-    uuid_url_mapping = {}
 
     planname_split_index = 0
     testname_split_index = 0

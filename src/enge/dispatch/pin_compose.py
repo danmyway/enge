@@ -1,4 +1,3 @@
-from calendar import c
 from enge.utils.opt_manager import parsed_opts
 import requests
 from enge.utils.http_client import http_get

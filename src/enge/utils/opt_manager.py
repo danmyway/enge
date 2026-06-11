@@ -2,7 +2,6 @@
 import logging
 import re
 import os
-import sys
 from typing import Dict, List, Any, Optional, Callable
 from contextlib import contextmanager
 
