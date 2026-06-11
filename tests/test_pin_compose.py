@@ -3,7 +3,6 @@ import unittest
 from unittest.mock import patch
 
 from enge.dispatch.pin_compose import _pin_compose_with_fallback
-from enge.utils.errors import ValidationError, NetworkError
 
 
 class TestPinCompose(unittest.TestCase):

@@ -10,7 +10,6 @@ from enge.utils.console import (
     configure_console,
     console,
     EngeLogHandler,
-    ENGE_THEME,
 )
 
 

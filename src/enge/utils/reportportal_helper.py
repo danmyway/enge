@@ -61,7 +61,6 @@ def create_launch(
             payload = rp_launch.generate_launch_payload(
                 name=launch_name, context=context, tmt_context=tmt_context
             )
-            from enge.utils.console import console
 
             from enge.utils import redact_sensitive
 

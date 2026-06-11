@@ -8,7 +8,7 @@ import calendar
 import copy
 import re
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 
 _RELATIVE_DATE_RE = re.compile(r"^(\d+)([hdwmy])$", re.IGNORECASE)

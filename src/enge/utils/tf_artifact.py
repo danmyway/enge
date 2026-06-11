@@ -2,7 +2,6 @@
 import os
 import re
 import sys
-from datetime import datetime
 from logging import getLogger
 from typing import List, Optional, Dict, Tuple, Any
 
@@ -249,8 +248,6 @@ class CoprRef:
             "build",
         )
 
-        # Use source compose
-        source_compose = options.source_spec["compose_name"]
         info = []
 
         # Handle reference-based search (alias:ref format)

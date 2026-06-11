@@ -6,7 +6,6 @@ This module provides functions to parse source and target specifications
 and derive all necessary values for Testing Farm payloads.
 """
 
-from mimetypes import suffix_map
 import re
 from typing import Dict, Tuple, Optional, Any, List
 from logging import getLogger

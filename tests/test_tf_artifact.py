@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from enge.utils.tf_artifact import BrewRef
-from enge.utils.errors import ValidationError, ConfigurationError
+from enge.utils.errors import ConfigurationError
 
 
 class TestBrewRef(unittest.TestCase):
