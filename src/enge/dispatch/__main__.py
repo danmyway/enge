@@ -29,7 +29,7 @@ from typing import List, Dict, Any, Optional
 from enge.utils.globals import ARTIFACT_MAPPING
 from enge.utils.console import console
 from enge.utils.opt_manager import parsed_opts
-from .tf_send_request import SubmitTest
+from .tf_send_request import SubmitTest, clear_latest_jobs_file
 from enge.utils.reportportal_helper import create_launch as rp_create_launch
 from enge.utils.globals import RP_COMPATIBLE_EVENT
 from .set_flow import expand_set_requests, process_request_spec
@@ -457,6 +457,8 @@ def main() -> int:
         artifact_type = _determine_artifact_type()
 
         dispatch_results: List[Dict[str, Any]] = []
+        if not getattr(parsed_opts.cli_args, "dryrun", False):
+            clear_latest_jobs_file()
 
         # Check if we have individual test sets (new approach)
         if (
