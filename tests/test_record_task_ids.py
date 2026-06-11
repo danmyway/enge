@@ -97,24 +97,26 @@ class TestRecordTaskIds(unittest.TestCase):
         clear_latest_jobs_file()  # must not raise
 
     def test_dryrun_does_not_clear_latest_file(self):
-        """When dryrun=True the latest file must be left untouched."""
+        """When dryrun=True the helper must not clear the file."""
+        from enge.dispatch.tf_send_request import maybe_clear_latest_jobs_file
+
         sentinel = "previous-run-id"
         Path(self.latest_path).write_text(f"{sentinel}\n")
 
         self.opts.cli_args.dryrun = True
-        if not getattr(self.opts.cli_args, "dryrun", False):
-            clear_latest_jobs_file()
+        maybe_clear_latest_jobs_file()  # calls REAL production helper
 
         self.assertTrue(Path(self.latest_path).exists())
         self.assertIn(sentinel, Path(self.latest_path).read_text())
 
     def test_non_dryrun_clears_latest_file(self):
-        """When dryrun=False the latest file must be removed by the guard."""
+        """When dryrun=False the helper must remove the file."""
+        from enge.dispatch.tf_send_request import maybe_clear_latest_jobs_file
+
         Path(self.latest_path).write_text("old-run-id\n")
 
         self.opts.cli_args.dryrun = False
-        if not getattr(self.opts.cli_args, "dryrun", False):
-            clear_latest_jobs_file()
+        maybe_clear_latest_jobs_file()  # calls REAL production helper
 
         self.assertFalse(Path(self.latest_path).exists())
 

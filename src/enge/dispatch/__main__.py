@@ -29,7 +29,7 @@ from typing import List, Dict, Any, Optional
 from enge.utils.globals import ARTIFACT_MAPPING
 from enge.utils.console import console
 from enge.utils.opt_manager import parsed_opts
-from .tf_send_request import SubmitTest, clear_latest_jobs_file
+from .tf_send_request import SubmitTest, maybe_clear_latest_jobs_file
 from .set_flow import expand_set_requests, process_request_spec
 from .artifacts import ArtifactResolver
 from enge.utils.validators import (
@@ -427,8 +427,7 @@ def main() -> int:
         artifact_type = _determine_artifact_type()
 
         dispatch_results: List[Dict[str, Any]] = []
-        if not getattr(parsed_opts.cli_args, "dryrun", False):
-            clear_latest_jobs_file()
+        maybe_clear_latest_jobs_file()
 
         # Check if we have individual test sets (new approach)
         if (
