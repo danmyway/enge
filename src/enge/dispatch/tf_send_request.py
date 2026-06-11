@@ -36,6 +36,12 @@ def clear_latest_jobs_file():
             pass
 
 
+def maybe_clear_latest_jobs_file() -> None:
+    """Clear the latest-jobs file unless this is a dry-run."""
+    if not getattr(parsed_opts.cli_args, "dryrun", False):
+        clear_latest_jobs_file()
+
+
 class SubmitTest:
     def __init__(
         self,
