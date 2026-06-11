@@ -11,7 +11,7 @@ from rich.markup import escape
 from rich import box
 
 from enge.dispatch.pin_compose import repin_compose
-from enge.dispatch.tf_send_request import SubmitTest
+from enge.dispatch.tf_send_request import SubmitTest, clear_latest_jobs_file
 from enge.report.__main__ import parse_tasks_with_map, parse_request_xunit
 from enge.utils.opt_manager import parsed_opts
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
@@ -793,6 +793,8 @@ def main():
 
     is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
 
+    if not getattr(parsed_opts.cli_args, "dryrun", False):
+        clear_latest_jobs_file()
     # Send each rerun request using the filtered original payload
     for i, payload in enumerate(jobs.rerun_payloads):
         # Add rerun_of to tmt.context

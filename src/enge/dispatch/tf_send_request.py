@@ -21,6 +21,21 @@ from enge.utils.globals import (
 LOGGER = logging.getLogger(__name__)
 
 
+def clear_latest_jobs_file():
+    """Remove the latest-jobs file at the start of a dispatch run.
+
+    Called once per enge invocation before any record_task_ids() calls so that
+    a fresh run always starts with an empty file rather than appending to
+    leftovers from a previous run.
+    """
+    path = parsed_opts.archive_tasks_latest
+    if path:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
 class SubmitTest:
     def __init__(
         self,
@@ -277,8 +292,6 @@ class SubmitTest:
             self.archive_tasks_file = ".".join([self.archive_tasks_file] + sorted_tags)
 
         def _handle_archive_files():
-            if self.latest_tasks_file and os.path.exists(self.latest_tasks_file):
-                os.unlink(self.latest_tasks_file)
             if self.archive_tasks_default_path and not os.path.exists(
                 self.archive_tasks_default_path
             ):
