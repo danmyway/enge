@@ -1,4 +1,6 @@
+import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from enge.report.concurrent_parser import ConcurrentRequestParser, TaskResult
 
@@ -21,37 +23,39 @@ def _task_result(state: str) -> TaskResult:
     )
 
 
-def test_new_state_waits_when_wait_flag_set(monkeypatch):
-    monkeypatch.setattr(
-        "enge.report.concurrent_parser.parsed_opts",
-        SimpleNamespace(cli_args=SimpleNamespace(action="report", wait=True)),
-    )
+class TestConcurrentParserTaskState(unittest.TestCase):
+    def test_new_state_waits_when_wait_flag_set(self):
+        with patch(
+            "enge.report.concurrent_parser.parsed_opts",
+            SimpleNamespace(cli_args=SimpleNamespace(action="report", wait=True)),
+        ):
+            parser = ConcurrentRequestParser()
+            task_result = _task_result("NEW")
+            wait_called = []
 
-    parser = ConcurrentRequestParser()
-    task_result = _task_result("NEW")
-    wait_called = []
+            def mock_wait(task):
+                wait_called.append(task)
+                task.request_state = "COMPLETE"
 
-    def mock_wait(task):
-        wait_called.append(task)
-        task.request_state = "COMPLETE"
+            parser._wait_for_completion = mock_wait
+            parser._process_task_state(task_result)
 
-    monkeypatch.setattr(parser, "_wait_for_completion", mock_wait)
-    parser._process_task_state(task_result)
+            self.assertEqual(wait_called, [task_result])
+            self.assertEqual(task_result.request_state, "COMPLETE")
+            self.assertFalse(task_result.should_skip)
 
-    assert wait_called == [task_result]
-    assert task_result.request_state == "COMPLETE"
-    assert not task_result.should_skip
+    def test_new_state_skipped_without_wait(self):
+        with patch(
+            "enge.report.concurrent_parser.parsed_opts",
+            SimpleNamespace(cli_args=SimpleNamespace(action="report", wait=False)),
+        ):
+            parser = ConcurrentRequestParser()
+            task_result = _task_result("NEW")
+            parser._process_task_state(task_result)
+
+            self.assertTrue(task_result.should_skip)
+            self.assertEqual(task_result.skip_reason, "queued")
 
 
-def test_new_state_skipped_without_wait(monkeypatch):
-    monkeypatch.setattr(
-        "enge.report.concurrent_parser.parsed_opts",
-        SimpleNamespace(cli_args=SimpleNamespace(action="report", wait=False)),
-    )
-
-    parser = ConcurrentRequestParser()
-    task_result = _task_result("NEW")
-    parser._process_task_state(task_result)
-
-    assert task_result.should_skip
-    assert task_result.skip_reason == "queued"
+if __name__ == "__main__":
+    unittest.main()
