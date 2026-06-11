@@ -16,7 +16,6 @@ from enge.report.__main__ import parse_tasks_with_map, parse_request_xunit
 from enge.utils.opt_manager import parsed_opts
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
 from enge.utils.console import console
-from enge.utils.reportportal_helper import create_launch as rp_create_launch
 
 logger = logging.getLogger(__name__)
 
@@ -80,42 +79,6 @@ def _extract_tags_from_filename(path: Path) -> List[str]:
         return []
     _, *tag_parts = name.split(".")
     return [part for part in tag_parts if part]
-
-
-def _collect_inherited_tags(
-    task_source: Optional[Any],
-    cli_args: Optional[Any] = None,
-    archive_default_path: Optional[str] = None,
-) -> List[str]:
-    """
-    Collect tags from archive files referenced by the rerun command.
-
-    Returns:
-        Ordered list of inherited tags with the 'rerun' marker appended when applicable.
-    """
-    archive_paths = _resolve_archive_sources(
-        task_source,
-        (
-            archive_default_path
-            if archive_default_path is not None
-            else getattr(parsed_opts, "archive_tasks_default", None)
-        ),
-        cli_args or parsed_opts.cli_args,
-    )
-    if not archive_paths:
-        return []
-
-    inherited: List[str] = []
-    for archive_path in archive_paths:
-        inherited.extend(_extract_tags_from_filename(archive_path))
-
-    inherited.append("rerun")
-    tags = _unique_preserve(inherited)
-
-    if tags:
-        logger.debug("Inheriting archive tags for rerun: %s", tags)
-
-    return tags
 
 
 class RerunJobs:
