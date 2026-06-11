@@ -20,9 +20,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Logging now renders to stderr via dedicated console, keeping stdout clean for data output
 - Request summary redesigned as a rich Panel with key-value grid
 - Dispatch output batched — summaries printed after all requests complete
+- `ReportPortalLaunch.generate_launch_payload` and `create_launch` accept `extra_tags: list[str] | None` (appended to default tags, deduplicated)
+- Ruff lint gate added: `ruff check src tests` enforced in CI via pre-commit hook
 
 ### Deprecated
 - `--jira` flag in `report` — use `-o gitlab` for merge-request-friendly output
+
+### Removed
+- Dead functions: `merge_environment_variables`, `parse_test_sets` (source_target_parser), `get_config_value`, `validate_config_section` (config_parser), `_maybe_create_rp_launch` (dispatch), `_collect_inherited_tags` (rerun)
+- Committed AI-generation deliberation comments and runtime `RerunReportPortalLaunch` subclass from `_create_rerun_launch_for_payload`
+- `src/__init__.py` (src directory must not be a Python package)
 
 ### Fixed
 - `-o json` mode no longer silences log output; logs go to stderr independently
@@ -30,3 +37,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - GitLab output format uses triple-backtick fences instead of Jira `{noformat}` tags
 - External strings (compose names, plan names, test results) escaped to prevent rich markup injection
 - Partial dispatch failures now exit with code 2; previously they incorrectly exited 0 due to a request-counting bug
+- `setup.cfg` `url` field had spurious quotes and trailing comma
+- Dryrun guard for latest-jobs file extracted to `maybe_clear_latest_jobs_file()` in tf_send_request; tests now verify the real production function
+- Bare-function tests in `test_auto_tagging`, `test_concurrent_parser`, `test_tf_send_request` converted to `unittest.TestCase` so `python -m unittest discover` collects them
