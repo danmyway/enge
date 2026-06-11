@@ -22,3 +22,8 @@ repos:
       - id: codespell
         args: ["-L", "nd"]
         exclude: tests/
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      - id: ruff
+        args: ["--fix"]
