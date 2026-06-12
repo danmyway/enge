@@ -88,6 +88,18 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   behavior gets a test that **fails when the behavior is removed**; when a
   test guards a guard/branch, mutation-check it (break the code, watch the
   test fail, restore). Tests must not require network.
+  - **`parsed_opts` import trap**: never `from enge.utils.opt_manager import
+    parsed_opts` at module level in a test file — pytest's `safe_getattr`
+    inspects all module-level names during collection, which triggers
+    `_LazyParsedOpts.__getattr__` → `_ensure()` → `ParsedOpts()` → `sys.argv`
+    (pytest's own argv), causing an `ArgumentError`. Import the module instead:
+    `import enge.utils.opt_manager as _opt_manager` and access the singleton
+    as `_opt_manager.parsed_opts` only from inside test methods.
+  - **Bypassing `ParsedOpts.__init__`** for isolated method tests: use
+    `object.__new__(ParsedOpts)` then set `_validation_hooks = {}`,
+    `config = <dict>`, `cli_args = get_arguments(args=[...])`, and
+    `options = po._get_config_options()`. Most validation methods only read
+    these four attributes.
 - **Commits**: imperative subject ≤72 chars, body explains why. Atomic and
   bisectable — every commit must compile standalone
   (`git rebase -i devel --exec "python -m py_compile $(git ls-files '*.py')"`).
