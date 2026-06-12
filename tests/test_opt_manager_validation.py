@@ -23,7 +23,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from enge.utils.errors import ValidationError
+from enge.utils.errors import ConfigurationError, ValidationError
 from enge.utils.opt_manager import ParsedOpts
 from enge.utils.arg_parser import get_arguments
 
@@ -55,6 +55,7 @@ MINIMAL_CONFIG = {
         "tier": {
             "tier0": "tag:tier[0]",
             "tier1": "tag:tier[01]",
+            "tier3": "tag:tier[0123]",
         },
     },
     "copr_api": {
@@ -72,19 +73,16 @@ MINIMAL_CONFIG = {
 # Config with two test sets that use CentOS-Stream-9 as source.
 # CentOS-Stream-N is parsed without any pin_compose network call.
 #
-# NOTE: "tier" is deliberately excluded from the tests section.
-# resolve_effective_values() resolves tiers as:
-#   cli_tier or set_tiers or config_tiers or config_tier
-# When all are None/empty, it falls back to config_tier — which for a real
-# config is the tier mapping dict {"tier0": "tag:tier[0]", ...}.
-# That dict then reaches _initialize_test_attributes as effective_tiers and
-# causes `KeyError: 0` at `first_tier = self.effective_tiers[0]`.
-# Excluding "tier" here avoids that bug so tests can reach the happy path.
+# [tests].tiers = ['tier3'] mirrors the default config fallback added in
+# fix/config-resolution-hardening.  Including it here avoids the need to
+# patch the default-config loader in every full-constructor test.
 SETS_CONFIG = {
     **copy.deepcopy(MINIMAL_CONFIG),
     "tests": {
         "git_url": MINIMAL_CONFIG["tests"]["git_url"],
         "git_ref": MINIMAL_CONFIG["tests"]["git_ref"],
+        "tier": MINIMAL_CONFIG["tests"]["tier"],
+        "tiers": ["tier3"],
         "set": {
             "alpha-set": {
                 "source": "CentOS-Stream-9",
@@ -243,18 +241,19 @@ class TestOptionDependencies(unittest.TestCase):
         self.assertIn("Option dependency", str(ctx.exception))
 
     def test_unknown_tier_raises_with_available_tiers_listed(self):
-        # CHARACTERIZATION: exception message is "Option dependency validation
-        # failed"; the per-tier detail ("Tier 'tier99' not found. Available:
-        # ['tier0', 'tier1']") appears only in the CRITICAL log output.
+        # Pin #4 flipped: detail lines ("Tier 'tier99' not found. Available:
+        # [...]") are now included in the exception message itself (joined),
+        # in addition to the CRITICAL log output which is unchanged.
         po = _make_partial_opts(
             cli_args=get_arguments(
                 args=["test", "-s", "9.7", "-T", "tier99", "--arch", "x86_64"]
             )
         )
         with self.assertLogs("enge.utils.opt_manager", level="CRITICAL") as log:
-            with self.assertRaises(ValidationError):
+            with self.assertRaises(ValidationError) as ctx:
                 po._validate_option_dependencies()
         self.assertTrue(any("tier99" in m for m in log.output))
+        self.assertIn("tier99", str(ctx.exception))
 
     def test_nonexistent_set_raises_validation_error(self):
         po = _make_partial_opts(
@@ -568,6 +567,137 @@ class TestFullConstructorTestAction(unittest.TestCase):
         cli = get_arguments(args=["test", "-s", "CentOS-Stream-9", "-T", "tier0"])
         po = ParsedOpts(cli_args=cli)
         self.assertEqual(po.parallel_limit, PARALLEL_LIMIT_DEFAULT)
+
+
+# ---------------------------------------------------------------------------
+# 6. Tier resolution hierarchy — set-with-no-tier, CLI override, [tests].tiers
+# ---------------------------------------------------------------------------
+
+
+class TestTierResolution(unittest.TestCase):
+    """Tests for the tier selection hierarchy: CLI > set > [tests].tiers.
+
+    The [tests].tier mapping (filter definitions) must NEVER be used as the
+    selection source; [tests].tiers is the list-typed default.
+    """
+
+    @patch("enge.utils.opt_manager.load_config")
+    def test_set_with_no_tier_resolves_to_tests_tiers_default(self, mock_load):
+        # Pin #10 flipped: set-with-no-tier no longer crashes with KeyError: 0.
+        # It resolves to [tests].tiers from the config (the default catch-all).
+        cfg = copy.deepcopy(SETS_CONFIG)
+        # alpha-set has no 'tiers' key; [tests].tiers = ['tier3'] provides the default.
+        mock_load.return_value = cfg
+        cli = get_arguments(args=["test", "-S", "alpha-set"])
+        po = ParsedOpts(cli_args=cli)
+        ev = po.individual_test_sets[0]["effective_values"]
+        self.assertEqual(ev["tiers"], ["tier3"])
+
+    @patch("enge.utils.opt_manager.load_config")
+    def test_cli_tier_overrides_tests_tiers_default(self, mock_load):
+        cfg = copy.deepcopy(SETS_CONFIG)
+        mock_load.return_value = cfg
+        cli = get_arguments(args=["test", "-S", "alpha-set", "-T", "tier0"])
+        po = ParsedOpts(cli_args=cli)
+        ev = po.individual_test_sets[0]["effective_values"]
+        self.assertEqual(ev["tiers"], ["tier0"])
+
+    @patch("enge.utils.opt_manager.load_config")
+    def test_set_tiers_override_tests_tiers_default(self, mock_load):
+        cfg = copy.deepcopy(SETS_CONFIG)
+        cfg["tests"]["set"]["alpha-set"]["tiers"] = ["tier1"]
+        mock_load.return_value = cfg
+        cli = get_arguments(args=["test", "-S", "alpha-set"])
+        po = ParsedOpts(cli_args=cli)
+        ev = po.individual_test_sets[0]["effective_values"]
+        self.assertEqual(ev["tiers"], ["tier1"])
+
+    @patch("enge.utils.opt_manager.load_config")
+    def test_tests_tier_mapping_not_used_for_tier_selection(self, mock_load):
+        # When [tests].tiers is absent and no CLI/set tier is given,
+        # ConfigurationError is raised rather than silently falling back to
+        # the [tests].tier mapping dict (which would cause KeyError: 0 on
+        # subsequent index access).
+        cfg = copy.deepcopy(SETS_CONFIG)
+        cfg["tests"].pop("tiers", None)
+        mock_load.return_value = cfg
+        cli = get_arguments(args=["test", "-S", "alpha-set"])
+        with self.assertRaises(ConfigurationError):
+            ParsedOpts(cli_args=cli)
+
+    def test_no_tiers_anywhere_raises_configuration_error(self):
+        # Direct unit test: resolve_effective_values raises ConfigurationError
+        # when all three tier sources (CLI, set, [tests].tiers) are absent.
+        from enge.utils.source_target_parser import resolve_effective_values
+
+        cfg = copy.deepcopy(MINIMAL_CONFIG)  # has no [tests].tiers
+        cli = get_arguments(args=["test", "-S", "alpha-set"])
+        with self.assertRaises(ConfigurationError) as ctx:
+            resolve_effective_values(cli, {}, cfg)
+        self.assertIn("tiers", str(ctx.exception).lower())
+
+    @patch("enge.utils.opt_manager.load_config")
+    def test_tier_fallback_log_emitted_exactly_once(self, mock_load):
+        # The INFO fallback message for tiers-from-[tests].tiers must appear
+        # exactly once through the full init path.  The validation pass calls
+        # resolve_effective_values with log_fallbacks=False so the INFO line
+        # is suppressed there and only fires on the real init resolution.
+        cfg = copy.deepcopy(SETS_CONFIG)
+        mock_load.return_value = cfg
+        cli = get_arguments(args=["test", "-S", "alpha-set"])
+        with self.assertLogs("enge.utils.source_target_parser", level="INFO") as log:
+            ParsedOpts(cli_args=cli)
+        fallback_msgs = [m for m in log.output if "using default from [tests]" in m]
+        self.assertEqual(len(fallback_msgs), 1)
+
+    def test_tiers_shape_validation_wrong_type_raises(self):
+        # [tests].tiers must be a list.  A string value must fail with
+        # ConfigurationError naming both 'tiers' and 'tier'.
+        cfg = copy.deepcopy(MINIMAL_CONFIG)
+        cfg["tests"]["tiers"] = "tier3"  # string instead of list
+        po = _make_partial_opts(config=cfg)
+        with self.assertRaises(ConfigurationError) as ctx:
+            po._validate_static_configuration()
+        msg = str(ctx.exception)
+        self.assertIn("tiers", msg)
+
+    def test_tier_mapping_wrong_type_raises(self):
+        # [tests].tier must be a table (dict).  A list value must fail with
+        # ConfigurationError naming both keys.
+        cfg = copy.deepcopy(MINIMAL_CONFIG)
+        cfg["tests"]["tier"] = ["tier0", "tier1"]  # list instead of dict
+        po = _make_partial_opts(config=cfg)
+        with self.assertRaises(ConfigurationError) as ctx:
+            po._validate_static_configuration()
+        msg = str(ctx.exception)
+        self.assertIn("tier", msg)
+
+
+# ---------------------------------------------------------------------------
+# 7. Bundled default configuration — ships with correct defaults
+# ---------------------------------------------------------------------------
+
+
+class TestBundledDefaultConfig(unittest.TestCase):
+    def test_bundled_default_config_has_tiers(self):
+        """Pins the shipped default — the crash guard for tier resolution."""
+        import tomllib
+        from importlib.resources import files
+        from pathlib import Path
+
+        try:
+            bundled = Path(files("enge.utils") / "enge_default_config.toml")
+        except (TypeError, ValueError, ModuleNotFoundError):
+            bundled = (
+                Path(__file__).parent.parent
+                / "src"
+                / "enge"
+                / "utils"
+                / "enge_default_config.toml"
+            )
+        with open(bundled, "rb") as f:
+            config = tomllib.load(f)
+        self.assertEqual(config["tests"]["tiers"], ["tier3"])
 
 
 if __name__ == "__main__":

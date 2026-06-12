@@ -13,7 +13,7 @@ from logging import getLogger
 from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
 from enge.utils.globals import RP_COMPATIBLE_EVENT
 from enge.utils.globals import VERBOSE
-from enge.utils.errors import ValidationError
+from enge.utils.errors import ConfigurationError, ValidationError
 
 LOGGER = getLogger(__name__)
 
@@ -811,7 +811,10 @@ def merge_test_set_config(
 
 
 def resolve_effective_values(
-    cli_args: Any, set_config: Dict[str, Any], config: Dict[str, Any]
+    cli_args: Any,
+    set_config: Dict[str, Any],
+    config: Dict[str, Any],
+    log_fallbacks: bool = True,
 ) -> Dict[str, Any]:
     """
     Resolve effective values from CLI args, test sets, and config.
@@ -878,18 +881,28 @@ def resolve_effective_values(
             "tests", {}
         ).get("parallel_limit")
 
-    # Resolve tiers (CLI > Set > Config)
-    # Handle both singular "tier" and plural "tiers" keys
+    # Resolve tier SELECTION (CLI > set > [tests].tiers).
+    # [tests].tier is the filter-definition mapping — never used as a selection source.
     cli_tier = getattr(cli_args, "tier", None)
     set_tiers = set_config.get("tiers")
     config_tiers = config.get("tests", {}).get("tiers")
-    config_tier = config.get("tests", {}).get("tier")
 
-    # Normalize config_tier to list if it's a string
-    if config_tier and isinstance(config_tier, str):
-        config_tier = [config_tier]
-
-    resolved["tiers"] = cli_tier or set_tiers or config_tiers or config_tier
+    if cli_tier:
+        resolved["tiers"] = cli_tier
+    elif set_tiers:
+        resolved["tiers"] = set_tiers
+    elif config_tiers:
+        if log_fallbacks:
+            LOGGER.info(
+                "tiers not specified via CLI or set, using default from [tests]: %s",
+                config_tiers,
+            )
+        resolved["tiers"] = config_tiers
+    else:
+        raise ConfigurationError(
+            "No tiers resolved from CLI, set, or [tests].tiers"
+            " — check the default configuration"
+        )
 
     # Resolve event (CLI > Set)
     resolved["event"] = getattr(cli_args, "event", None) or set_config.get("event")

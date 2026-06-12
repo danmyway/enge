@@ -119,7 +119,10 @@ def merge_configs(default: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, An
     Merge user configuration with default configuration.
 
     User values take precedence over defaults. Nested dictionaries are
-    merged recursively.
+    merged recursively.  Empty string ("") and None from the user config are
+    treated as absent: the default value is inherited when a real default
+    exists.  This lets config authors express "intentionally empty" only when
+    the default is also empty.
 
     Args:
         default: Default configuration dictionary
@@ -134,11 +137,37 @@ def merge_configs(default: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, An
         if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             # Recursively merge nested dictionaries
             merged[key] = merge_configs(merged[key], value)
+        elif value in (None, ""):
+            # Treat None/"" as absent; keep the default if it is non-empty.
+            existing = merged.get(key)
+            if existing in (None, ""):
+                merged[key] = value  # no real default to inherit
         else:
             # User value overwrites default
             merged[key] = value
 
     return merged
+
+
+def _warn_empty_user_values(
+    user: Dict[str, Any], merged: Dict[str, Any], path: str, section: str = ""
+) -> None:
+    """Log one WARNING per key where the user set "" or None but a real default
+    was inherited.  Called from load_config after the merge, where the file
+    path is known."""
+    for key, value in user.items():
+        full_key = f"[{section}].{key}" if section else key
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            _warn_empty_user_values(value, merged[key], path, section=key)
+        elif value in (None, ""):
+            inherited = merged.get(key)
+            if inherited not in (None, ""):
+                LOGGER.warning(
+                    "%s is empty in %s — inheriting default %r",
+                    full_key,
+                    path,
+                    inherited,
+                )
 
 
 def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
@@ -232,6 +261,11 @@ def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
 
     # Merge user config with defaults
     merged_config = merge_configs(default_config, user_config)
+
+    # Warn about keys where the user explicitly wrote "" or None but a real
+    # default was inherited.  One warning per key helps authors understand the rule.
+    loaded_path = next((str(p) for p in expanded_paths if p.exists()), "<unknown>")
+    _warn_empty_user_values(user_config, merged_config, loaded_path)
 
     LOGGER.debug("Configuration loaded and merged with defaults")
     return merged_config
