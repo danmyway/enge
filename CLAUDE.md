@@ -134,3 +134,8 @@ module → unify reportportal task/all-launches pipelines under subcommands →
 manifest-based state store (XDG paths, retires filename tags) →
 config-as-data (RHSM flag presets, source→target mapping table replacing the
 `minor - 6` formula, RP event list).
+
+Planned breaking config change (deferred, coordinate with users):
+rename `[tests].tier` (filter-definition table) to `[tests].tier_definitions` to
+eliminate the naming collision with the `[tests].tiers` selection list; requires a
+migration guide and a config-schema version bump.

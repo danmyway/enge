@@ -104,6 +104,7 @@ project = '' # REQUIRED - for correct functioning of the 'enge rp' commands and 
 [tests]
 git_url = '' # REQUIRED: URL to tests metadata repository
 git_ref = 'main' # REQUIRED: Git ref (branch/tag/commit) to checkout test suite from
+tiers = ['tier3'] # default catch-all (tier3 = 'tag:tier[0123]'); override via -T or per set
 
 
 # ---------------------------------------------------------------------------

@@ -36,9 +36,14 @@ logger = logging.getLogger(__name__)
 
 class TestingFarmEndpoint:
     def __init__(self, api_endpoint_url, log_artifact_baseurl):
-        if not api_endpoint_url or not log_artifact_baseurl:
-            raise ValueError(
-                "Both api_endpoint_url and log_artifact_baseurl are required in [testing_farm] config."
+        missing = []
+        if not api_endpoint_url:
+            missing.append("[testing_farm].api_endpoint_url")
+        if not log_artifact_baseurl:
+            missing.append("[testing_farm].log_artifact_baseurl")
+        if missing:
+            raise ConfigurationError(
+                f"Required Testing Farm URL(s) not configured: {', '.join(missing)}"
             )
         self.api_endpoint_url = api_endpoint_url
         self.log_artifact_baseurl = log_artifact_baseurl
@@ -245,7 +250,7 @@ class ParsedOpts:
                     )
                     try:
                         effective = resolve_effective_values(
-                            self.cli_args, set_cfg, self.config
+                            self.cli_args, set_cfg, self.config, log_fallbacks=False
                         )
                     except Exception:
                         effective = {}
@@ -255,7 +260,9 @@ class ParsedOpts:
                         )
             else:
                 try:
-                    effective = resolve_effective_values(self.cli_args, {}, self.config)
+                    effective = resolve_effective_values(
+                        self.cli_args, {}, self.config, log_fallbacks=False
+                    )
                 except Exception:
                     effective = {}
                 if not effective.get("git_ref"):
@@ -311,9 +318,10 @@ class ParsedOpts:
                 continue
 
             for key in required_keys:
-                # Generic check for other operational defaults
+                # Only check for None: "" is treated as absent at merge time
+                # so it should never reach the validator from a real config load.
                 value = section.get(key)
-                if value is None or value == "":  # Check for None or empty string
+                if value is None:
                     errors.append(
                         f"Missing operational default: [{section_name}].{key}"
                     )
@@ -325,7 +333,10 @@ class ParsedOpts:
             logger.critical(
                 "This indicates a problem with the default configuration file."
             )
-            raise ConfigurationError("Operational defaults validation failed")
+            detail = "\n".join(f"  - {e}" for e in errors)
+            raise ConfigurationError(
+                f"Operational defaults validation failed:\n{detail}"
+            )
 
     def _validate_required_config(self):
         """Validate required configuration for operations that need it."""
@@ -470,7 +481,8 @@ class ParsedOpts:
                 logger.critical("Required configuration validation failed:")
                 for error in errors:
                     logger.critical(f"  - {error}")
-                raise ConfigurationError("Required configuration missing")
+                detail = "\n".join(f"  - {e}" for e in errors)
+                raise ConfigurationError(f"Required configuration missing:\n{detail}")
 
         # ReportPortal configuration required for the 'reportportal' subcommand
         # Only require token here; URL/project may be provided elsewhere and are optional overrides in config
@@ -529,6 +541,33 @@ class ParsedOpts:
         ):
             errors.append("[tests].context must be a dictionary")
 
+        # Shape validation: [tests].tiers must be a list of strings;
+        # [tests].tier must be a table (dict).  A mixup between the two keys
+        # must fail loudly — never produce a KeyError: 0 at dispatch time.
+        if tests_section:
+            config_tiers = tests_section.get("tiers")
+            config_tier = tests_section.get("tier")
+            shape_error = False
+            if config_tiers is not None and not isinstance(config_tiers, list):
+                errors.append(
+                    "[tests].tiers must be a list of strings (tier selection); "
+                    "[tests].tier must be a table (filter definitions). "
+                    f"Got [tests].tiers={type(config_tiers).__name__!r}."
+                )
+                shape_error = True
+            if config_tier is not None and not isinstance(config_tier, dict):
+                errors.append(
+                    "[tests].tier must be a table (filter definitions); "
+                    "[tests].tiers must be a list of strings (tier selection). "
+                    f"Got [tests].tier={type(config_tier).__name__!r}."
+                )
+                shape_error = True
+            if not shape_error and isinstance(config_tiers, list):
+                if not all(isinstance(t, str) for t in config_tiers):
+                    errors.append(
+                        "[tests].tiers must contain only strings (tier names)."
+                    )
+
         # Validate architectures with priority: CLI > Set > Config
         # - When using sets, per-set architectures are validated later during resolution
         # - When not using sets, require architectures from CLI or config
@@ -574,7 +613,8 @@ class ParsedOpts:
             logger.critical("Static configuration validation failed:")
             for error in errors:
                 logger.critical(f"  - {error}")
-            raise ConfigurationError("Static configuration invalid")
+            detail = "\n".join(f"  - {e}" for e in errors)
+            raise ConfigurationError(f"Static configuration invalid:\n{detail}")
 
     def _validate_cli_arguments(self):
         """Validate CLI argument combinations and requirements."""
@@ -680,7 +720,8 @@ class ParsedOpts:
             logger.critical("Option dependency validation failed:")
             for error in errors:
                 logger.critical(f"  - {error}")
-            raise ValidationError("Option dependency validation failed")
+            detail = "\n".join(f"  - {e}" for e in errors)
+            raise ValidationError(f"Option dependency validation failed:\n{detail}")
 
     def _validate_test_sets_internal(self, set_names: List[str]) -> bool:
         """Validate that specified test sets exist and are properly configured."""

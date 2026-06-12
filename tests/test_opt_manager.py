@@ -118,15 +118,16 @@ class TestMergeConfigs(unittest.TestCase):
         self.assertEqual(merged["outer"]["b"], 99)  # user wins
         self.assertEqual(merged["outer"]["c"], 3)  # user-only key added
 
-    def test_user_empty_string_replaces_default(self):
-        # CHARACTERIZATION: empty string from user config overwrites a real
-        # default.  The caller is responsible for treating "" as "missing."
+    def test_user_empty_string_inherits_default(self):
+        # Pin flipped: "" from user config is now treated as absent, so the
+        # default value is inherited.  Validators only check for None.
         merged = merge_configs({"key": "default-value"}, {"key": ""})
-        self.assertEqual(merged["key"], "")
+        self.assertEqual(merged["key"], "default-value")
 
-    def test_user_none_replaces_default(self):
+    def test_user_none_inherits_default(self):
+        # None from user config is also treated as absent; default wins.
         merged = merge_configs({"key": "default-value"}, {"key": None})
-        self.assertIsNone(merged["key"])
+        self.assertEqual(merged["key"], "default-value")
 
     def test_user_only_key_added_to_merged(self):
         merged = merge_configs({"a": 1}, {"b": 2})
@@ -155,6 +156,8 @@ class TestResolveEffectiveValues(unittest.TestCase):
     """Priority chain: CLI arg wins, then test-set config, then top-level config."""
 
     def _cli(self, **kwargs):
+        # tier defaults to ["tier0"] so tests that focus on other fields don't
+        # trigger ConfigurationError from the "no tiers resolved" guard.
         defaults = dict(
             source=None,
             target=None,
@@ -163,7 +166,7 @@ class TestResolveEffectiveValues(unittest.TestCase):
             git_ref=None,
             git_url=None,
             parallel_limit=None,
-            tier=None,
+            tier=["tier0"],
             event=None,
             plan=None,
         )
@@ -195,14 +198,37 @@ class TestResolveEffectiveValues(unittest.TestCase):
         self.assertEqual(result["source"], "cfg-src")
 
     def test_empty_string_cli_falls_through_to_set(self):
-        # CHARACTERIZATION: "" is falsy in the `or` chain, so the set value
-        # wins.  There is no way to "clear" a value by passing --source "".
+        # Pin #3 resolved (no longer surprising): "" is treated as absent and
+        # the set value wins, per the explicit unset rule.
         result = resolve_effective_values(
             self._cli(source=""),
             {"source": "set-src"},
             {},
         )
         self.assertEqual(result["source"], "set-src")
+
+    def test_empty_string_set_falls_through_to_config(self):
+        result = resolve_effective_values(
+            self._cli(source=None),
+            {"source": ""},
+            {"tests": {"source": "cfg-src"}},
+        )
+        self.assertEqual(result["source"], "cfg-src")
+
+    def test_none_falls_through_identically_to_empty_string(self):
+        # None and "" behave identically at every layer.
+        result_none = resolve_effective_values(
+            self._cli(source=None),
+            {"source": None},
+            {"tests": {"source": "cfg-src"}},
+        )
+        result_empty = resolve_effective_values(
+            self._cli(source=""),
+            {"source": ""},
+            {"tests": {"source": "cfg-src"}},
+        )
+        self.assertEqual(result_none["source"], "cfg-src")
+        self.assertEqual(result_empty["source"], "cfg-src")
 
     def test_cli_plans_override_set_and_config(self):
         result = resolve_effective_values(
@@ -305,26 +331,36 @@ class TestOperationalDefaults(unittest.TestCase):
         po._validate_operational_defaults()  # must not raise
 
     def test_missing_common_section_raises_configuration_error(self):
-        # CHARACTERIZATION: the exception message is the summary ("Operational
-        # defaults validation failed"); the per-section detail ("Missing
-        # operational section: [common]") is only in the CRITICAL log output.
+        # Pin #4 flipped: detail lines are now included in the exception
+        # message itself (joined), not only in CRITICAL log output.
         cfg = copy.deepcopy(MINIMAL_CONFIG)
         del cfg["common"]
         po = _make_partial_opts(config=cfg)
         with self.assertLogs("enge.utils.opt_manager", level="CRITICAL") as log:
-            with self.assertRaises(ConfigurationError):
+            with self.assertRaises(ConfigurationError) as ctx:
                 po._validate_operational_defaults()
         self.assertTrue(any("common" in m.lower() for m in log.output))
+        self.assertIn("common", str(ctx.exception).lower())
 
-    def test_empty_string_key_raises_configuration_error(self):
-        # CHARACTERIZATION: empty string is treated the same as None by
-        # _validate_operational_defaults (check: value is None or value == "").
+    def test_empty_string_key_no_longer_raises_configuration_error(self):
+        # Pin #6 flipped: "" is now treated as absent at merge time so the
+        # default is inherited before the validator runs.  The validator only
+        # checks for None; "" reaching it directly (bypassing merge) no longer
+        # triggers an error.
         cfg = copy.deepcopy(MINIMAL_CONFIG)
         cfg["common"]["archive_tasks_latest"] = ""
+        po = _make_partial_opts(config=cfg)
+        po._validate_operational_defaults()  # must not raise
+
+    def test_none_key_still_raises_configuration_error(self):
+        # When no layer provides a value (None), the validator fires.
+        cfg = copy.deepcopy(MINIMAL_CONFIG)
+        cfg["common"]["archive_tasks_latest"] = None
         po = _make_partial_opts(config=cfg)
         with self.assertRaises(ConfigurationError) as ctx:
             po._validate_operational_defaults()
         self.assertIn("Operational defaults", str(ctx.exception))
+        self.assertIn("archive_tasks_latest", str(ctx.exception))
 
     def test_none_key_raises_configuration_error(self):
         cfg = copy.deepcopy(MINIMAL_CONFIG)
@@ -364,6 +400,9 @@ class TestRequiredConfig(unittest.TestCase):
         po._validate_required_config()  # must not raise
 
     def test_test_action_empty_api_key_raises(self):
+        # Pin #7: api_key has no default, so "" is "no value provided" and the
+        # validator fires.  _validate_required_config uses `not value`, which
+        # treats "" the same as None — intentional (empty key is unusable).
         cfg = copy.deepcopy(MINIMAL_CONFIG)
         cfg["testing_farm"]["api_key"] = ""
         po = _make_partial_opts(
@@ -460,17 +499,18 @@ class TestStaticConfiguration(unittest.TestCase):
         po._validate_static_configuration()  # must not raise
 
     def test_test_action_without_cli_or_config_arch_raises(self):
-        # CHARACTERIZATION: exception summary is "Static configuration invalid";
-        # the per-field detail ("No architectures configured...") appears only
-        # in the CRITICAL log output.
+        # Pin #4 flipped: the per-field detail ("No architectures configured...")
+        # is now included in the exception message itself, in addition to the
+        # CRITICAL log output which is unchanged.
         cfg = copy.deepcopy(MINIMAL_CONFIG)
         # No architectures anywhere; no sets
         cli = get_arguments(args=["test", "-s", "9.7", "-T", "tier0"])  # no --arch
         po = _make_partial_opts(config=cfg, cli_args=cli)
         with self.assertLogs("enge.utils.opt_manager", level="CRITICAL") as log:
-            with self.assertRaises(ConfigurationError):
+            with self.assertRaises(ConfigurationError) as ctx:
                 po._validate_static_configuration()
         self.assertTrue(any("architectures" in m.lower() for m in log.output))
+        self.assertIn("architectures", str(ctx.exception).lower())
 
     def test_test_action_with_sets_bypasses_arch_requirement(self):
         # When using --set, per-set architectures are expected; no top-level arch needed.
@@ -707,18 +747,18 @@ class TestFullConstructorReport(unittest.TestCase):
         )
 
     @patch("enge.utils.opt_manager.load_config")
-    def test_empty_endpoint_url_raises_value_error_not_configuration_error(
-        self, mock_load
-    ):
-        # CHARACTERIZATION: TestingFarmEndpoint is constructed unconditionally,
-        # even for non-test actions.  When api_endpoint_url is empty it raises
-        # ValueError (not ConfigurationError), bypassing the normal error path.
-        # _validate_required_config does NOT check endpoint URLs for 'report'.
+    def test_empty_endpoint_url_raises_configuration_error(self, mock_load):
+        # Pin #1 flipped: TestingFarmEndpoint now raises ConfigurationError
+        # (naming the config key), which maps to EXIT_CONFIG_ERROR (99) via
+        # __main__ error handling — not exit 1 as before.
+        # The timing (constructed unconditionally) and _validate_required_config
+        # scope are unchanged — both are AppContext-refactor territory.
         cfg = copy.deepcopy(MINIMAL_CONFIG)
         cfg["testing_farm"]["api_endpoint_url"] = ""
         mock_load.return_value = cfg
-        with self.assertRaises(ValueError):  # ValueError, not ConfigurationError
+        with self.assertRaises(ConfigurationError) as ctx:
             ParsedOpts(cli_args=get_arguments(args=["report"]))
+        self.assertIn("api_endpoint_url", str(ctx.exception))
 
     @patch("enge.utils.opt_manager.load_config")
     def test_validate_opts_propagates_configuration_error(self, mock_load):
@@ -740,11 +780,14 @@ class TestFullConstructorReport(unittest.TestCase):
 class TestTestingFarmEndpoint(unittest.TestCase):
 
     def test_both_urls_required(self):
-        with self.assertRaises(ValueError):
+        # Pin #1 flipped: ConfigurationError now (was ValueError).
+        with self.assertRaises(ConfigurationError) as ctx:
             TestingFarmEndpoint("", "https://logs.example.tf")
-        with self.assertRaises(ValueError):
+        self.assertIn("api_endpoint_url", str(ctx.exception))
+        with self.assertRaises(ConfigurationError) as ctx:
             TestingFarmEndpoint("https://api.example.tf", "")
-        with self.assertRaises(ValueError):
+        self.assertIn("log_artifact_baseurl", str(ctx.exception))
+        with self.assertRaises(ConfigurationError):
             TestingFarmEndpoint("", "")
 
     def test_both_urls_provided_succeeds(self):

@@ -32,6 +32,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `src/__init__.py` (src directory must not be a Python package)
 
 ### Fixed
+- Empty-string config values (`""`) are now treated as absent at every layer; the next
+  precedence layer (default config) is inherited instead of being masked. A WARNING is
+  logged per key where this substitution occurs. Previously `""` was treated as an
+  explicit override, hiding the default silently.
+- Tier selection now falls back to `[tests].tiers` (list) from the merged config when
+  no tier is given via `-T` or per-set `tiers`. Previously the fallback accidentally
+  picked up `[tests].tier` (the filter-definition mapping table), causing a `KeyError: 0`
+  crash. The default config now ships `tiers = ['tier3']` as a catch-all.
+- Missing or misconfigured Testing Farm endpoint URLs now raise a `ConfigurationError`
+  (exit code 99) naming the missing key(s) instead of a bare `ValueError` (exit code 1).
+- Validation errors that collect multiple detail lines now include those details in the
+  exception message instead of only in the CRITICAL log. The full log output is unchanged.
 - `-o json` mode no longer silences log output; logs go to stderr independently
 - `-o json --dry-run` produces a single JSON document instead of interleaved payloads
 - GitLab output format uses triple-backtick fences instead of Jira `{noformat}` tags

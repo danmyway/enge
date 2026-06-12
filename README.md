@@ -820,22 +820,11 @@ enge report --get-tag smoke --since 12h
 
 ## Troubleshooting configuration and validation
 
-#### Empty string overrides vs. inheriting defaults
-
-enge merges your user configuration over the defaults. If you set a key to an empty string (e.g., `[tests].git_ref = ''`), that explicit value overrides the default and is treated as missing by validators. This can trigger errors like:
-
-```
-CRITICAL | Operational defaults validation failed:
-CRITICAL |   - Missing operational default: [tests].git_ref
-CRITICAL | This indicates a problem with the default configuration file.
-CRITICAL | Configuration error: Operational defaults validation failed
-```
-
-To inherit the default value shipped in `enge_default_config.toml`, **omit the key entirely** in your user `enge.toml` (or comment it out). Only set a value when you want to intentionally override the default.
-
-Notes:
-- Set-level values (under `[tests.set.<name>]`) are evaluated when using `--set`. Top-level operational defaults such as `[tests].git_ref` are still validated; leaving them as empty strings will fail validation.
-- If you rely exclusively on set-level configuration, remove or comment out the top-level empty keys to avoid overriding defaults.
+**Empty string and None are treated as unset.** If your `enge.toml` sets a key
+to `''` (empty string) or `null`, enge inherits the default from
+`enge_default_config.toml` for that key.  A warning is logged so you know
+the override was ignored.  Validators only fire when *no layer* provides a
+non-empty value.
 
 Corresponding return code is set based on the results with following logic:
  * 0 - The results are complete for each request and all are pass
