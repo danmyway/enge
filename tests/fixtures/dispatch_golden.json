@@ -1,0 +1,190 @@
+[
+  {
+    "environments": [
+      {
+        "arch": "x86_64",
+        "os": {
+          "compose": "RHEL-8.10.0-20240101.0"
+        },
+        "settings": {
+          "provisioning": {
+            "tags": {
+              "BusinessUnit": "golden-unit"
+            }
+          }
+        },
+        "tmt": {
+          "context": {
+            "arch": "x86_64",
+            "distro": "rhel-8.10",
+            "source_compose": "RHEL-8.10.0-20240101.0",
+            "target_distro": "rhel-9.4",
+            "tier": "tier0",
+            "upgrade_path": "8to9"
+          }
+        },
+        "variables": {
+          "INSTALL_LEAPP_FROM_COMPOSE": "yes",
+          "SOURCE_RELEASE": "8.10",
+          "TARGET_RELEASE": "9.4"
+        }
+      }
+    ],
+    "settings": {
+      "pipeline": {
+        "parallel-limit": null
+      }
+    },
+    "test": {
+      "fmf": {
+        "name": null,
+        "plan_filter": "tag:8to9 & tag:tier[0] & enabled:true",
+        "ref": "main",
+        "test_filter": null,
+        "test_name": null,
+        "url": "https://github.com/oamg/leapp"
+      }
+    }
+  },
+  {
+    "environments": [
+      {
+        "arch": "aarch64",
+        "os": {
+          "compose": "RHEL-8.10.0-20240101.0"
+        },
+        "settings": {
+          "provisioning": {
+            "tags": {
+              "BusinessUnit": "golden-unit"
+            }
+          }
+        },
+        "tmt": {
+          "context": {
+            "arch": "aarch64",
+            "distro": "rhel-8.10",
+            "source_compose": "RHEL-8.10.0-20240101.0",
+            "target_distro": "rhel-9.4",
+            "tier": "tier0",
+            "upgrade_path": "8to9"
+          }
+        },
+        "variables": {
+          "INSTALL_LEAPP_FROM_COMPOSE": "yes",
+          "SOURCE_RELEASE": "8.10",
+          "TARGET_RELEASE": "9.4"
+        }
+      }
+    ],
+    "settings": {
+      "pipeline": {
+        "parallel-limit": null
+      }
+    },
+    "test": {
+      "fmf": {
+        "name": null,
+        "plan_filter": "tag:8to9 & tag:tier[0] & enabled:true",
+        "ref": "main",
+        "test_filter": null,
+        "test_name": null,
+        "url": "https://github.com/oamg/leapp"
+      }
+    }
+  },
+  {
+    "environments": [
+      {
+        "arch": "x86_64",
+        "os": {
+          "compose": "RHEL-8.10.0-20240101.0"
+        },
+        "settings": {
+          "provisioning": {
+            "tags": {
+              "BusinessUnit": "golden-unit"
+            }
+          }
+        },
+        "tmt": {
+          "context": {
+            "arch": "x86_64",
+            "distro": "rhel-8.10",
+            "source_compose": "RHEL-8.10.0-20240101.0",
+            "target_distro": "rhel-9.4",
+            "tier": "tier3",
+            "upgrade_path": "8to9"
+          }
+        },
+        "variables": {
+          "INSTALL_LEAPP_FROM_COMPOSE": "yes",
+          "SOURCE_RELEASE": "8.10",
+          "TARGET_RELEASE": "9.4"
+        }
+      }
+    ],
+    "settings": {
+      "pipeline": {
+        "parallel-limit": null
+      }
+    },
+    "test": {
+      "fmf": {
+        "name": null,
+        "plan_filter": "tag:8to9 & tag:tier[0123] & enabled:true",
+        "ref": "main",
+        "test_filter": null,
+        "test_name": null,
+        "url": "https://github.com/oamg/leapp"
+      }
+    }
+  },
+  {
+    "environments": [
+      {
+        "arch": "aarch64",
+        "os": {
+          "compose": "RHEL-8.10.0-20240101.0"
+        },
+        "settings": {
+          "provisioning": {
+            "tags": {
+              "BusinessUnit": "golden-unit"
+            }
+          }
+        },
+        "tmt": {
+          "context": {
+            "arch": "aarch64",
+            "distro": "rhel-8.10",
+            "source_compose": "RHEL-8.10.0-20240101.0",
+            "target_distro": "rhel-9.4",
+            "tier": "tier3",
+            "upgrade_path": "8to9"
+          }
+        },
+        "variables": {
+          "INSTALL_LEAPP_FROM_COMPOSE": "yes",
+          "SOURCE_RELEASE": "8.10",
+          "TARGET_RELEASE": "9.4"
+        }
+      }
+    ],
+    "settings": {
+      "pipeline": {
+        "parallel-limit": null
+      }
+    },
+    "test": {
+      "fmf": {
+        "name": null,
+        "plan_filter": "tag:8to9 & tag:tier[0123] & enabled:true",
+        "ref": "main",
+        "test_filter": null,
+        "test_name": null,
+        "url": "https://github.com/oamg/leapp"
+      }
+    }
+  }
+]
