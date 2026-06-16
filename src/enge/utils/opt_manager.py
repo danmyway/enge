@@ -229,50 +229,12 @@ class ParsedOpts:
             raise ValidationError("Failed to process --set-regex")
 
     def _validate_effective_configuration(self):
-        """Validate required values after resolving effective configuration.
+        """Formerly validated git_ref via a redundant resolve_effective_values call.
 
-        This mirrors validation at the end of the merge: CLI > Set > Config.
+        git_ref validation now lives in _initialize_test_attributes where the
+        effective values are already resolved (single call per set).
         """
-        errors: List[str] = []
-
-        action = getattr(self.cli_args, "action", None)
-        if action == "test":
-            cli_sets = getattr(self.cli_args, "set", None)
-            if cli_sets:
-                try:
-                    sets_cfg = self.config.get("tests", {}).get("set", {})
-                except Exception:
-                    sets_cfg = {}
-
-                for set_name in cli_sets:
-                    set_cfg = (
-                        sets_cfg.get(set_name, {}) if isinstance(sets_cfg, dict) else {}
-                    )
-                    try:
-                        effective = resolve_effective_values(
-                            self.cli_args, set_cfg, self.config, log_fallbacks=False
-                        )
-                    except Exception:
-                        effective = {}
-                    if not effective.get("git_ref"):
-                        errors.append(
-                            f"Missing effective git_ref (CLI/Set/Config) for set '{set_name}'"
-                        )
-            else:
-                try:
-                    effective = resolve_effective_values(
-                        self.cli_args, {}, self.config, log_fallbacks=False
-                    )
-                except Exception:
-                    effective = {}
-                if not effective.get("git_ref"):
-                    errors.append("Missing effective git_ref (CLI/Config)")
-
-        if errors:
-            logger.critical("Effective configuration validation failed:")
-            for error in errors:
-                logger.critical(f"  - {error}")
-            raise ConfigurationError("Effective configuration invalid")
+        pass
 
     def _collect_set_value(self, key: str) -> Optional[Any]:
         """Collect a value for a given key from all referenced sets; return the first non-empty.
@@ -926,6 +888,11 @@ class ParsedOpts:
                         self.cli_args, set_config, self.config
                     )
 
+                    if not effective_values.get("git_ref"):
+                        raise ConfigurationError(
+                            f"Missing effective git_ref (CLI/Set/Config) for set '{set_name}'"
+                        )
+
                     # Warn if CLI architectures override set-defined architectures
                     cli_arch = getattr(self.cli_args, "architectures", None)
                     set_arch = set_config.get("architectures")
@@ -987,6 +954,9 @@ class ParsedOpts:
             self.individual_test_sets = []
             # No test sets, use regular config resolution
             effective_values = resolve_effective_values(self.cli_args, {}, self.config)
+
+            if not effective_values.get("git_ref"):
+                raise ConfigurationError("Missing effective git_ref (CLI/Config)")
 
         # Warn if CLI architectures override [tests].architectures when not using sets
         cli_arch = getattr(self.cli_args, "architectures", None)

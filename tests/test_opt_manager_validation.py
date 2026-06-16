@@ -639,9 +639,9 @@ class TestTierResolution(unittest.TestCase):
     @patch("enge.utils.opt_manager.load_config")
     def test_tier_fallback_log_emitted_exactly_once(self, mock_load):
         # The INFO fallback message for tiers-from-[tests].tiers must appear
-        # exactly once through the full init path.  The validation pass calls
-        # resolve_effective_values with log_fallbacks=False so the INFO line
-        # is suppressed there and only fires on the real init resolution.
+        # exactly once through the full init path.  The validation pass no
+        # longer calls resolve_effective_values (git_ref check moved to
+        # _initialize_test_attributes), so the INFO line fires once.
         cfg = copy.deepcopy(SETS_CONFIG)
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-S", "alpha-set"])
