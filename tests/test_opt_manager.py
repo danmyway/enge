@@ -863,7 +863,7 @@ class TestAuxiliaryMethods(unittest.TestCase):
         )
         self.assertIsNone(po._collect_set_value("no_such_key"))
 
-    def test_validate_effective_configuration_missing_git_ref_raises(self):
+    def test_initialize_test_attributes_missing_git_ref_raises(self):
         cfg = copy.deepcopy(MINIMAL_CONFIG)
         cfg["tests"]["git_ref"] = ""  # falsy — triggers error
         po = _make_partial_opts(
@@ -872,12 +872,14 @@ class TestAuxiliaryMethods(unittest.TestCase):
                 args=["test", "-s", "9.7", "-T", "tier0", "--arch", "x86_64"]
             ),
         )
+        # _initialize_test_attributes needs .tests for the arch-override warning
+        po.tests = cfg.get("tests", {})
         with self.assertRaises(ConfigurationError):
-            po._validate_effective_configuration()
+            po._initialize_test_attributes()
 
-    def test_validate_effective_configuration_valid_passes(self):
+    def test_validate_effective_configuration_is_noop(self):
         po = _make_partial_opts()
-        po._validate_effective_configuration()  # must not raise
+        po._validate_effective_configuration()  # must not raise (now a no-op)
 
 
 if __name__ == "__main__":

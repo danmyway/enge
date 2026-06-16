@@ -814,7 +814,6 @@ def resolve_effective_values(
     cli_args: Any,
     set_config: Dict[str, Any],
     config: Dict[str, Any],
-    log_fallbacks: bool = True,
 ) -> Dict[str, Any]:
     """
     Resolve effective values from CLI args, test sets, and config.
@@ -892,11 +891,10 @@ def resolve_effective_values(
     elif set_tiers:
         resolved["tiers"] = set_tiers
     elif config_tiers:
-        if log_fallbacks:
-            LOGGER.info(
-                "tiers not specified via CLI or set, using default from [tests]: %s",
-                config_tiers,
-            )
+        LOGGER.info(
+            "tiers not specified via CLI or set, using default from [tests]: %s",
+            config_tiers,
+        )
         resolved["tiers"] = config_tiers
     else:
         raise ConfigurationError(

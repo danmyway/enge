@@ -162,9 +162,7 @@ class TestDispatchGolden(unittest.TestCase):
         set_config = CONFIG["tests"]["set"][set_name]
 
         # REAL resolution: CLI > Set > Config chain
-        effective_values = resolve_effective_values(
-            cli_args, set_config, CONFIG, log_fallbacks=False
-        )
+        effective_values = resolve_effective_values(cli_args, set_config, CONFIG)
 
         # Stub _pin_compose_with_fallback to avoid HTTP, but let
         # parse_compose_spec / derive_target_from_source run for real.
