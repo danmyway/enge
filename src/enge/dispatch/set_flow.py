@@ -360,22 +360,22 @@ def process_request_spec(
     cli_env_args = getattr(resolved_opts.cli_args, "environment", None)
     cli_env_vars = parse_environment_variables(cli_env_args)
     set_env_vars = effective_values.get("environment", {})
-    merged_env_vars = merge_set_environment_variables(
-        auto_env_vars,
-        set_env_vars,
-        cli_env_vars,
-        resolved_opts.config,
-        resolved_opts.cli_args,
-        effective_values.get("reportportal", {}),
-        set_name,
-        arch,
-        tier,
-        auto_env_vars.get("SOURCE_RELEASE"),
-        auto_env_vars.get("TARGET_RELEASE"),
-        source_spec["compose_name"],
-        target_spec["compose_name"],
+    from enge.dispatch.context import RequestContext
+
+    ctx = RequestContext(
+        spec=spec,
+        config=resolved_opts.config,
+        cli_args=resolved_opts.cli_args,
+        api_key=resolved_opts.testing_farm.get("api_key"),
         event=per_set_event,
+        auto_env_vars=auto_env_vars,
+        set_env_vars=set_env_vars,
+        cli_env_vars=cli_env_vars,
+        set_reportportal_config=effective_values.get("reportportal", {}),
+        shared_archive_filename=shared_archive_filename,
+        artifact_type=artifact_type,
     )
+    merged_env_vars = merge_set_environment_variables(ctx)
 
     temp_opts.tmt_context = apply_centos_context_overrides(
         temp_opts.tmt_context, source_spec, target_spec, merged_env_vars

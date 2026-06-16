@@ -944,9 +944,9 @@ def resolve_effective_values(
 
 
 def merge_set_environment_variables(
-    auto_env_vars: Dict[str, str],
-    set_env_vars: Dict[str, str],
-    cli_env_vars: Dict[str, str],
+    auto_env_vars_or_ctx,
+    set_env_vars: Optional[Dict[str, str]] = None,
+    cli_env_vars: Optional[Dict[str, str]] = None,
     config: Optional[Dict[str, Any]] = None,
     cli_args: Any = None,
     set_reportportal_config: Optional[Dict[str, Any]] = None,
@@ -963,8 +963,11 @@ def merge_set_environment_variables(
     Merge environment variables from automatic generation, test sets, CLI, and ReportPortal config.
     Priority: CLI > Test Set > Automatic > ReportPortal config
 
+    Accepts either a ``RequestContext`` as the sole positional argument
+    or the legacy individual parameters.
+
     Args:
-        auto_env_vars: Automatically generated environment variables
+        auto_env_vars_or_ctx: A RequestContext, or a dict of auto-generated env vars (legacy)
         set_env_vars: Environment variables from test sets
         cli_env_vars: Environment variables from CLI --environment option
         config: Full configuration dictionary (for ReportPortal config)
@@ -977,10 +980,33 @@ def merge_set_environment_variables(
         target_release: Target release version (for auto-generation)
         source_compose: Source compose name (for auto-generation)
         target_compose: Target compose name (for auto-generation)
+        event: Event name (for RP-compatible auto-generation)
 
     Returns:
         Merged environment variables dictionary
     """
+    from enge.dispatch.context import RequestContext
+
+    if isinstance(auto_env_vars_or_ctx, RequestContext):
+        ctx = auto_env_vars_or_ctx
+        auto_env_vars = ctx.auto_env_vars
+        set_env_vars = ctx.set_env_vars
+        cli_env_vars = ctx.cli_env_vars
+        config = ctx.config
+        cli_args = ctx.cli_args
+        set_reportportal_config = ctx.set_reportportal_config
+        set_name = ctx.set_name
+        architecture = ctx.arch
+        tier = ctx.tier
+        # Use auto_env_vars values to match _format_release (CentOS Stream = major-only)
+        source_release = ctx.auto_env_vars.get("SOURCE_RELEASE")
+        target_release = ctx.auto_env_vars.get("TARGET_RELEASE")
+        source_compose = ctx.source_compose
+        target_compose = ctx.target_compose
+        event = ctx.event
+    else:
+        auto_env_vars = auto_env_vars_or_ctx
+
     merged_vars = auto_env_vars.copy()
 
     # Add ReportPortal environment variables first (lowest priority)
@@ -1063,7 +1089,7 @@ def merge_set_environment_variables(
 
 
 def generate_reportportal_environment_variables(
-    config: Dict[str, Any],
+    config_or_ctx,
     cli_args: Any = None,
     set_name: Optional[str] = None,
     architecture: Optional[str] = None,
@@ -1077,8 +1103,11 @@ def generate_reportportal_environment_variables(
     """
     Generate ReportPortal environment variables from config and CLI overrides.
 
+    Accepts either a ``RequestContext`` as the sole positional argument
+    or the legacy individual parameters.
+
     Args:
-        config: Full configuration dictionary
+        config_or_ctx: A RequestContext, or a full configuration dictionary (legacy)
         cli_args: CLI arguments object (optional)
         set_name: Name of the test set (optional, for auto-generation)
         architecture: Target architecture (optional, for auto-generation)
@@ -1092,6 +1121,21 @@ def generate_reportportal_environment_variables(
     Returns:
         Dictionary of ReportPortal environment variables with TMT_PLUGIN_REPORT_REPORTPORTAL_ prefix
     """
+    from enge.dispatch.context import RequestContext
+
+    if isinstance(config_or_ctx, RequestContext):
+        ctx = config_or_ctx
+        config = ctx.config
+        cli_args = ctx.cli_args
+        set_name = ctx.set_name
+        architecture = ctx.arch
+        tier = ctx.tier
+        source_release = ctx.source_release
+        target_release = ctx.target_release
+        source_compose = ctx.source_compose
+        event = ctx.event
+    else:
+        config = config_or_ctx
 
     reportportal_env_vars = {}
 
