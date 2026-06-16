@@ -144,100 +144,76 @@ def expand_set_requests() -> List[RequestSpec]:
     return specs
 
 
-def process_request_spec(
-    idx: int,
-    total_expected_requests: int,
-    spec: RequestSpec,
-    shared_archive_filename: str,
-    artifact_type: str,
-    artifact_resolver: Optional[ArtifactResolver] = None,
-) -> Optional[Dict[str, Any]]:
-    """Prepare SubmitTest, optionally create RP launch, and send the request.
-
-    Returns a summary dict on success (for aggregated dispatch table), or None on failure.
-    """
-    resolved_opts = _get_parsed_opts()
-    set_name = spec.set_name
-    tier = spec.tier
-    specific_plan = spec.plan
-    source_spec = spec.source_spec
-    target_spec = spec.target_spec
-    upgrade_path = spec.upgrade_path
-    upgrade_path_detailed = spec.upgrade_path_detailed
-    arch = spec.arch
-    effective_values = spec.effective_values
-
-    label_parts = [f"[{idx}/{total_expected_requests}]"]
-    if set_name:
-        label_parts.append(set_name)
-    if tier:
-        label_parts.append(tier)
-    if specific_plan:
-        label_parts.append(specific_plan)
-    label_parts.append(arch)
+def _log_request(spec, idx, total):
+    """Log the request header."""
+    label_parts = [f"[{idx}/{total}]"]
+    if spec.set_name:
+        label_parts.append(spec.set_name)
+    if spec.tier:
+        label_parts.append(spec.tier)
+    if spec.plan:
+        label_parts.append(spec.plan)
+    label_parts.append(spec.arch)
     LOGGER.info(" ".join(label_parts), extra={"style": "bold"})
 
-    # RP context (global + per request)
-    launch_uuid = None
-    rp_request_context = None
-    per_set_event = effective_values.get("event") or getattr(
-        resolved_opts.cli_args, "event", None
-    )
-    if per_set_event:
-        rp_request_context = {
-            "event": per_set_event,
-            "set_name": set_name,
-            "tier": tier,
-            "architecture": arch,
-            "source_release": f"{source_spec['major']}.{source_spec['minor']}",
-            "target_release": f"{target_spec['major']}.{target_spec['minor']}",
-            "source_compose": source_spec.get("compose_name"),
-        }
 
-    # Prepare SubmitTest for this spec
+def _build_rp_context(spec, per_set_event):
+    """Build ReportPortal request context dict, or None if no event."""
+    if not per_set_event:
+        return None
+    return {
+        "event": per_set_event,
+        "set_name": spec.set_name,
+        "tier": spec.tier,
+        "architecture": spec.arch,
+        "source_release": f"{spec.source_spec['major']}.{spec.source_spec['minor']}",
+        "target_release": f"{spec.target_spec['major']}.{spec.target_spec['minor']}",
+        "source_compose": spec.source_spec.get("compose_name"),
+    }
+
+
+def _configure_submit_test(spec, resolved_opts, shared_archive_filename):
+    """Create and configure a SubmitTest instance."""
     submit_test = SubmitTest(
         shared_archive_filename=shared_archive_filename,
-        launch_uuid=launch_uuid,
+        launch_uuid=None,
     )
     submit_test.api_key = resolved_opts.testing_farm.get("api_key")
     submit_test.tests_git_url = (
         getattr(resolved_opts.cli_args, "git_url", None)
-        or effective_values.get("git_url")
+        or spec.effective_values.get("git_url")
         or resolved_opts.tests.get("git_url")
         or resolved_opts.project.get("repo_url")
     )
     submit_test.tests_git_ref = (
         getattr(resolved_opts.cli_args, "git_ref", None)
-        or effective_values.get("git_ref")
+        or spec.effective_values.get("git_ref")
         or resolved_opts.tests.get("git_ref")
     )
     submit_test.testfilter = getattr(resolved_opts.cli_args, "testfilter", None)
     submit_test.test_name = getattr(resolved_opts.cli_args, "test", None)
-    submit_test.plan = specific_plan.rstrip("/") if specific_plan else None
+    submit_test.plan = spec.plan.rstrip("/") if spec.plan else None
     submit_test.business_unit_tag = resolved_opts.testing_farm.get(
         "cloud_resources_tag"
     )
-    # Parallel limit precedence for both set and non-set flows:
-    # 1) per-request effective (CLI > set > config when available)
-    # 2) globally resolved parsed_opts.parallel_limit (handles non-set flow)
-    # 3) fallback to top-level [tests].parallel_limit
     submit_test.parallel_limit = (
-        effective_values.get("parallel_limit")
+        spec.effective_values.get("parallel_limit")
         or getattr(resolved_opts, "parallel_limit", None)
         or resolved_opts.tests.get("parallel_limit")
     )
 
-    # Auto tags if enabled
     submit_test.set_auto_tags(
-        set_name=set_name,
-        architecture=arch,
-        tier=tier,
-        upgrade_path_tag=upgrade_path_detailed,
+        set_name=spec.set_name,
+        architecture=spec.arch,
+        tier=spec.tier,
+        upgrade_path_tag=spec.upgrade_path_detailed,
     )
+    return submit_test
 
-    # Plan filter
+
+def _build_plan_filter(spec, resolved_opts):
+    """Build the plan filter string, or a failure dict on ValueError."""
     try:
-        # Build additional filters based on RHSM flags
         additional_filters = []
         only_rhsm_mock_cdn = getattr(
             resolved_opts.cli_args, "only_rhsm_mock_cdn", False
@@ -254,59 +230,64 @@ def process_request_spec(
 
         tier_plan_filter = None
         base_plan_filter = None
-        if tier:
+        if spec.tier:
             tier_config = resolved_opts.tests.get("tier", {})
             tier_plan_filter = generate_tier_plan_filter(
-                [tier],
+                [spec.tier],
                 tier_config,
-                upgrade_path,
+                spec.upgrade_path,
                 additional_filters if additional_filters else None,
             )
             LOGGER.log(
-                VERBOSE, f"Generated plan filter for tier '{tier}': {tier_plan_filter}"
+                VERBOSE,
+                f"Generated plan filter for tier '{spec.tier}': {tier_plan_filter}",
             )
         else:
             base_plan_filter = generate_tier_plan_filter(
                 [],
                 None,
-                upgrade_path,
+                spec.upgrade_path,
                 additional_filters if additional_filters else None,
             )
             LOGGER.log(
                 VERBOSE, f"Generated base non-tier plan filter: {base_plan_filter}"
             )
         cli_planfilter = getattr(resolved_opts.cli_args, "planfilter", None)
-        submit_test.planfilter = cli_planfilter or tier_plan_filter or base_plan_filter
-        if specific_plan:
-            LOGGER.log(VERBOSE, f"Using specific plan: {specific_plan}")
+        planfilter = cli_planfilter or tier_plan_filter or base_plan_filter
+        if spec.plan:
+            LOGGER.log(VERBOSE, f"Using specific plan: {spec.plan}")
+        return planfilter
     except ValueError as e:
-        LOGGER.error(f"Failed to generate plan filter for tier '{tier}': {e}")
+        LOGGER.error(f"Failed to generate plan filter for tier '{spec.tier}': {e}")
         return {
             "status": "failed",
-            "set_name": set_name,
-            "tier": tier,
-            "arch": arch,
+            "set_name": spec.set_name,
+            "tier": spec.tier,
+            "arch": spec.arch,
             "error": str(e),
         }
 
-    # Prepare TMT context and environment variables
-    class TempOpts:
-        def __init__(self):
-            self.source_spec = None
-            self.target_spec = None
-            self.upgrade_path_alias = None
-            self.tmt_context = {}
-            self.project = None
-            self.copr_references = []
-            self.brew_references = []
-            self.copr_reference = None
-            self.brew_reference = None
-            self.cli_args = None
-            self.architectures = []
-            self.copr_api = {}
-            self.brew_api = {}
 
-    temp_opts = TempOpts()
+class _TempOpts:
+    def __init__(self):
+        self.source_spec = None
+        self.target_spec = None
+        self.upgrade_path_alias = None
+        self.tmt_context = {}
+        self.project = None
+        self.copr_references = []
+        self.brew_references = []
+        self.copr_reference = None
+        self.brew_reference = None
+        self.cli_args = None
+        self.architectures = []
+        self.copr_api = {}
+        self.brew_api = {}
+
+
+def _build_tmt_context_and_env(spec, per_set_event, resolved_opts, ctx):
+    """Build TMT context, environment variables, and TempOpts."""
+    temp_opts = _TempOpts()
     for attr in [
         "source_spec",
         "target_spec",
@@ -324,63 +305,28 @@ def process_request_spec(
     ]:
         if hasattr(resolved_opts, attr):
             setattr(temp_opts, attr, getattr(resolved_opts, attr))
-    temp_opts.source_spec = source_spec
-    temp_opts.target_spec = target_spec
-    temp_opts.upgrade_path_alias = upgrade_path
-    temp_opts.architectures = [arch]
+    temp_opts.source_spec = spec.source_spec
+    temp_opts.target_spec = spec.target_spec
+    temp_opts.upgrade_path_alias = spec.upgrade_path
+    temp_opts.architectures = [spec.arch]
 
-    # Regenerate TMT context with per-set source/target specs
     from enge.utils.source_target_parser import (
         apply_centos_context_overrides,
         generate_tmt_context,
     )
 
     temp_opts.tmt_context = generate_tmt_context(
-        source_spec,
-        target_spec,
+        spec.source_spec,
+        spec.target_spec,
         event=per_set_event,
-        tier=tier,
+        tier=spec.tier,
     )
 
-    # Check CLI args directly, not just test set config
-    copr_artifact = getattr(resolved_opts.cli_args, "copr", None)
-    brew_artifact = getattr(resolved_opts.cli_args, "brew", None)
-    auto_env_vars = generate_environment_variables(
-        source_spec,
-        target_spec,
-        has_copr=bool(
-            copr_artifact
-            or effective_values.get("copr_api", {}).get("build_references")
-        ),
-        has_brew=bool(
-            brew_artifact
-            or effective_values.get("brew_api", {}).get("build_references")
-        ),
-    )
-    cli_env_args = getattr(resolved_opts.cli_args, "environment", None)
-    cli_env_vars = parse_environment_variables(cli_env_args)
-    set_env_vars = effective_values.get("environment", {})
-    from enge.dispatch.context import RequestContext
-
-    ctx = RequestContext(
-        spec=spec,
-        config=resolved_opts.config,
-        cli_args=resolved_opts.cli_args,
-        api_key=resolved_opts.testing_farm.get("api_key"),
-        event=per_set_event,
-        auto_env_vars=auto_env_vars,
-        set_env_vars=set_env_vars,
-        cli_env_vars=cli_env_vars,
-        set_reportportal_config=effective_values.get("reportportal", {}),
-        shared_archive_filename=shared_archive_filename,
-        artifact_type=artifact_type,
-    )
     merged_env_vars = merge_set_environment_variables(ctx)
 
     temp_opts.tmt_context = apply_centos_context_overrides(
-        temp_opts.tmt_context, source_spec, target_spec, merged_env_vars
+        temp_opts.tmt_context, spec.source_spec, spec.target_spec, merged_env_vars
     )
-    # Enrich TMT context with target compose if URL provided
     if "TARGET_COMPOSE_URL" in merged_env_vars:
         from enge.utils.source_target_parser import parse_target_compose_from_url
 
@@ -390,9 +336,7 @@ def process_request_spec(
         if target_compose:
             temp_opts.tmt_context["target_compose"] = target_compose
 
-    # Merge set-specific context first, then CLI --context to allow CLI to override per-set
-    set_context = effective_values.get("context", {}) or {}
-    # Ensure event is present in TMT context when provided (so it appears in launch attributes and tmt.context)
+    set_context = spec.effective_values.get("context", {}) or {}
     if per_set_event:
         temp_opts.tmt_context = merge_tmt_context(
             temp_opts.tmt_context, {"event": per_set_event}
@@ -400,7 +344,6 @@ def process_request_spec(
     if set_context:
         temp_opts.tmt_context = merge_tmt_context(temp_opts.tmt_context, set_context)
 
-    # Apply CLI --context overrides last for set mode
     try:
         cli_context_args = getattr(resolved_opts.cli_args, "context", None)
         from enge.utils.source_target_parser import parse_tmt_context
@@ -413,43 +356,37 @@ def process_request_spec(
     except ValueError as e:
         LOGGER.error(f"Failed to parse --context: {e}")
 
-    # Apply RHSM-specific settings if flags are set
     only_rhsm_stage_cdn = getattr(resolved_opts.cli_args, "only_rhsm_stage_cdn", False)
     if only_rhsm_stage_cdn:
         merged_env_vars["RHSM_MODE"] = "stage"
         temp_opts.tmt_context["product_phase"] = "rc"
         LOGGER.debug("Applied RHSM stage settings: RHSM_MODE=stage, product_phase=rc")
 
-    pool = effective_values.get("pool")
-    submit_test.set_specific_data(
-        [arch], merged_env_vars, temp_opts.tmt_context, pool=pool
-    )
+    return temp_opts, merged_env_vars
 
-    # Artifacts
-    # Temporarily override parsed_opts for artifact resolution using a context manager
+
+def _resolve_artifacts(spec, submit_test, temp_opts, artifact_type, artifact_resolver):
+    """Resolve build artifacts; returns a failure dict or None on success."""
     with _DispatchParsedOptsContext(temp_opts):
         resolver = artifact_resolver or ArtifactResolver()
-        info = resolver.resolve_builds(source_spec["compose_name"])  # source compose
+        info = resolver.resolve_builds(spec.source_spec["compose_name"])
         if not info:
             LOGGER.warning(
-                f"No artifact information found for {set_name} tier: {tier} arch: {arch}"
+                f"No artifact information found for {spec.set_name}"
+                f" tier: {spec.tier} arch: {spec.arch}"
             )
             return {
                 "status": "failed",
-                "set_name": set_name,
-                "tier": tier,
-                "arch": arch,
+                "set_name": spec.set_name,
+                "tier": spec.tier,
+                "arch": spec.arch,
                 "error": "no artifact information found",
             }
-        # Populate artifacts
         first_build = info[0]
-        # AMI sources: construct compose name with architecture suffix
-        # CentOS Stream: use symbolic compose name directly
-        # RHEL: use compose from artifact resolution (pinned/repinned)
-        if source_spec.get("is_ami_source", False):
-            submit_test.compose = format_ami_compose_name(source_spec, arch)
-        elif source_spec.get("is_centos_stream", False):
-            submit_test.compose = source_spec["compose_name"]
+        if spec.source_spec.get("is_ami_source", False):
+            submit_test.compose = format_ami_compose_name(spec.source_spec, spec.arch)
+        elif spec.source_spec.get("is_centos_stream", False):
+            submit_test.compose = spec.source_spec["compose_name"]
         else:
             submit_test.compose = first_build["compose"]
         submit_test.tmt_distro = first_build["distro"]
@@ -462,61 +399,105 @@ def process_request_spec(
                     packages=build["packages"],
                     nvr=build.get("nvr"),
                 )
+    return None
 
-    # Maybe create RP launch (complete TMT context)
-    if rp_request_context and per_set_event in RP_COMPATIBLE_EVENT:
-        try:
-            complete_tmt_context = submit_test.get_complete_tmt_context()
-            complete_tmt_context.update(temp_opts.tmt_context)
-            # Ensure architecture is part of launch attributes
-            if arch:
-                complete_tmt_context["arch"] = arch
 
-            launch_uuid = rp_create_launch(
-                context=rp_request_context,
-                tmt_context=complete_tmt_context,
-                config=resolved_opts.config,
-                cli_args=resolved_opts.cli_args,
-                dryrun=getattr(resolved_opts.cli_args, "dryrun", False),
-            )
-            if launch_uuid or getattr(resolved_opts.cli_args, "dryrun", False):
-                # For dryrun, add deterministic uniq_id so payload shows expected attributes
-                if getattr(resolved_opts.cli_args, "dryrun", False):
-                    placeholder_uuid = "00000000-0000-0000-0000-000000000000"
-                    complete_tmt_context["uniq_id"] = placeholder_uuid
-                else:
-                    complete_tmt_context["uniq_id"] = launch_uuid
+def _create_launch(spec, submit_test, rp_context, merged_env_vars, resolved_opts):
+    """Create RP launch if applicable; returns a failure dict or None on success."""
+    per_set_event = rp_context["event"] if rp_context else None
+    if not (rp_context and per_set_event in RP_COMPATIBLE_EVENT):
+        return None
+    try:
+        complete_tmt_context = submit_test.get_complete_tmt_context()
+        complete_tmt_context.update(submit_test.set_tmt_context or {})
+        if spec.arch:
+            complete_tmt_context["arch"] = spec.arch
 
-                launch_uuid_effective = launch_uuid or placeholder_uuid
-                submit_test.set_launch_uuid(launch_uuid_effective)
-                # Ensure RP env uses UPLOAD_TO_LAUNCH and omits LAUNCH variables
-                from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+        launch_uuid = rp_create_launch(
+            context=rp_context,
+            tmt_context=complete_tmt_context,
+            config=resolved_opts.config,
+            cli_args=resolved_opts.cli_args,
+            dryrun=getattr(resolved_opts.cli_args, "dryrun", False),
+        )
+        if launch_uuid or getattr(resolved_opts.cli_args, "dryrun", False):
+            if getattr(resolved_opts.cli_args, "dryrun", False):
+                placeholder_uuid = "00000000-0000-0000-0000-000000000000"
+                complete_tmt_context["uniq_id"] = placeholder_uuid
+            else:
+                complete_tmt_context["uniq_id"] = launch_uuid
 
-                rp_env = {
-                    k: v
-                    for (k, v) in merged_env_vars.items()
-                    if not (
-                        k.startswith(TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX)
-                        and (k.endswith("LAUNCH") or k.endswith("LAUNCH_DESCRIPTION"))
-                    )
-                }
-                upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
-                rp_env[upload_key] = launch_uuid_effective
+            launch_uuid_effective = launch_uuid or placeholder_uuid
+            submit_test.set_launch_uuid(launch_uuid_effective)
+            from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
 
-                submit_test.set_specific_data(
-                    [arch], rp_env, complete_tmt_context, pool=pool
+            rp_env = {
+                k: v
+                for (k, v) in merged_env_vars.items()
+                if not (
+                    k.startswith(TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX)
+                    and (k.endswith("LAUNCH") or k.endswith("LAUNCH_DESCRIPTION"))
                 )
-        except Exception as e:
-            LOGGER.error(f"Failed to create ReportPortal launch for request {idx}: {e}")
-            return {
-                "status": "failed",
-                "set_name": set_name,
-                "tier": tier,
-                "arch": arch,
-                "error": str(e),
             }
+            upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
+            rp_env[upload_key] = launch_uuid_effective
 
-    # Send request
+            pool = spec.effective_values.get("pool")
+            submit_test.set_specific_data(
+                [spec.arch], rp_env, complete_tmt_context, pool=pool
+            )
+    except Exception as e:
+        LOGGER.error(f"Failed to create ReportPortal launch: {e}")
+        return {
+            "status": "failed",
+            "set_name": spec.set_name,
+            "tier": spec.tier,
+            "arch": spec.arch,
+            "error": str(e),
+        }
+    return None
+
+
+def _build_request_context(
+    spec, per_set_event, resolved_opts, shared_archive_filename, artifact_type
+):
+    """Construct the RequestContext for one dispatch request."""
+    copr_artifact = getattr(resolved_opts.cli_args, "copr", None)
+    brew_artifact = getattr(resolved_opts.cli_args, "brew", None)
+    auto_env_vars = generate_environment_variables(
+        spec.source_spec,
+        spec.target_spec,
+        has_copr=bool(
+            copr_artifact
+            or spec.effective_values.get("copr_api", {}).get("build_references")
+        ),
+        has_brew=bool(
+            brew_artifact
+            or spec.effective_values.get("brew_api", {}).get("build_references")
+        ),
+    )
+    cli_env_args = getattr(resolved_opts.cli_args, "environment", None)
+    cli_env_vars = parse_environment_variables(cli_env_args)
+    set_env_vars = spec.effective_values.get("environment", {})
+    from enge.dispatch.context import RequestContext
+
+    return RequestContext(
+        spec=spec,
+        config=resolved_opts.config,
+        cli_args=resolved_opts.cli_args,
+        api_key=resolved_opts.testing_farm.get("api_key"),
+        event=per_set_event,
+        auto_env_vars=auto_env_vars,
+        set_env_vars=set_env_vars,
+        cli_env_vars=cli_env_vars,
+        set_reportportal_config=spec.effective_values.get("reportportal", {}),
+        shared_archive_filename=shared_archive_filename,
+        artifact_type=artifact_type,
+    )
+
+
+def _send_and_collect(submit_test, resolved_opts, spec):
+    """Send the TF request and assemble the result dict."""
     output_format = getattr(resolved_opts.cli_args, "output_format", "terminal")
     submit_test.compact_output = output_format != "json"
     submit_test.silent_output = output_format == "json"
@@ -530,10 +511,10 @@ def process_request_spec(
     result = {
         "status": "submitted",
         "summary": submit_test.dispatch_summary,
-        "set_name": set_name,
-        "tier": tier,
-        "plan": specific_plan,
-        "arch": arch,
+        "set_name": spec.set_name,
+        "tier": spec.tier,
+        "plan": spec.plan,
+        "arch": spec.arch,
         "compose": submit_test.compose,
         "artifacts": [
             {
@@ -550,3 +531,54 @@ def process_request_spec(
     if getattr(submit_test, "dryrun_payload", None) is not None:
         result["payload"] = submit_test.dryrun_payload
     return result
+
+
+def process_request_spec(
+    idx: int,
+    total_expected_requests: int,
+    spec: RequestSpec,
+    shared_archive_filename: str,
+    artifact_type: str,
+    artifact_resolver: Optional[ArtifactResolver] = None,
+) -> Optional[Dict[str, Any]]:
+    """Prepare SubmitTest, optionally create RP launch, and send the request."""
+    resolved_opts = _get_parsed_opts()
+    per_set_event = spec.effective_values.get("event") or getattr(
+        resolved_opts.cli_args, "event", None
+    )
+
+    _log_request(spec, idx, total_expected_requests)
+
+    submit_test = _configure_submit_test(spec, resolved_opts, shared_archive_filename)
+
+    plan_filter_result = _build_plan_filter(spec, resolved_opts)
+    if isinstance(plan_filter_result, dict):
+        return plan_filter_result
+    submit_test.planfilter = plan_filter_result
+
+    ctx = _build_request_context(
+        spec, per_set_event, resolved_opts, shared_archive_filename, artifact_type
+    )
+    temp_opts, merged_env_vars = _build_tmt_context_and_env(
+        spec, per_set_event, resolved_opts, ctx
+    )
+
+    pool = spec.effective_values.get("pool")
+    submit_test.set_specific_data(
+        [spec.arch], merged_env_vars, temp_opts.tmt_context, pool=pool
+    )
+
+    failure = _resolve_artifacts(
+        spec, submit_test, temp_opts, artifact_type, artifact_resolver
+    )
+    if failure:
+        return failure
+
+    rp_context = _build_rp_context(spec, per_set_event)
+    launch_failure = _create_launch(
+        spec, submit_test, rp_context, merged_env_vars, resolved_opts
+    )
+    if launch_failure:
+        return launch_failure
+
+    return _send_and_collect(submit_test, resolved_opts, spec)
