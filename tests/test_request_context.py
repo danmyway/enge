@@ -63,3 +63,16 @@ class TestRequestContext(unittest.TestCase):
         ctx = self._make_ctx()
         self.assertEqual(ctx.source_spec["major"], 8)
         self.assertEqual(ctx.target_spec["major"], 9)
+
+    def test_merge_set_env_vars_with_context(self):
+        """merge_set_environment_variables(ctx) produces identical output to positional call."""
+        from enge.utils.source_target_parser import merge_set_environment_variables
+
+        auto = {
+            "SOURCE_RELEASE": "8.10",
+            "TARGET_RELEASE": "9.4",
+            "INSTALL_LEAPP_FROM_COMPOSE": "yes",
+        }
+        ctx = self._make_ctx(auto_env_vars=auto)
+        result = merge_set_environment_variables(ctx)
+        self.assertEqual(result, auto)
