@@ -1,7 +1,7 @@
 """Characterization tests for report exit codes.
 
-Golden-pin the exit-code contract: 0 (all pass), 2 (fail), 3 (error),
-4 (no result).
+Pin the exit-code contract and the severity-precedence rule
+(TEST_ERROR > TEST_FAILURE > MISSING_RESULTS > SUCCESS).
 """
 
 import unittest
@@ -13,6 +13,7 @@ from enge.report.concurrent_parser import (
     TaskResult,
     ConcurrentRequestParser,
 )
+from enge.utils.globals import ExitCode, worst_exit_code
 
 # ── Fixture XML snippets ────────────────────────────────────────────
 
@@ -52,11 +53,6 @@ _XML_PIPELINE_ERROR = """\
 </testsuites>
 """
 
-ALL_PASS = 0
-FAIL_HERE = 2
-ERROR_HERE = 3
-NO_RESULT = 4
-
 
 def _make_task_result(xunit_content=None, state="COMPLETE", **overrides):
     defaults = dict(
@@ -85,83 +81,113 @@ def _report_ctx(**cli_overrides):
     return make_app_context(action="report", extra_cli=cli)
 
 
+# ── worst_exit_code precedence unit tests ───────────────────────────
+
+
+class TestWorstExitCode(unittest.TestCase):
+    """Verify the severity-precedence function directly."""
+
+    def test_none_and_value(self):
+        self.assertEqual(
+            worst_exit_code(None, ExitCode.TEST_ERROR), ExitCode.TEST_ERROR
+        )
+
+    def test_value_and_none(self):
+        self.assertEqual(worst_exit_code(ExitCode.SUCCESS, None), ExitCode.SUCCESS)
+
+    def test_none_and_none(self):
+        self.assertIsNone(worst_exit_code(None, None))
+
+    def test_error_beats_missing(self):
+        self.assertEqual(
+            worst_exit_code(ExitCode.TEST_ERROR, ExitCode.MISSING_RESULTS),
+            ExitCode.TEST_ERROR,
+        )
+
+    def test_missing_loses_to_error(self):
+        self.assertEqual(
+            worst_exit_code(ExitCode.MISSING_RESULTS, ExitCode.TEST_ERROR),
+            ExitCode.TEST_ERROR,
+        )
+
+    def test_failure_beats_missing(self):
+        self.assertEqual(
+            worst_exit_code(ExitCode.TEST_FAILURE, ExitCode.MISSING_RESULTS),
+            ExitCode.TEST_FAILURE,
+        )
+
+    def test_error_beats_failure(self):
+        self.assertEqual(
+            worst_exit_code(ExitCode.TEST_ERROR, ExitCode.TEST_FAILURE),
+            ExitCode.TEST_ERROR,
+        )
+
+    def test_success_loses_to_everything(self):
+        for code in (
+            ExitCode.TEST_FAILURE,
+            ExitCode.TEST_ERROR,
+            ExitCode.MISSING_RESULTS,
+        ):
+            self.assertEqual(worst_exit_code(ExitCode.SUCCESS, code), code)
+
+
+# ── XML parser exit-code tests ──────────────────────────────────────
+
+
 class TestExitCodeFromXMLParser(unittest.TestCase):
     """Verify XMLParser.parse_xml_results sets task_result.retval correctly."""
 
-    def test_passed_xml_yields_exit_0(self):
+    def test_passed_xml_yields_success(self):
         task = _make_task_result(xunit_content=_XML_PASSED)
-        ctx = _report_ctx()
-        XMLParser.parse_xml_results(task, ctx=ctx)
-        self.assertEqual(task.retval, ALL_PASS)
+        XMLParser.parse_xml_results(task, ctx=_report_ctx())
+        self.assertEqual(task.retval, ExitCode.SUCCESS)
 
-    def test_failed_xml_yields_exit_2(self):
+    def test_failed_xml_yields_test_failure(self):
         task = _make_task_result(xunit_content=_XML_FAILED)
-        ctx = _report_ctx()
-        XMLParser.parse_xml_results(task, ctx=ctx)
-        self.assertEqual(task.retval, FAIL_HERE)
+        XMLParser.parse_xml_results(task, ctx=_report_ctx())
+        self.assertEqual(task.retval, ExitCode.TEST_FAILURE)
 
-    def test_error_xml_yields_exit_3(self):
+    def test_error_xml_yields_test_error(self):
         task = _make_task_result(xunit_content=_XML_ERROR)
-        ctx = _report_ctx()
-        XMLParser.parse_xml_results(task, ctx=ctx)
-        self.assertEqual(task.retval, ERROR_HERE)
+        XMLParser.parse_xml_results(task, ctx=_report_ctx())
+        self.assertEqual(task.retval, ExitCode.TEST_ERROR)
 
-    def test_pipeline_error_xml_yields_exit_3(self):
+    def test_pipeline_error_xml_yields_test_error(self):
         task = _make_task_result(xunit_content=_XML_PIPELINE_ERROR)
-        ctx = _report_ctx()
-        XMLParser.parse_xml_results(task, ctx=ctx)
-        self.assertEqual(task.retval, ERROR_HERE)
+        XMLParser.parse_xml_results(task, ctx=_report_ctx())
+        self.assertEqual(task.retval, ExitCode.TEST_ERROR)
 
     def test_no_xml_content_yields_no_retval_change(self):
         task = _make_task_result(xunit_content=None)
-        ctx = _report_ctx()
-        XMLParser.parse_xml_results(task, ctx=ctx)
+        XMLParser.parse_xml_results(task, ctx=_report_ctx())
         self.assertIsNone(task.retval)
 
-    def test_max_semantics_across_tasks(self):
-        task_fail = _make_task_result(xunit_content=_XML_FAILED)
-        task_error = _make_task_result(
-            xunit_content=_XML_ERROR,
-            request_uuid="bbbbbbbb-0000-0000-0000-000000000002",
-        )
-        ctx = _report_ctx()
-        XMLParser.parse_xml_results(task_fail, ctx=ctx)
-        XMLParser.parse_xml_results(task_error, ctx=ctx)
-        self.assertEqual(task_fail.retval, FAIL_HERE)
-        self.assertEqual(task_error.retval, ERROR_HERE)
-        self.assertEqual(max(task_fail.retval, task_error.retval), ERROR_HERE)
 
-    def test_max_semantics_error_then_pass_on_same_task(self):
-        task = _make_task_result(xunit_content=_XML_ERROR)
-        ctx = _report_ctx()
-        XMLParser.parse_xml_results(task, ctx=ctx)
-        self.assertEqual(task.retval, ERROR_HERE)
+# ── Task-state exit-code tests ──────────────────────────────────────
 
 
 class TestExitCodeFromTaskState(unittest.TestCase):
-    """Verify ConcurrentRequestParser._process_task_state sets task retval."""
-
-    def test_error_state_yields_exit_3(self):
+    def test_error_state_yields_test_error(self):
         ctx = _report_ctx(wait=False)
         parser = ConcurrentRequestParser(ctx)
         task = _make_task_result(state="ERROR")
         parser._process_task_state(task)
-        self.assertEqual(task.retval, ERROR_HERE)
+        self.assertEqual(task.retval, ExitCode.TEST_ERROR)
 
-    def test_running_state_without_wait_yields_no_result(self):
+    def test_running_state_without_wait_yields_missing(self):
         ctx = _report_ctx(wait=False)
         parser = ConcurrentRequestParser(ctx)
         task = _make_task_result(state="RUNNING")
         parser._process_task_state(task)
-        self.assertEqual(task.retval, NO_RESULT)
+        self.assertEqual(task.retval, ExitCode.MISSING_RESULTS)
         self.assertTrue(task.should_skip)
 
-    def test_queued_state_without_wait_yields_no_result(self):
+    def test_queued_state_without_wait_yields_missing(self):
         ctx = _report_ctx(wait=False)
         parser = ConcurrentRequestParser(ctx)
         task = _make_task_result(state="QUEUED")
         parser._process_task_state(task)
-        self.assertEqual(task.retval, NO_RESULT)
+        self.assertEqual(task.retval, ExitCode.MISSING_RESULTS)
         self.assertTrue(task.should_skip)
 
     def test_canceled_state_skipped_no_retval_in_process(self):
@@ -174,9 +200,78 @@ class TestExitCodeFromTaskState(unittest.TestCase):
         self.assertIsNone(task.retval)
 
 
-class TestExitCodeFromMainEntrypoint(unittest.TestCase):
-    """Verify report main() returns the correct exit code end-to-end."""
+# ── Mixed-set severity precedence tests (the decisive ones) ────────
 
+
+class TestMixedSetSeverityPrecedence(unittest.TestCase):
+    """Verify that error dominates missing, not the other way around.
+
+    These tests encode the decided contract:
+    TEST_ERROR(3) > TEST_FAILURE(2) > MISSING_RESULTS(4) > SUCCESS(0).
+    The numeric order (0 < 2 < 3 < 4) would wrongly make MISSING_RESULTS
+    win via max(); these tests prove the precedence function is correct.
+    """
+
+    def test_mixed_set_error_dominates_missing(self):
+        """ERROR + MISSING in same report → TEST_ERROR, NOT 4."""
+        task_error = _make_task_result(
+            xunit_content=_XML_ERROR,
+            request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+        )
+        task_missing = _make_task_result(
+            xunit_content=None,
+            state="RUNNING",
+            request_uuid="bbbbbbbb-0000-0000-0000-000000000002",
+        )
+        ctx = _report_ctx(wait=False)
+        XMLParser.parse_xml_results(task_error, ctx=ctx)
+        parser = ConcurrentRequestParser(ctx)
+        parser._process_task_state(task_missing)
+
+        agg = worst_exit_code(task_error.retval, task_missing.retval)
+        self.assertEqual(agg, ExitCode.TEST_ERROR)
+
+    def test_mixed_set_error_dominates_failure(self):
+        """ERROR + FAILURE → TEST_ERROR."""
+        task_error = _make_task_result(
+            xunit_content=_XML_ERROR,
+            request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+        )
+        task_fail = _make_task_result(
+            xunit_content=_XML_FAILED,
+            request_uuid="cccccccc-0000-0000-0000-000000000003",
+        )
+        ctx = _report_ctx()
+        XMLParser.parse_xml_results(task_error, ctx=ctx)
+        XMLParser.parse_xml_results(task_fail, ctx=ctx)
+
+        agg = worst_exit_code(task_error.retval, task_fail.retval)
+        self.assertEqual(agg, ExitCode.TEST_ERROR)
+
+    def test_mixed_set_failure_dominates_missing(self):
+        """FAILURE + MISSING → TEST_FAILURE, NOT 4."""
+        task_fail = _make_task_result(
+            xunit_content=_XML_FAILED,
+            request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+        )
+        task_missing = _make_task_result(
+            xunit_content=None,
+            state="RUNNING",
+            request_uuid="bbbbbbbb-0000-0000-0000-000000000002",
+        )
+        ctx = _report_ctx(wait=False)
+        XMLParser.parse_xml_results(task_fail, ctx=ctx)
+        parser = ConcurrentRequestParser(ctx)
+        parser._process_task_state(task_missing)
+
+        agg = worst_exit_code(task_fail.retval, task_missing.retval)
+        self.assertEqual(agg, ExitCode.TEST_FAILURE)
+
+
+# ── main() entrypoint tests ────────────────────────────────────────
+
+
+class TestExitCodeFromMainEntrypoint(unittest.TestCase):
     def _make_ctx(self, **cli_overrides):
         cli = {
             "compare": False,
@@ -201,17 +296,7 @@ class TestExitCodeFromMainEntrypoint(unittest.TestCase):
         code = rm.main(ctx, result_table=[(table, {"task": "info"})])
         self.assertIsNone(code)
 
-    def test_main_returns_none_when_no_content(self):
-        from rich.table import Table
-        import enge.report.__main__ as rm
-
-        ctx = self._make_ctx()
-        table = Table()
-        table.add_column("Test")
-        code = rm.main(ctx, result_table=[(table, {})])
-        self.assertIsNone(code)
-
-    def test_main_show_ids_returns_0(self):
+    def test_main_show_ids_returns_success(self):
         import enge.report.__main__ as rm
 
         ctx = self._make_ctx(
@@ -219,7 +304,7 @@ class TestExitCodeFromMainEntrypoint(unittest.TestCase):
             input=["aaaaaaaa-0000-0000-0000-000000000001"],
         )
         code = rm.main(ctx)
-        self.assertEqual(code, ALL_PASS)
+        self.assertEqual(code, ExitCode.SUCCESS)
 
     def test_main_returns_retval_from_build_table(self):
         import enge.report.__main__ as rm
@@ -231,10 +316,12 @@ class TestExitCodeFromMainEntrypoint(unittest.TestCase):
         table.add_row("dummy")
 
         with patch.object(
-            rm, "build_table", return_value=([(table, {"k": "v"})], FAIL_HERE)
+            rm,
+            "build_table",
+            return_value=([(table, {"k": "v"})], ExitCode.TEST_FAILURE),
         ):
             code = rm.main(ctx)
-        self.assertEqual(code, FAIL_HERE)
+        self.assertEqual(code, ExitCode.TEST_FAILURE)
 
     def test_main_returns_retval_from_build_table_comparison(self):
         import enge.report.__main__ as rm
@@ -246,10 +333,54 @@ class TestExitCodeFromMainEntrypoint(unittest.TestCase):
         table.add_row("dummy")
 
         with patch.object(
-            rm, "build_table_comparison", return_value=([(table, {})], ERROR_HERE)
+            rm,
+            "build_table_comparison",
+            return_value=([(table, {})], ExitCode.TEST_ERROR),
         ):
             code = rm.main(ctx)
-        self.assertEqual(code, ERROR_HERE)
+        self.assertEqual(code, ExitCode.TEST_ERROR)
+
+
+# ── Exception-to-exit-code mapping (via __main__) ──────────────────
+
+
+class TestReportExceptionMapping(unittest.TestCase):
+    """report exceptions route through __main__'s error mapping to ExitCode."""
+
+    @patch("enge.__main__.get_arguments")
+    @patch("enge.__main__.parsed_opts")
+    @patch("enge.report.__main__.main")
+    def test_report_exception_maps_to_exit_1(
+        self, mock_report_main, mock_parsed, mock_get_args
+    ):
+        from types import SimpleNamespace
+
+        import enge.__main__ as enge_main
+        from enge.utils.globals import EXIT_GENERAL_ERROR
+
+        mock_get_args.return_value = SimpleNamespace(debug=False)
+        mock_parsed.cli_args = SimpleNamespace(action="report", debug=False)
+        mock_parsed.config = {
+            "testing_farm": {"api_endpoint_url": "u", "log_artifact_baseurl": "u"},
+            "common": {
+                "archive_tasks_latest": "/tmp/l",
+                "archive_tasks_default": "/tmp/d",
+            },
+            "project": {},
+            "tests": {},
+            "reportportal": {},
+        }
+        mock_parsed.testing_farm_endpoint = SimpleNamespace(
+            api_endpoint_url="u", log_artifact_baseurl="u"
+        )
+        mock_parsed.archive_tasks_latest = "/tmp/l"
+        mock_parsed.archive_tasks_default = "/tmp/d"
+
+        from enge.utils.errors import NetworkError
+
+        mock_report_main.side_effect = NetworkError("net down")
+        code = enge_main.main()
+        self.assertEqual(code, EXIT_GENERAL_ERROR)
 
 
 if __name__ == "__main__":

@@ -15,20 +15,14 @@ from rich.markup import escape
 from enge.utils.app_context import AppContext
 from enge.utils.console import console
 from enge.utils.errors import NetworkError
+from enge.utils.globals import ExitCode, worst_exit_code
 
 LOGGER = logging.getLogger(__name__)
 
-# Return value constants
-ALL_PASS = 0
-FAIL_HERE = 2
-ERROR_HERE = 3
-NO_RESULT = 4
 
-
-def _raise_retval(task_result: "TaskResult", new_value: int) -> None:
-    """Set the exit-code on a TaskResult, keeping the worst (highest) value."""
-    if task_result.retval is None or new_value > task_result.retval:
-        task_result.retval = new_value
+def _raise_retval(task_result: "TaskResult", code: ExitCode) -> None:
+    """Set the exit-code on a TaskResult, keeping the most severe value."""
+    task_result.retval = worst_exit_code(task_result.retval, code)
 
 
 @dataclass
@@ -216,7 +210,7 @@ class ConcurrentRequestParser:
 
                 # Handle canceled tasks early
                 if "canceled" in task_result.request_state.lower():
-                    _raise_retval(task_result, NO_RESULT)
+                    _raise_retval(task_result, ExitCode.MISSING_RESULTS)
                     task_result.should_skip = True
                     task_result.skip_reason = "canceled"
                     # Don't return early - let _process_task_state handle display
@@ -269,7 +263,7 @@ class ConcurrentRequestParser:
             "CANCELED": "state.canceled",
         }
         if task_result.request_state == "ERROR":
-            _raise_retval(task_result, ERROR_HERE)
+            _raise_retval(task_result, ExitCode.TEST_ERROR)
 
         style = state_styles.get(task_result.request_state, "")
         colored_state = (
@@ -296,7 +290,7 @@ class ConcurrentRequestParser:
             else:
                 # Don't log individual warnings - will show general warning later
                 LOGGER.debug(f"[{uuid_short}] Request is still running.")
-                _raise_retval(task_result, NO_RESULT)
+                _raise_retval(task_result, ExitCode.MISSING_RESULTS)
                 task_result.should_skip = True
                 # Set specific skip reason based on state
                 if task_result.request_state in ("NEW", "QUEUED"):
@@ -309,7 +303,7 @@ class ConcurrentRequestParser:
             if task_result.request_state not in ("COMPLETE", "ERROR"):
                 # Don't log individual warnings - will show general warning later
                 LOGGER.debug(f"[{uuid_short}] Request is still running")
-                _raise_retval(task_result, NO_RESULT)
+                _raise_retval(task_result, ExitCode.MISSING_RESULTS)
                 task_result.should_skip = True
                 # Set specific skip reason based on state
                 if task_result.request_state == "QUEUED":
@@ -331,7 +325,7 @@ class ConcurrentRequestParser:
             LOGGER.debug(
                 f"[{uuid_short}] We'll try to fetch the XML results to get more information, if possible."
             )
-            _raise_retval(task_result, ERROR_HERE)
+            _raise_retval(task_result, ExitCode.TEST_ERROR)
 
     def _wait_for_completion(self, task_result: TaskResult):
         """Wait for a running task to complete."""
@@ -439,7 +433,7 @@ class ConcurrentRequestParser:
                 f"[{task_result.request_uuid}]    Please consult with {task_result.url}"
             )
 
-        _raise_retval(task_result, ERROR_HERE)
+        _raise_retval(task_result, ExitCode.TEST_ERROR)
         task_result.error_message = "XML not available, using fallback"
         return task_result
 
@@ -572,11 +566,11 @@ class XMLParser:
 
             # Update return values based on overall result
             if job_result_overall == "passed":
-                _raise_retval(task_result, ALL_PASS)
+                _raise_retval(task_result, ExitCode.SUCCESS)
             elif job_result_overall == "failed":
-                _raise_retval(task_result, FAIL_HERE)
+                _raise_retval(task_result, ExitCode.TEST_FAILURE)
             elif job_result_overall == "error":
-                _raise_retval(task_result, ERROR_HERE)
+                _raise_retval(task_result, ExitCode.TEST_ERROR)
                 # Bail out when potential pipeline error assessment returns True
                 if potential_pipeline_error:
                     LOGGER.critical(
@@ -595,7 +589,7 @@ class XMLParser:
                         "error": "Pipeline error detected",
                     }
             else:
-                _raise_retval(task_result, 99)
+                _raise_retval(task_result, ExitCode.CONFIG_ERROR)
 
             # Skip if overall result is passed and skip_pass is enabled
             if skip_pass and job_result_overall.upper() == "PASSED":
@@ -861,11 +855,10 @@ def parse_request_xunit_concurrent(
         ):
             parsed_dict[task_result.request_uuid] = parsed_data
 
-    # Aggregate the worst exit code across all task results
+    # Aggregate the most severe exit code across all task results
     retval = None
     for tr in task_results:
-        if tr.retval is not None:
-            retval = tr.retval if retval is None else max(retval, tr.retval)
+        retval = worst_exit_code(retval, tr.retval)
 
     # Add enhanced summary information
     input_count = len(request_url_list)

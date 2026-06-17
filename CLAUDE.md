@@ -29,7 +29,7 @@ src/enge/
                      tf_send_request (SubmitTest, payload build/POST, task recording),
                      pin_compose (compose resolution)
   report/            __main__ (tables, -o formats), concurrent_parser (parallel xunit fetch;
-                     module-global RETURN_VALUE drives exit codes 2/3/4)
+                     ExitCode threaded via TaskResult.retval, severity-precedence aggregation)
   rerun/             requalify FAILED/ERROR plans and re-dispatch
   cancel/            cancel TF tasks
   reportportal/      launch finish/enrich/delete operations (flag-verbs, two parallel
@@ -66,9 +66,16 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   Env vars (`TESTING_FARM_API_TOKEN`, `REPORTPORTAL_API_TOKEN`) currently
   LOSE to config values — counterintuitive but documented; don't flip it
   silently.
-- **Exit codes** (`utils/globals.py` + report's RETURN_VALUE): 0 ok,
-  1 exception, 2 partial failure / test fail, 3 error hit, 4 missing
-  results, 99 config error, 130 interrupt. Partial dispatch failures exit 2.
+- **Exit codes** are defined once in `utils/globals.py` as the `ExitCode`
+  IntEnum; all modules return its members, never bare integers. The
+  universal floor (0 success, 1 exception mapped by `__main__`, 99 config
+  error, 130 interrupt) applies to every subcommand. Code 2 means "ran,
+  partial failure" for both dispatch (some requests failed) and report
+  (test failures). Report is the ONLY subcommand that returns codes 3
+  (errors in parsed results) and 4 (missing/partial results), and the only
+  one requiring severity precedence (3 > 2 > 4 > 0, error-dominates —
+  missing results are rerun candidates and must not mask a real error),
+  because it is the only command that grades multi-plan result sets.
 - **State files**: `/tmp/enge_latest_jobs` (task IDs of the current run;
   cleared once per invocation via the guard in dispatch/rerun mains —
   **never on --dry-run**), archive files in `~/.enge/jobs_archive/` with
