@@ -20,8 +20,6 @@ jobs:
     project: enge-devel
     trigger: pull_request
     branch: devel
-    targets:
-      - fedora-stable
     actions:
       get-current-version:
       - echo devel
@@ -31,8 +29,6 @@ jobs:
     project: enge-devel
     trigger: commit
     branch: devel
-    targets:
-      - fedora-stable
     actions:
       # bump spec so we get higher release than all the PR builds
       post-upstream-clone:
