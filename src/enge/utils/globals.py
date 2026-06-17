@@ -6,6 +6,7 @@ This module defines immutable constants used throughout the application.
 Configuration defaults are handled in the default config file, not here.
 """
 
+from enum import IntEnum
 from typing import Dict, Tuple
 
 
@@ -62,12 +63,46 @@ RP_COMPATIBLE_EVENT: Tuple[str, ...] = (
 # Custom log level between INFO (20) and DEBUG (10)
 VERBOSE: int = 15
 
-# Standardized exit codes for CLI entrypoints
-EXIT_GENERAL_ERROR: int = 1
-EXIT_ALL_PASS: int = 0
-EXIT_PARTIAL_FAILURE: int = 2
-EXIT_CONFIG_ERROR: int = 99
-EXIT_INTERRUPT: int = 130
+
+class ExitCode(IntEnum):
+    SUCCESS = 0
+    EXCEPTION = 1
+    TEST_FAILURE = 2
+    TEST_ERROR = 3
+    MISSING_RESULTS = 4
+    CONFIG_ERROR = 99
+    INTERRUPT = 130
+
+
+# Legacy aliases — other modules still import these bare ints during migration
+EXIT_GENERAL_ERROR: int = ExitCode.EXCEPTION
+EXIT_ALL_PASS: int = ExitCode.SUCCESS
+EXIT_PARTIAL_FAILURE: int = ExitCode.TEST_FAILURE
+EXIT_CONFIG_ERROR: int = ExitCode.CONFIG_ERROR
+EXIT_INTERRUPT: int = ExitCode.INTERRUPT
+
+# Severity rank for report exit-code aggregation.
+# Numeric order (0<2<3<4) does NOT match severity: error(3) outranks
+# missing(4) because missing results are rerun candidates and must
+# never mask a real error.  Order: TEST_ERROR > TEST_FAILURE > MISSING > SUCCESS.
+_SEVERITY_RANK: Dict[ExitCode, int] = {
+    ExitCode.SUCCESS: 0,
+    ExitCode.MISSING_RESULTS: 1,
+    ExitCode.TEST_FAILURE: 2,
+    ExitCode.TEST_ERROR: 3,
+}
+
+
+def worst_exit_code(a: "ExitCode | None", b: "ExitCode | None") -> "ExitCode | None":
+    """Return whichever of *a* and *b* is more severe per the report contract."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    ra = _SEVERITY_RANK.get(a, a.value)
+    rb = _SEVERITY_RANK.get(b, b.value)
+    return a if ra >= rb else b
+
 
 # Default network timeouts (seconds)
 REQUEST_TIMEOUT_DEFAULT: int = 30

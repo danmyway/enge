@@ -13,11 +13,7 @@ from enge.utils import parse_date_arg
 from enge.utils.app_context import AppContext
 from enge.utils.errors import ValidationError
 from enge.utils.console import console
-
-ALL_PASS = 0
-FAIL_HERE = 2
-ERROR_HERE = 3
-NO_RESULT = 4
+from enge.utils.globals import ExitCode
 
 LOGGER = logging.getLogger(__name__)
 
@@ -504,7 +500,7 @@ def main(ctx: AppContext, result_table=None):
                 print(task_id)
         else:
             LOGGER.info("No UUIDs found!")
-        return ALL_PASS
+        return ExitCode.SUCCESS
 
     retval = None
     if result_table is None:
