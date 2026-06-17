@@ -12,8 +12,8 @@ from enge.utils.http_client import http_delete
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks
 from enge.utils.console import console
+from enge.utils.app_context import AppContext
 from enge.utils.errors import ValidationError, UserAbort, EngeError
-from enge.utils.opt_manager import parsed_opts
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT
 
 LOGGER = logging.getLogger(__name__)
@@ -26,7 +26,8 @@ class CancelJobs:
     Reuses the same input handling and UUID validation logic as report and rerun modules.
     """
 
-    def __init__(self):
+    def __init__(self, ctx: AppContext):
+        self.ctx = ctx
         self.cancel_results = []
         self.req_url_list = []
         self.task_source = None
@@ -49,7 +50,7 @@ class CancelJobs:
 
         # Get authorization header using the same method as rerun
         submit = SubmitTest()
-        submit.api_key = parsed_opts.testing_farm.get("api_key")
+        submit.api_key = self.ctx.testing_farm.get("api_key")
         req_header, _ = submit.build_payload()
 
         for task_url in self.req_url_list:
@@ -168,11 +169,11 @@ class CancelJobs:
             console.print("\nFailed to cancel task URLs:")
             for result in self.cancel_results:
                 if not result["success"]:
-                    task_url = f"{parsed_opts.testing_farm.get('log_artifact_baseurl')}/{result['task_id']}"
+                    task_url = f"{self.ctx.testing_farm.get('log_artifact_baseurl')}/{result['task_id']}"
                     console.print(f"  - {task_url}")
 
 
-def main():
+def main(ctx: AppContext):
     """
     Main function to cancel Testing Farm tasks.
 
@@ -180,17 +181,15 @@ def main():
     """
     try:
         # Initialize the cancel handler
-        cancel_handler = CancelJobs()
+        cancel_handler = CancelJobs(ctx)
 
         # Check if running in dry-run mode
-        if getattr(parsed_opts.cli_args, "dryrun", False):
+        if getattr(ctx.cli_args, "dryrun", False):
             LOGGER.info("DRY RUN MODE - No tasks will actually be cancelled")
             print(f"Would cancel {len(cancel_handler.req_url_list)} task(s):")
             for task_url in cancel_handler.req_url_list:
                 task_id = task_url.split("/")[-1]
-                view_url = (
-                    f"{parsed_opts.testing_farm.get('log_artifact_baseurl')}/{task_id}"
-                )
+                view_url = f"{ctx.testing_farm.get('log_artifact_baseurl')}/{task_id}"
                 print(f"  - {view_url}")
             return
 
