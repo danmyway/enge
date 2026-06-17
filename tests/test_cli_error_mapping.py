@@ -26,6 +26,31 @@ class TestCliErrorMapping(unittest.TestCase):
 
     @patch.object(enge_main, "get_arguments", return_value=SimpleNamespace(debug=False))
     @patch.object(enge_main, "parsed_opts")
+    @patch("enge.cancel.__main__.main")
+    def test_cancel_receives_app_context(self, mock_cancel_main, mock_parsed, _):
+        mock_parsed.cli_args = SimpleNamespace(action="cancel", debug=False)
+        mock_parsed.config = {
+            "testing_farm": {"api_endpoint_url": "u", "log_artifact_baseurl": "u"},
+            "common": {
+                "archive_tasks_latest": "/tmp/l",
+                "archive_tasks_default": "/tmp/d",
+            },
+        }
+        mock_parsed.testing_farm_endpoint = SimpleNamespace(
+            api_endpoint_url="u", log_artifact_baseurl="u"
+        )
+        mock_parsed.archive_tasks_latest = "/tmp/l"
+        mock_parsed.archive_tasks_default = "/tmp/d"
+        mock_cancel_main.return_value = None
+        enge_main.main()
+        mock_cancel_main.assert_called_once()
+        ctx_arg = mock_cancel_main.call_args[0][0]
+        from enge.utils.app_context import AppContext
+
+        self.assertIsInstance(ctx_arg, AppContext)
+
+    @patch.object(enge_main, "get_arguments", return_value=SimpleNamespace(debug=False))
+    @patch.object(enge_main, "parsed_opts")
     @patch("enge.dispatch.__main__.main")
     def test_configuration_error_maps_to_exit_99(
         self, mock_dispatch_main, mock_parsed, _
