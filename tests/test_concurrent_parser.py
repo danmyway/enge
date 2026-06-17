@@ -1,7 +1,6 @@
 import unittest
-from types import SimpleNamespace
-from unittest.mock import patch
 
+from tests._helpers import make_app_context
 from enge.report.concurrent_parser import ConcurrentRequestParser, TaskResult
 
 
@@ -25,36 +24,30 @@ def _task_result(state: str) -> TaskResult:
 
 class TestConcurrentParserTaskState(unittest.TestCase):
     def test_new_state_waits_when_wait_flag_set(self):
-        with patch(
-            "enge.report.concurrent_parser.parsed_opts",
-            SimpleNamespace(cli_args=SimpleNamespace(action="report", wait=True)),
-        ):
-            parser = ConcurrentRequestParser()
-            task_result = _task_result("NEW")
-            wait_called = []
+        ctx = make_app_context(action="report", extra_cli={"wait": True})
+        parser = ConcurrentRequestParser(ctx)
+        task_result = _task_result("NEW")
+        wait_called = []
 
-            def mock_wait(task):
-                wait_called.append(task)
-                task.request_state = "COMPLETE"
+        def mock_wait(task):
+            wait_called.append(task)
+            task.request_state = "COMPLETE"
 
-            parser._wait_for_completion = mock_wait
-            parser._process_task_state(task_result)
+        parser._wait_for_completion = mock_wait
+        parser._process_task_state(task_result)
 
-            self.assertEqual(wait_called, [task_result])
-            self.assertEqual(task_result.request_state, "COMPLETE")
-            self.assertFalse(task_result.should_skip)
+        self.assertEqual(wait_called, [task_result])
+        self.assertEqual(task_result.request_state, "COMPLETE")
+        self.assertFalse(task_result.should_skip)
 
     def test_new_state_skipped_without_wait(self):
-        with patch(
-            "enge.report.concurrent_parser.parsed_opts",
-            SimpleNamespace(cli_args=SimpleNamespace(action="report", wait=False)),
-        ):
-            parser = ConcurrentRequestParser()
-            task_result = _task_result("NEW")
-            parser._process_task_state(task_result)
+        ctx = make_app_context(action="report", extra_cli={"wait": False})
+        parser = ConcurrentRequestParser(ctx)
+        task_result = _task_result("NEW")
+        parser._process_task_state(task_result)
 
-            self.assertTrue(task_result.should_skip)
-            self.assertEqual(task_result.skip_reason, "queued")
+        self.assertTrue(task_result.should_skip)
+        self.assertEqual(task_result.skip_reason, "queued")
 
 
 if __name__ == "__main__":

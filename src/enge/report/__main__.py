@@ -9,19 +9,11 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from enge.utils import parse_date_arg
+from enge.utils.app_context import AppContext
 from enge.utils.errors import ValidationError
 from enge.utils.console import console
-from enge.utils.opt_manager import parsed_opts
 
-RETURN_VALUE = None
-"""
- 0 - All pass
- 1 - Python exception or bailout
- 2 - No error at least one fail
- 3 - At least one error
- 4 - No result
- everything else - consult with enge maintainer(s)
-"""
 ALL_PASS = 0
 FAIL_HERE = 2
 ERROR_HERE = 3
@@ -55,49 +47,41 @@ def _file_in_date_range(
     return True
 
 
-def _latest_tasks_file():
-    # Defer property resolution until used to avoid side effects at import time
-    return parsed_opts.archive_tasks_latest
+def _latest_tasks_file(ctx):
+    return ctx.archive_tasks_latest
 
 
-def update_retval(new_value):
-    global RETURN_VALUE
-    if RETURN_VALUE is None or new_value > RETURN_VALUE:
-        RETURN_VALUE = new_value
-
-
-def _parse_tasks_impl():
+def _parse_tasks_impl(ctx):
     request_url_list = []
     uuid_source_map = {}
+    cli_args = ctx.cli_args
 
     def _get_tasks_source_data():
         source = None
         source_data = []
-        if getattr(parsed_opts.cli_args, "input", None):
+        if getattr(cli_args, "input", None):
             LOGGER.debug("Getting tasks from command line input arguments")
-            source_data.extend([(line, None) for line in parsed_opts.cli_args.input])
+            source_data.extend([(line, None) for line in cli_args.input])
 
-        if parsed_opts.cli_args.file:
-            source = parsed_opts.cli_args.file
+        if cli_args.file:
+            source = cli_args.file
             for file in source:
                 if os.path.exists(file):
                     with open(file) as fh:
                         task_ids = fh.readlines()
                     source_data.extend([(line, file) for line in task_ids])
                 else:
-                    LOGGER.critical(
-                        f"Given path {parsed_opts.cli_args.file} does not exist!"
-                    )
+                    LOGGER.critical(f"Given path {cli_args.file} does not exist!")
 
                     raise ValidationError("Input file does not exist")
 
-        since_str = getattr(parsed_opts.cli_args, "since", None)
-        until_str = getattr(parsed_opts.cli_args, "until", None)
-        has_tags = bool(parsed_opts.cli_args.get_tag)
+        since_str = getattr(cli_args, "since", None)
+        until_str = getattr(cli_args, "until", None)
+        has_tags = bool(cli_args.get_tag)
         has_date_filter = bool(since_str or until_str)
 
         if has_tags or has_date_filter:
-            default_path = parsed_opts.archive_tasks_default
+            default_path = ctx.archive_tasks_default
             if not os.path.exists(default_path):
                 LOGGER.critical(f"The given path {default_path} does not exist!")
 
@@ -105,7 +89,7 @@ def _parse_tasks_impl():
 
             compiled_patterns = []
             if has_tags:
-                for tag in parsed_opts.cli_args.get_tag:
+                for tag in cli_args.get_tag:
                     try:
                         compiled_patterns.append(re.compile(tag))
                     except re.error as e:
@@ -125,8 +109,6 @@ def _parse_tasks_impl():
                 source.append(file)
 
             if has_date_filter:
-                from enge.utils import parse_date_arg
-
                 since_dt = parse_date_arg(since_str) if since_str else None
                 until_dt = (
                     parse_date_arg(until_str).replace(hour=23, minute=59, second=59)
@@ -151,13 +133,13 @@ def _parse_tasks_impl():
 
         if not any(
             (
-                parsed_opts.cli_args.file,
-                getattr(parsed_opts.cli_args, "input", None),
+                cli_args.file,
+                getattr(cli_args, "input", None),
                 has_tags,
                 has_date_filter,
             )
         ):
-            latest = _latest_tasks_file()
+            latest = _latest_tasks_file(ctx)
             if not os.path.exists(latest):
                 LOGGER.critical(f"The latest job file {latest} does not exist!")
                 LOGGER.critical(
@@ -190,7 +172,7 @@ def _parse_tasks_impl():
 
         matched_uuid = match.group(0)
         task_url = os.path.join(
-            str(parsed_opts.testing_farm_endpoint.api_endpoint_url), matched_uuid
+            str(ctx.testing_farm_endpoint.api_endpoint_url), matched_uuid
         )
 
         # Validate UUID
@@ -208,20 +190,55 @@ def _parse_tasks_impl():
     return request_url_list, tasks_source, uuid_source_map
 
 
-def parse_tasks():
-    req, src, _ = _parse_tasks_impl()
+def parse_tasks(ctx_or_none=None):
+    """Parse task IDs from CLI input/files/archives.
+
+    Accepts an optional AppContext; falls back to parsed_opts for
+    not-yet-migrated callers (rerun, cancel).
+    """
+    if ctx_or_none is None:
+        from enge.utils.opt_manager import parsed_opts
+
+        ctx_or_none = AppContext.from_parsed_opts(parsed_opts)
+    req, src, _ = _parse_tasks_impl(ctx_or_none)
     return req, src
 
 
-def parse_tasks_with_map():
-    return _parse_tasks_impl()
+def parse_tasks_with_map(ctx_or_none=None):
+    if ctx_or_none is None:
+        from enge.utils.opt_manager import parsed_opts
+
+        ctx_or_none = AppContext.from_parsed_opts(parsed_opts)
+    return _parse_tasks_impl(ctx_or_none)
 
 
-def parse_request_xunit(request_url_list=None, tasks_source=None, skip_pass=False):
-    """Parse request xunit with concurrent requests for better performance."""
+def parse_request_xunit(
+    request_url_list=None, tasks_source=None, skip_pass=False, ctx=None
+):
+    """Parse request xunit — returns the parsed dict only (backward compat).
+
+    Callers that don't pass ctx get one built from parsed_opts.
+    """
+    if ctx is None:
+        from enge.utils.opt_manager import parsed_opts
+
+        ctx = AppContext.from_parsed_opts(parsed_opts)
     from enge.report.concurrent_parser import parse_request_xunit_concurrent
 
-    return parse_request_xunit_concurrent(request_url_list, tasks_source, skip_pass)
+    parsed_dict, _retval = parse_request_xunit_concurrent(
+        ctx, request_url_list, tasks_source, skip_pass
+    )
+    return parsed_dict
+
+
+def _parse_request_xunit_with_retval(
+    ctx, request_url_list=None, tasks_source=None, skip_pass=False
+):
+    from enge.report.concurrent_parser import parse_request_xunit_concurrent
+
+    return parse_request_xunit_concurrent(
+        ctx, request_url_list, tasks_source, skip_pass
+    )
 
 
 def _split_name(name, index):
@@ -234,28 +251,18 @@ def _split_name(name, index):
     return "/".join(name_raw[index:])
 
 
-def build_table_comparison():
-    """
-    Generate a table holding comparable results of several tests.
-
-    This allows a clear comparison of several tft runs with particular test
-    results side by side in respectable columns.
-    Sample format:
-    **     tft_run_uuid1  tft_run_uuid2
-    test1   PASS            FAIL
-    test2   -               PASS
-    test3   PASS            PASS
-    """
-
+def build_table_comparison(ctx):
     tables_list = []
 
     planname_split_index = 0
     testname_split_index = 0
-    if parsed_opts.cli_args.short:
+    if ctx.cli_args.short:
         planname_split_index = -1
         testname_split_index = -1
 
-    parsed_dict = parse_request_xunit(skip_pass=parsed_opts.cli_args.skip_pass)
+    parsed_dict, retval = _parse_request_xunit_with_retval(
+        ctx, skip_pass=ctx.cli_args.skip_pass
+    )
     result_table = Table(box=box.ROUNDED)
 
     # Sort UUIDs by architecture first, then by creation date within each architecture
@@ -283,7 +290,7 @@ def build_table_comparison():
         header = f"{arch} ({i})"
         headers.append(header)
         # Store mapping for display below table
-        result_url = f"{parsed_opts.testing_farm_endpoint.log_artifact_baseurl}/{uid}"
+        result_url = f"{ctx.testing_farm_endpoint.log_artifact_baseurl}/{uid}"
         uuid_mapping[i] = {"uuid": uid, "url": result_url, "arch": arch}
 
     fields = ["Test Plan"] + headers
@@ -294,7 +301,7 @@ def build_table_comparison():
     # plan_name -> test_name -> uuid run result for particular test
     regroup_results_tests = {}
     unified_names_map = {}
-    for plan_name in getattr(parsed_opts.cli_args, "unify", []) or []:
+    for plan_name in getattr(ctx.cli_args, "unify", []) or []:
         # Only split on the first '=' to support values containing '='
         name1, name2 = plan_name.split("=", 1)
         unified_names_map[name1] = plan_name
@@ -340,7 +347,7 @@ def build_table_comparison():
                     }
 
     for plan_name, plan_data in regroup_results_plans.items():
-        if getattr(parsed_opts.cli_args, "show_tests", False):
+        if getattr(ctx.cli_args, "show_tests", False):
             result_table.add_row(escape(plan_name), *[""] * len(uuids))
             test_items = list(regroup_results_tests[plan_name].items())
             for i, (test_name, test_data) in enumerate(test_items):
@@ -361,27 +368,25 @@ def build_table_comparison():
 
     tables_list.append((result_table, uuid_mapping))
 
-    return tables_list
+    return tables_list, retval
 
 
-def build_table():
-    parsed_dict = parse_request_xunit(skip_pass=parsed_opts.cli_args.skip_pass)
+def build_table(ctx):
+    parsed_dict, retval = _parse_request_xunit_with_retval(
+        ctx, skip_pass=ctx.cli_args.skip_pass
+    )
 
-    # For multiple UUIDs, we'll create separate tables
     tables_list = []
 
     planname_split_index = 0
     testname_split_index = 0
 
-    if parsed_opts.cli_args.short:
+    if ctx.cli_args.short:
         planname_split_index = -1
         testname_split_index = -1
 
     for task_uuid, data in parsed_dict.items():
-        # Create metadata title for each table
-        result_url = (
-            f"{parsed_opts.testing_farm_endpoint.log_artifact_baseurl}/{task_uuid}"
-        )
+        result_url = f"{ctx.testing_farm_endpoint.log_artifact_baseurl}/{task_uuid}"
         # Get architecture from first testsuite or default to 'Unknown'
         arch = (
             data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
@@ -392,7 +397,7 @@ def build_table():
 
         # prepare field names - no more UUID, Target, Arch columns
         fields = ["Test Plan", "Plan Result"]
-        if getattr(parsed_opts.cli_args, "show_tests", False):
+        if getattr(ctx.cli_args, "show_tests", False):
             fields += ["Test Case", "Test Result"]
         for field in fields:
             result_table.add_column(field, justify="left")
@@ -462,8 +467,7 @@ def build_table():
 
         tables_list.append((result_table, metadata))
 
-    # Return list of (table, metadata) tuples
-    return tables_list
+    return tables_list, retval
 
 
 def _rich_style_for_result(result):
@@ -491,41 +495,38 @@ def colorize(result, label=None):
     return escape(str(label))
 
 
-def main(result_table=None):
-    # Handle --show-ids option
-    if getattr(parsed_opts.cli_args, "show_ids", False):
-        request_url_list, _ = parse_tasks()
+def main(ctx: AppContext, result_table=None):
+    if getattr(ctx.cli_args, "show_ids", False):
+        request_url_list, _ = parse_tasks(ctx)
         if request_url_list:
             for request_url in request_url_list:
-                # Extract UUID from the URL
                 task_id = request_url.split("/")[-1]
                 print(task_id)
         else:
             LOGGER.info("No UUIDs found!")
         return ALL_PASS
 
+    retval = None
     if result_table is None:
-        if parsed_opts.cli_args.compare:
-            # For comparison mode, get table and uuid mapping
-            result_table = build_table_comparison()
+        if ctx.cli_args.compare:
+            result_table, retval = build_table_comparison(ctx)
         else:
-            result_table = build_table()
+            result_table, retval = build_table(ctx)
 
-    # Handle list of (table, metadata) tuples
     has_content = False
     for table, metadata in result_table:
         if table.row_count > 0:
             console.print()
             console.print("~~~ REQUEST METADATA ~~~~~~~~~~~~~~", style="dim")
 
-            if not parsed_opts.cli_args.compare:
+            if not ctx.cli_args.compare:
                 for title, value in metadata.items():
                     if value is None:
                         continue
                     console.print(f"{title:<20}{value}", style="dim")
 
-            output_fmt = getattr(parsed_opts.cli_args, "output_format", "terminal")
-            jira_mode = getattr(parsed_opts.cli_args, "jira", False)
+            output_fmt = getattr(ctx.cli_args, "output_format", "terminal")
+            jira_mode = getattr(ctx.cli_args, "jira", False)
             if jira_mode:
                 plain = Console(no_color=True, highlight=False)
                 print("{noformat}")
@@ -539,8 +540,7 @@ def main(result_table=None):
             else:
                 console.print(table)
 
-            # Display UUID mapping for comparison mode
-            if parsed_opts.cli_args.compare:
+            if ctx.cli_args.compare:
                 console.print()
                 console.print("~~~ TASK REFERENCE ~~~~~~~~~~~~~~~~", style="dim")
                 for index, info in metadata.items():
@@ -555,10 +555,4 @@ def main(result_table=None):
     if not has_content:
         LOGGER.info("Nothing to report!")
 
-    # Get return value from concurrent parser
-    try:
-        from enge.report.concurrent_parser import get_return_value
-
-        return get_return_value()
-    except ImportError:
-        return RETURN_VALUE
+    return retval

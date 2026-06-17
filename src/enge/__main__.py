@@ -164,7 +164,7 @@ def main():
         elif resolved_opts.cli_args.action == "report":
             from enge.report.__main__ import main as report_main
 
-            return report_main()
+            return report_main(ctx)
         elif resolved_opts.cli_args.action == "rerun":
             from enge.rerun.__main__ import main as rerun_main
 
