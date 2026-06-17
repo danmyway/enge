@@ -153,6 +153,10 @@ def main():
 
             resolved_opts = _parsed_opts
 
+        from enge.utils.app_context import AppContext
+
+        ctx = AppContext.from_parsed_opts(resolved_opts)
+
         if resolved_opts.cli_args.action == "test":
             from enge.dispatch.__main__ import main as dispatch_main
 
@@ -168,7 +172,7 @@ def main():
         elif resolved_opts.cli_args.action == "cancel":
             from enge.cancel.__main__ import main as cancel_main
 
-            return cancel_main()
+            return cancel_main(ctx)
         elif resolved_opts.cli_args.action == "reportportal":
             from enge.reportportal.__main__ import main as reportportal_main
 
