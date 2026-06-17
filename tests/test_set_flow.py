@@ -182,6 +182,73 @@ class TestSetFlow(unittest.TestCase):
         self.assertEqual(result["set_name"], "fail-set")
         self.assertIn("error", result)
 
+    @patch("enge.dispatch.set_flow._get_parsed_opts")
+    def test_configure_submit_test_sets_skip_guest_setup_for_rhui(
+        self, mock_parsed_opts
+    ):
+        po = MagicMock()
+        po.testing_farm = {"api_key": "token"}
+        po.tests = {
+            "git_url": "https://git.example/repo",
+            "git_ref": "main",
+            "parallel_limit": 5,
+            "tier": {},
+        }
+        po.project = {"repo_url": "https://git.example/repo"}
+        po.cli_args = MagicMock()
+        po.cli_args.git_url = None
+        po.cli_args.git_ref = None
+        po.cli_args.testfilter = None
+        po.cli_args.test = None
+        po.cli_args.auto_tag = False
+        po.cli_args.set_tag = None
+        mock_parsed_opts.return_value = po
+
+        from enge.dispatch.set_flow import _configure_submit_test
+
+        rhui_cases = [
+            ("RHEL-8-rhui", True),
+            ("RHEL-9-sap-rhui", True),
+            ("RHEL-8-sap-ha-rhui", True),
+            ("RHEL-9.2.0", False),
+            ("CentOS-Stream-9", False),
+        ]
+        for compose_name, expected in rhui_cases:
+            with self.subTest(compose_name=compose_name):
+                spec = RequestSpec(
+                    set_name="test",
+                    tier="sanity",
+                    plan="/plans/p1",
+                    arch="x86_64",
+                    source_spec={
+                        "major": 8,
+                        "minor": 0,
+                        "compose_name": compose_name,
+                    },
+                    target_spec={
+                        "major": 9,
+                        "minor": 0,
+                        "compose_name": "RHEL-9.0.0",
+                    },
+                    upgrade_path="rhel-8-to-9",
+                    effective_values={},
+                )
+                with patch(
+                    "enge.dispatch.tf_send_request.parsed_opts",
+                    new=MagicMock(
+                        testing_farm_endpoint=MagicMock(
+                            log_artifact_baseurl="http://logs",
+                            api_endpoint_url="http://api",
+                        )
+                    ),
+                ):
+                    submit = _configure_submit_test(spec, po, "shared")
+                self.assertEqual(
+                    submit.skip_guest_setup,
+                    expected,
+                    f"{compose_name}: expected skip_guest_setup={expected}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

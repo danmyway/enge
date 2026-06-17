@@ -360,6 +360,7 @@ enge test --source 9.7 --plan /plans/subscription --only-rhsm-stage-cdn
   - **Alias mode**: define aliases in `[sources.ami]` in `enge.toml`, e.g. `alma97 = 'AlmaLinux OS 9.7.20251118'`, `rocky97 = 'Rocky-9-EC2-Base-9.7-20251123.2'`, then use `--source alma97` / `--source rocky97`.
   - **Direct mode**: pass full AMI source names directly (with or without architecture suffix), e.g. `AlmaLinux OS 9.7.20251118 x86_64`, `Rocky-9-EC2-Base-9.7-20251123.2.aarch64`.
   - For AMI sources, only `x86_64` and `aarch64` architectures are supported.
+- **RHUI sources** (`RHEL-8-rhui`, `RHEL-8-sap-rhui`, `RHEL-8-sap-ha-rhui`) are passed through as-is without compose pinning. When an RHUI source is detected, `skip_guest_setup` is automatically set in the Testing Farm request pipeline settings.
 - When CentOS Stream is the source, the `--target` argument may be provided as a major version only (e.g., `10`); it is automatically interpreted internally as `<major>.0` for compose pinning.
 - When a simple version is provided, enge attempts to pin it to an actual compose name by consulting `testing_farm.composes_prod_url` from the configuration. It tries the following formats in order:
   - `RHEL-MAJOR.MINOR.0-Nightly` (RHEL 8/9 style)

@@ -202,6 +202,10 @@ def _configure_submit_test(spec, resolved_opts, shared_archive_filename):
         or resolved_opts.tests.get("parallel_limit")
     )
 
+    if spec.source_spec.get("compose_name", "").endswith("-rhui"):
+        submit_test.skip_guest_setup = True
+        LOGGER.info("RHUI source detected — setting skip_guest_setup=true")
+
     submit_test.set_auto_tags(
         set_name=spec.set_name,
         architecture=spec.arch,

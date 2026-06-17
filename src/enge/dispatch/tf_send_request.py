@@ -63,6 +63,7 @@ class SubmitTest:
         self.business_unit_tag: Optional[str] = None
         self.tmt_distro: Optional[str] = None
         self.parallel_limit: Optional[int] = None
+        self.skip_guest_setup: bool = False
         self.authorization_header: Dict[str, str] = {}
         self.payload_raw: Dict[str, Any] = {}
         self.latest_tasks_file: Optional[str] = None
@@ -424,11 +425,14 @@ class SubmitTest:
             if pool:
                 environment_config["pool"] = pool
 
-            environment_config["settings"] = {
+            env_settings = {
                 "provisioning": {
                     "tags": {"BusinessUnit": self.business_unit_tag},
                 }
             }
+            if self.skip_guest_setup:
+                env_settings["pipeline"] = {"skip_guest_setup": True}
+            environment_config["settings"] = env_settings
             environment_config["tmt"] = tmt_config
             environment_config["variables"] = regular_env_vars
 
