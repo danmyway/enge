@@ -12,8 +12,9 @@ import requests.adapters
 from requests.exceptions import ConnectionError, RequestException
 
 from rich.markup import escape
+from enge.utils.app_context import AppContext
 from enge.utils.console import console
-from enge.utils.opt_manager import parsed_opts
+from enge.utils.errors import NetworkError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,15 +24,11 @@ FAIL_HERE = 2
 ERROR_HERE = 3
 NO_RESULT = 4
 
-# Global return value tracking
-RETURN_VALUE = None
 
-
-def update_retval(new_value):
-    """Update the global return value."""
-    global RETURN_VALUE
-    if RETURN_VALUE is None or new_value > RETURN_VALUE:
-        RETURN_VALUE = new_value
+def _raise_retval(task_result: "TaskResult", new_value: int) -> None:
+    """Set the exit-code on a TaskResult, keeping the worst (highest) value."""
+    if task_result.retval is None or new_value > task_result.retval:
+        task_result.retval = new_value
 
 
 @dataclass
@@ -56,12 +53,24 @@ class TaskResult:
     should_skip: bool = False
     potential_pipeline_error: bool = False
     skip_reason: Optional[str] = None  # "canceled", "queued", "running", etc.
+    retval: Optional[int] = None
 
 
 class ConcurrentRequestParser:
     """Parser with concurrent HTTP requests and better error handling."""
 
-    def __init__(self, max_workers: int = 10, timeout: int = 30, max_retries: int = 3):
+    def __init__(
+        self,
+        ctx: "AppContext | None" = None,
+        max_workers: int = 10,
+        timeout: int = 30,
+        max_retries: int = 3,
+    ):
+        if ctx is None:
+            from enge.utils.opt_manager import parsed_opts
+
+            ctx = AppContext.from_parsed_opts(parsed_opts)
+        self.ctx = ctx
         self.max_workers = max_workers
         self.timeout = timeout
         self.max_retries = max_retries
@@ -154,7 +163,7 @@ class ConcurrentRequestParser:
                 )
                 if not results_xml_url:
                     results_xml_url = os.path.join(
-                        str(parsed_opts.testing_farm_endpoint.log_artifact_baseurl),
+                        str(self.ctx.testing_farm_endpoint.log_artifact_baseurl),
                         task_data["id"],
                         "results.xml",
                     )
@@ -207,7 +216,7 @@ class ConcurrentRequestParser:
 
                 # Handle canceled tasks early
                 if "canceled" in task_result.request_state.lower():
-                    update_retval(NO_RESULT)
+                    _raise_retval(task_result, NO_RESULT)
                     task_result.should_skip = True
                     task_result.skip_reason = "canceled"
                     # Don't return early - let _process_task_state handle display
@@ -260,7 +269,7 @@ class ConcurrentRequestParser:
             "CANCELED": "state.canceled",
         }
         if task_result.request_state == "ERROR":
-            update_retval(ERROR_HERE)
+            _raise_retval(task_result, ERROR_HERE)
 
         style = state_styles.get(task_result.request_state, "")
         colored_state = (
@@ -280,14 +289,14 @@ class ConcurrentRequestParser:
 
         # Handle waiting for in-progress tasks
         if task_result.request_state in ("NEW", "QUEUED", "RUNNING"):
-            if parsed_opts.cli_args.action == "rerun" or getattr(
-                parsed_opts.cli_args, "wait", False
+            if self.ctx.cli_args.action == "rerun" or getattr(
+                self.ctx.cli_args, "wait", False
             ):
                 self._wait_for_completion(task_result)
             else:
                 # Don't log individual warnings - will show general warning later
                 LOGGER.debug(f"[{uuid_short}] Request is still running.")
-                update_retval(NO_RESULT)
+                _raise_retval(task_result, NO_RESULT)
                 task_result.should_skip = True
                 # Set specific skip reason based on state
                 if task_result.request_state in ("NEW", "QUEUED"):
@@ -300,7 +309,7 @@ class ConcurrentRequestParser:
             if task_result.request_state not in ("COMPLETE", "ERROR"):
                 # Don't log individual warnings - will show general warning later
                 LOGGER.debug(f"[{uuid_short}] Request is still running")
-                update_retval(NO_RESULT)
+                _raise_retval(task_result, NO_RESULT)
                 task_result.should_skip = True
                 # Set specific skip reason based on state
                 if task_result.request_state == "QUEUED":
@@ -322,7 +331,7 @@ class ConcurrentRequestParser:
             LOGGER.debug(
                 f"[{uuid_short}] We'll try to fetch the XML results to get more information, if possible."
             )
-            update_retval(ERROR_HERE)
+            _raise_retval(task_result, ERROR_HERE)
 
     def _wait_for_completion(self, task_result: TaskResult):
         """Wait for a running task to complete."""
@@ -403,8 +412,6 @@ class ConcurrentRequestParser:
             )
             LOGGER.critical("   Please verify, that you're connected to the VPN")
             LOGGER.debug(f"   Error details: {err}")
-            from enge.utils.errors import NetworkError
-
             raise NetworkError(
                 "Failed to fetch XML results due to connection error"
             ) from err
@@ -432,7 +439,7 @@ class ConcurrentRequestParser:
                 f"[{task_result.request_uuid}]    Please consult with {task_result.url}"
             )
 
-        update_retval(ERROR_HERE)
+        _raise_retval(task_result, ERROR_HERE)
         task_result.error_message = "XML not available, using fallback"
         return task_result
 
@@ -529,7 +536,9 @@ class XMLParser:
 
     @staticmethod
     def parse_xml_results(
-        task_result: TaskResult, skip_pass: bool = False
+        task_result: TaskResult,
+        skip_pass: bool = False,
+        ctx: "AppContext | None" = None,
     ) -> Dict[str, Any]:
         """Parse XML results with comprehensive business logic."""
         if not task_result.xunit_content:
@@ -563,11 +572,11 @@ class XMLParser:
 
             # Update return values based on overall result
             if job_result_overall == "passed":
-                update_retval(ALL_PASS)
+                _raise_retval(task_result, ALL_PASS)
             elif job_result_overall == "failed":
-                update_retval(FAIL_HERE)
+                _raise_retval(task_result, FAIL_HERE)
             elif job_result_overall == "error":
-                update_retval(ERROR_HERE)
+                _raise_retval(task_result, ERROR_HERE)
                 # Bail out when potential pipeline error assessment returns True
                 if potential_pipeline_error:
                     LOGGER.critical(
@@ -586,7 +595,7 @@ class XMLParser:
                         "error": "Pipeline error detected",
                     }
             else:
-                update_retval(99)
+                _raise_retval(task_result, 99)
 
             # Skip if overall result is passed and skip_pass is enabled
             if skip_pass and job_result_overall.upper() == "PASSED":
@@ -607,8 +616,10 @@ class XMLParser:
                 }
 
             # Handle log downloads if requested
-            if parsed_opts.cli_args.action != "rerun" and getattr(
-                parsed_opts.cli_args, "download", False
+            if (
+                ctx
+                and ctx.cli_args.action != "rerun"
+                and getattr(ctx.cli_args, "download", False)
             ):
                 LOGGER.info("Requested download of the logs. This might take a minute.")
 
@@ -627,7 +638,7 @@ class XMLParser:
             # Process test suites
             for suite_elem in job_test_suites:
                 suite_data = XMLParser._parse_test_suite(
-                    suite_elem, skip_pass, task_result
+                    suite_elem, skip_pass, task_result, ctx
                 )
                 if suite_data:  # Only add if not filtered out
                     parsed_data["testsuites"].append(suite_data)
@@ -650,7 +661,10 @@ class XMLParser:
 
     @staticmethod
     def _parse_test_suite(
-        suite_elem, skip_pass: bool, task_result: TaskResult
+        suite_elem,
+        skip_pass: bool,
+        task_result: TaskResult,
+        ctx: "AppContext | None" = None,
     ) -> Optional[Dict[str, Any]]:
         """Parse a single test suite element."""
         try:
@@ -679,7 +693,7 @@ class XMLParser:
             testcase_elements = suite_elem.xpath("./testcase")
             for testcase_elem in testcase_elements:
                 testcase_data = XMLParser._parse_test_case(
-                    testcase_elem, skip_pass, task_result, testsuite_name
+                    testcase_elem, skip_pass, task_result, testsuite_name, ctx
                 )
                 if testcase_data:
                     testsuite_data["testcases"].append(testcase_data)
@@ -692,7 +706,11 @@ class XMLParser:
 
     @staticmethod
     def _parse_test_case(
-        testcase_elem, skip_pass: bool, task_result: TaskResult, testsuite_name: str
+        testcase_elem,
+        skip_pass: bool,
+        task_result: TaskResult,
+        testsuite_name: str,
+        ctx: "AppContext | None" = None,
     ) -> Optional[Dict[str, Any]]:
         """Parse a single test case element."""
         try:
@@ -709,11 +727,13 @@ class XMLParser:
             }
 
             # Handle log downloads if requested
-            if parsed_opts.cli_args.action != "rerun" and getattr(
-                parsed_opts.cli_args, "download", False
+            if (
+                ctx
+                and ctx.cli_args.action != "rerun"
+                and getattr(ctx.cli_args, "download", False)
             ):
                 XMLParser._download_testcase_logs(
-                    testcase_elem, task_result, testsuite_name, testcase_name
+                    testcase_elem, task_result, testsuite_name, testcase_name, ctx
                 )
 
             return testcase_data
@@ -724,12 +744,15 @@ class XMLParser:
 
     @staticmethod
     def _download_testcase_logs(
-        testcase_elem, task_result: TaskResult, testsuite_name: str, testcase_name: str
+        testcase_elem,
+        task_result: TaskResult,
+        testsuite_name: str,
+        testcase_name: str,
+        ctx: "AppContext | None" = None,
     ):
         """Download logs for a test case if available."""
         try:
-            # Get logs directory (validated by operational defaults check)
-            logs_directory = parsed_opts.common.get("logs_directory")
+            logs_directory = ctx.common.get("logs_directory") if ctx else None
             if not logs_directory:
                 LOGGER.warning("logs_directory not configured, skipping log download")
                 return
@@ -780,22 +803,21 @@ class XMLParser:
 
 
 def parse_request_xunit_concurrent(
+    ctx: AppContext,
     request_url_list: Optional[List[str]] = None,
     tasks_source: Optional[str] = None,
     skip_pass: bool = False,
-) -> Dict[str, Any]:
-    """
-    Parse request xunit with concurrent requests for better performance.
+):
+    """Parse request xunit with concurrent requests.
 
     Returns:
-        Dictionary with parsed results organized by UUID
+        Tuple of (parsed_dict, retval) where retval is the worst exit code.
     """
-    from enge.report.__main__ import parse_tasks  # Import from original module
-
     if request_url_list is None or tasks_source is None:
-        parsed_result = parse_tasks()
+        from enge.report.__main__ import parse_tasks
+
+        parsed_result = parse_tasks(ctx)
         request_url_list = parsed_result[0] or []
-        # Handle both string and list types for tasks_source
         raw_tasks_source = parsed_result[1]
         if isinstance(raw_tasks_source, list):
             tasks_source = str(raw_tasks_source[0]) if raw_tasks_source else ""
@@ -804,10 +826,11 @@ def parse_request_xunit_concurrent(
 
     if not request_url_list or all(element == "" for element in request_url_list):
         LOGGER.critical("There are no tasks to report for!")
-        return {}
+        return {}, None
 
-    # Use concurrent parser with connection pooling
-    with ConcurrentRequestParser(max_workers=10, timeout=30, max_retries=3) as parser:
+    with ConcurrentRequestParser(
+        ctx, max_workers=10, timeout=30, max_retries=3
+    ) as parser:
         task_results = parser.parse_tasks_concurrent(request_url_list)
 
     # Parse XML results and track what happened to each task
@@ -816,7 +839,7 @@ def parse_request_xunit_concurrent(
     skipped_due_to_pass = 0
 
     for task_result in task_results:
-        parsed_data = xml_parser.parse_xml_results(task_result, skip_pass)
+        parsed_data = xml_parser.parse_xml_results(task_result, skip_pass, ctx)
 
         # Check if this was skipped due to --skip-pass
         if (
@@ -838,7 +861,11 @@ def parse_request_xunit_concurrent(
         ):
             parsed_dict[task_result.request_uuid] = parsed_data
 
-    # Return parsed results
+    # Aggregate the worst exit code across all task results
+    retval = None
+    for tr in task_results:
+        if tr.retval is not None:
+            retval = tr.retval if retval is None else max(retval, tr.retval)
 
     # Add enhanced summary information
     input_count = len(request_url_list)
@@ -897,10 +924,4 @@ def parse_request_xunit_concurrent(
     console.print(f"   {'No reportable data:':<28}{failed_tasks:>3}", style="error")
     console.print("─" * 60, style="dim")
 
-    return parsed_dict
-
-
-def get_return_value():
-    """Get the current return value."""
-    global RETURN_VALUE
-    return RETURN_VALUE
+    return parsed_dict, retval
