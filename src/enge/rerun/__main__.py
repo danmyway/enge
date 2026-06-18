@@ -13,7 +13,7 @@ from rich import box
 from enge.dispatch.pin_compose import repin_compose
 from enge.dispatch.tf_send_request import SubmitTest, maybe_clear_latest_jobs_file
 from enge.report.__main__ import parse_tasks_with_map, parse_request_xunit
-from enge.utils.opt_manager import parsed_opts
+from enge.utils.app_context import AppContext
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
 from enge.utils.console import console
 
@@ -95,7 +95,8 @@ class RerunJobs:
         task_source (str): The source from which tasks were retrieved.
     """
 
-    def __init__(self):
+    def __init__(self, ctx: AppContext):
+        self.ctx = ctx
         self.rerun_payloads = []
         self.parsed_dict = {}
         self.processed_data = {}
@@ -103,7 +104,7 @@ class RerunJobs:
 
         # Retrieve task URLs and their source from the report module
         self.req_url_list, self.task_source, self.uuid_source_map = (
-            parse_tasks_with_map()
+            parse_tasks_with_map(ctx)
         )
 
     def qualify_results(self):
@@ -119,7 +120,7 @@ class RerunJobs:
         for i in self.req_url_list:
             logger.debug(f"Parsing the payload from: {i}")
         self.parsed_dict = parse_request_xunit(
-            self.req_url_list, self.task_source, False
+            self.req_url_list, self.task_source, False, ctx=self.ctx
         )
 
         for key, details in self.parsed_dict.items():
@@ -129,10 +130,10 @@ class RerunJobs:
                 "PASSED",
             ]  # We want to filter out skipped and passed plans
 
-            if parsed_opts.cli_args.error:
+            if self.ctx.cli_args.error:
                 # Keep only ERROR results (exclude FAILED)
                 result_filter.append("FAILED")
-            elif parsed_opts.cli_args.fail:
+            elif self.ctx.cli_args.fail:
                 # Keep only FAILED results (exclude ERROR)
                 result_filter.append("ERROR")
 
@@ -271,7 +272,7 @@ class RerunJobs:
                                 end_section=is_test_row_final,
                             )
             console.print(info_table)
-            if parsed_opts.cli_args.dryrun:
+            if self.ctx.cli_args.dryrun:
                 return
         else:
             logger.info("None of the provided tasks qualify for a re-run.")
@@ -461,7 +462,7 @@ class RerunJobs:
             # Fetch the task details from the API
             response = http_get(
                 os.path.join(
-                    str(parsed_opts.testing_farm_endpoint.api_endpoint_url), request
+                    str(self.ctx.testing_farm_endpoint.api_endpoint_url), request
                 ),
                 timeout=REQUEST_TIMEOUT_DEFAULT,
             )
@@ -571,7 +572,7 @@ class RerunJobs:
             # Re-pin compose to the latest available nightly
             env = filtered_payload["environments"][0]
             original_compose = env.get("os", {}).get("compose")
-            composes_prod_url = parsed_opts.config.get("testing_farm", {}).get(
+            composes_prod_url = self.ctx.config.get("testing_farm", {}).get(
                 "composes_prod_url", ""
             )
             env["os"]["compose"] = repin_compose(original_compose, composes_prod_url)
@@ -694,12 +695,12 @@ def _create_rerun_launch_for_payload(
             return None
 
 
-def main():
+def main(ctx: AppContext):
     """
     Main function to qualify tasks for re-run, build their re-run payloads,
     and submit the requests via the Testing Farm API.
     """
-    jobs = RerunJobs()
+    jobs = RerunJobs(ctx)
 
     # Qualify tasks for re-run
     jobs.qualify_results()
@@ -723,12 +724,12 @@ def main():
     base_tags = submit.set_tag or []
 
     submit.print_header = True
-    submit.api_key = parsed_opts.testing_farm.get("api_key")
+    submit.api_key = ctx.testing_farm.get("api_key")
 
     # Build authorization header
     req_header = {"Authorization": f"Bearer {submit.api_key}"}
 
-    is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
+    is_dryrun = getattr(ctx.cli_args, "dryrun", False)
 
     maybe_clear_latest_jobs_file()
     # Send each rerun request using the filtered original payload
@@ -762,8 +763,8 @@ def main():
 
             # Get base ReportPortal config vars
             rp_config_vars = generate_reportportal_environment_variables(
-                config=parsed_opts.config,
-                cli_args=parsed_opts.cli_args,
+                config=ctx.config,
+                cli_args=ctx.cli_args,
             )
 
             # Filter out LAUNCH and LAUNCH_DESCRIPTION, keep only base vars
