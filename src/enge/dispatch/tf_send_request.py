@@ -10,25 +10,28 @@ from enge.utils.http_client import http_get, http_post
 from enge.utils import get_datetime, redact_sensitive
 from rich.markup import escape
 from enge.utils.console import console
-from enge.utils.opt_manager import parsed_opts
-from enge.utils.source_target_parser import normalize_tmt_compose_context
+from enge.utils.source_target_parser import (
+    normalize_tmt_compose_context,
+    parse_target_compose_from_url,
+)
 from enge.utils.globals import (
     REQUEST_TIMEOUT_DEFAULT,
     REQUEST_POLL_TIMEOUT,
     RESPONSE_WATCHER_WAIT_SECONDS_DEFAULT,
+    TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX,
 )
 
 LOGGER = logging.getLogger(__name__)
 
 
-def clear_latest_jobs_file():
+def clear_latest_jobs_file(ctx):
     """Remove the latest-jobs file at the start of a dispatch run.
 
     Called once per enge invocation before any record_task_ids() calls so that
     a fresh run always starts with an empty file rather than appending to
     leftovers from a previous run.
     """
-    path = parsed_opts.archive_tasks_latest
+    path = ctx.archive_tasks_latest
     if path:
         try:
             os.unlink(path)
@@ -36,18 +39,27 @@ def clear_latest_jobs_file():
             pass
 
 
-def maybe_clear_latest_jobs_file() -> None:
+def maybe_clear_latest_jobs_file(ctx) -> None:
     """Clear the latest-jobs file unless this is a dry-run."""
-    if not getattr(parsed_opts.cli_args, "dryrun", False):
-        clear_latest_jobs_file()
+    if not getattr(ctx.cli_args, "dryrun", False):
+        clear_latest_jobs_file(ctx)
 
 
 class SubmitTest:
     def __init__(
         self,
+        ctx=None,
         shared_archive_filename: Optional[str] = None,
         launch_uuid: Optional[str] = None,
     ):
+        # Temporary backward compatibility during migration: if ctx is not provided,
+        # fall back to the parsed_opts singleton. This supports unmigrated callers
+        # (set_flow, dispatch/__main__) until Task 4 and Task 5 migrate them.
+        if ctx is None:
+            from enge.utils.opt_manager import parsed_opts
+
+            ctx = parsed_opts
+        self.ctx = ctx
         self.api_key: Optional[str] = None
         self.tests_git_url: Optional[str] = None
         self.tests_git_ref: Optional[str] = None
@@ -80,10 +92,10 @@ class SubmitTest:
 
         self.task_id: Optional[str] = None
         self.log_artifact_base_url: str = str(
-            parsed_opts.testing_farm_endpoint.log_artifact_baseurl
+            ctx.testing_farm_endpoint.log_artifact_baseurl
         )
         self.testing_farm_endpoint: str = str(
-            parsed_opts.testing_farm_endpoint.api_endpoint_url
+            ctx.testing_farm_endpoint.api_endpoint_url
         )
         # Set-specific data (will be overridden by set_specific_data if provided)
         self.set_architectures: Optional[List[str]] = None
@@ -93,10 +105,8 @@ class SubmitTest:
         self.request_status: Optional[str] = None
         self.log_artifact_url: Optional[str] = None
         self.dispatch_summary: Optional[str] = None
-        self.set_tag: Optional[List[str]] = getattr(
-            parsed_opts.cli_args, "set_tag", None
-        )
-        self.auto_tag_enabled: bool = getattr(parsed_opts.cli_args, "auto_tag", False)
+        self.set_tag: Optional[List[str]] = getattr(ctx.cli_args, "set_tag", None)
+        self.auto_tag_enabled: bool = getattr(ctx.cli_args, "auto_tag", False)
         self.auto_generated_tags: List[str] = []
         self.compact_output: bool = False
         self.silent_output: bool = False
@@ -230,8 +240,6 @@ class SubmitTest:
 
         # Extract and set target compose from TARGET_COMPOSE_URL if available
         if environment_variables and "TARGET_COMPOSE_URL" in environment_variables:
-            from enge.utils.source_target_parser import parse_target_compose_from_url
-
             self.target_compose = parse_target_compose_from_url(
                 environment_variables["TARGET_COMPOSE_URL"]
             )
@@ -274,8 +282,8 @@ class SubmitTest:
             self.set_pool = pool
 
     def record_task_ids(self, task_id):
-        self.latest_tasks_file = parsed_opts.archive_tasks_latest
-        self.archive_tasks_default_path = parsed_opts.archive_tasks_default
+        self.latest_tasks_file = self.ctx.archive_tasks_latest
+        self.archive_tasks_default_path = self.ctx.archive_tasks_default
 
         # Ensure we have a valid path for archive files
         if not self.archive_tasks_default_path:
@@ -321,17 +329,15 @@ class SubmitTest:
         env_vars = (
             self.set_environment_variables
             if self.set_environment_variables is not None
-            else getattr(parsed_opts, "environment_variables", {})
+            else getattr(self.ctx, "environment_variables", {})
         )
         tmt_context = (
             self.set_tmt_context
             if self.set_tmt_context is not None
-            else getattr(parsed_opts, "tmt_context", {})
+            else getattr(self.ctx, "tmt_context", {})
         )
 
         # Separate ReportPortal environment variables from regular variables
-        from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
-
         regular_env_vars = {}
         reportportal_env_vars = {}
 
@@ -357,14 +363,14 @@ class SubmitTest:
         architectures = (
             self.set_architectures
             if self.set_architectures is not None
-            else getattr(parsed_opts, "architectures", [])
+            else getattr(self.ctx, "architectures", [])
         )
 
         # Get pool - use set-specific data if available
         pool = (
             self.set_pool
             if self.set_pool is not None
-            else getattr(parsed_opts, "pool", None)
+            else getattr(self.ctx, "pool", None)
         )
 
         # Build environment configurations for each architecture
@@ -392,13 +398,7 @@ class SubmitTest:
 
                     # Add launch ID if available from ReportPortal launch creation
                     # In dry run mode, use a placeholder UUID so the structure matches real runs
-                    if self.launch_uuid or getattr(
-                        parsed_opts.cli_args, "dryrun", False
-                    ):
-                        from enge.utils.globals import (
-                            TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX,
-                        )
-
+                    if self.launch_uuid or getattr(self.ctx.cli_args, "dryrun", False):
                         upload_to_launch_key = (
                             f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
                         )
@@ -521,7 +521,7 @@ class SubmitTest:
         architectures = (
             self.set_architectures
             if self.set_architectures is not None
-            else getattr(parsed_opts, "architectures", [])
+            else getattr(self.ctx, "architectures", [])
         )
         if len(architectures) == 1:
             kv.add_row("Architecture:", architectures[0])
@@ -531,7 +531,7 @@ class SubmitTest:
         pool = (
             self.set_pool
             if self.set_pool is not None
-            else getattr(parsed_opts, "pool", None)
+            else getattr(self.ctx, "pool", None)
         )
         if pool:
             kv.add_row("Pool:", pool)
@@ -579,13 +579,13 @@ class SubmitTest:
         render_console.print(panel)
         self.dispatch_summary = buf.getvalue()
 
-        if getattr(parsed_opts.cli_args, "dryrun", False):
+        if getattr(self.ctx.cli_args, "dryrun", False):
             if self.payload_raw:
                 payload_to_display = self.payload_raw
             else:
                 _, payload_to_display = self.build_payload()
             self.dryrun_payload = redact_sensitive(payload_to_display)
-            output_format = getattr(parsed_opts.cli_args, "output_format", "terminal")
+            output_format = getattr(self.ctx.cli_args, "output_format", "terminal")
             if output_format != "json":
                 LOGGER.info("DRY RUN | Printing out requested payload:")
                 print(json.dumps(redact_sensitive(payload_to_display), indent=4))
@@ -595,7 +595,7 @@ class SubmitTest:
 
     def send_request(self, payload_raw, header):
         # Check for dry run first - don't send actual request if dry run is enabled
-        if getattr(parsed_opts.cli_args, "dryrun", False):
+        if getattr(self.ctx.cli_args, "dryrun", False):
             LOGGER.debug("Dry run mode - skipping actual request to Testing Farm")
             self.payload_raw = payload_raw
             self.assess_summary_message()
@@ -613,8 +613,8 @@ class SubmitTest:
             self.dispatch_summary = self.assess_summary_message()
             if self.silent_output:
                 pass
-            elif getattr(parsed_opts.cli_args, "action", None) != "rerun" and getattr(
-                parsed_opts.cli_args, "wait", False
+            elif getattr(self.ctx.cli_args, "action", None) != "rerun" and getattr(
+                self.ctx.cli_args, "wait", False
             ):
                 self._response_watcher(self.log_artifact_url)
                 self.dispatch_summary = None

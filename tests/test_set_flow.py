@@ -99,7 +99,7 @@ class TestSetFlow(unittest.TestCase):
                     {"compose": "RHEL-9.2.0", "distro": "rhel-9", "build_id": None}
                 ],
             ), patch(
-                "enge.dispatch.tf_send_request.parsed_opts",
+                "enge.utils.opt_manager.parsed_opts",
                 new=MagicMock(
                     testing_farm_endpoint=MagicMock(
                         log_artifact_baseurl="http://logs",
@@ -161,7 +161,7 @@ class TestSetFlow(unittest.TestCase):
         ), patch(
             "enge.dispatch.set_flow.merge_set_environment_variables", return_value={}
         ), patch(
-            "enge.dispatch.tf_send_request.parsed_opts",
+            "enge.utils.opt_manager.parsed_opts",
             new=MagicMock(
                 testing_farm_endpoint=MagicMock(
                     log_artifact_baseurl="http://logs",
@@ -234,7 +234,7 @@ class TestSetFlow(unittest.TestCase):
                     effective_values={},
                 )
                 with patch(
-                    "enge.dispatch.tf_send_request.parsed_opts",
+                    "enge.utils.opt_manager.parsed_opts",
                     new=MagicMock(
                         testing_farm_endpoint=MagicMock(
                             log_artifact_baseurl="http://logs",
