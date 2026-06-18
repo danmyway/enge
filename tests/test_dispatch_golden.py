@@ -230,9 +230,7 @@ class TestDispatchGolden(unittest.TestCase):
 
             with patch.object(
                 set_flow, "_resolved_opts_placeholder", resolved_opts
-            ), patch(
-                "enge.dispatch.tf_send_request.parsed_opts", tf_parsed_opts
-            ), patch(
+            ), patch("enge.utils.opt_manager.parsed_opts", tf_parsed_opts), patch(
                 "enge.dispatch.set_flow.ArtifactResolver.resolve_builds",
                 return_value=ARTIFACT_STUB,
             ):
