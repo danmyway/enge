@@ -168,7 +168,7 @@ def main():
         elif resolved_opts.cli_args.action == "rerun":
             from enge.rerun.__main__ import main as rerun_main
 
-            return rerun_main()
+            return rerun_main(ctx)
         elif resolved_opts.cli_args.action == "cancel":
             from enge.cancel.__main__ import main as cancel_main
 
