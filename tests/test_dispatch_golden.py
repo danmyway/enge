@@ -8,7 +8,7 @@ baseline.
 Stubs (all documented inline):
   - _pin_compose_with_fallback: avoids HTTP to compose service
   - ArtifactResolver.resolve_builds: avoids COPR/Brew resolution
-  - parsed_opts in tf_send_request: avoids singleton initialization
+  - SubmitTest receives ctx directly (no singleton needed)
 """
 
 import json
@@ -18,7 +18,6 @@ from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 # Never import parsed_opts at module level in tests — see CLAUDE.md.
-import enge.dispatch.set_flow as set_flow
 from enge.dispatch.set_flow import expand_set_requests, process_request_spec
 
 GOLDEN_FILE = os.path.join(
@@ -121,10 +120,10 @@ def _build_cli_args():
 
 
 def _build_resolved_opts(cli_args, individual_test_sets):
-    """Build the mock object returned by set_flow._get_parsed_opts().
+    """Build the mock ctx object passed to expand_set_requests / process_request_spec.
 
     Must carry every attribute that process_request_spec reads from
-    resolved_opts (testing_farm, tests, project, config, cli_args, etc.).
+    ctx (testing_farm, tests, project, config, cli_args, etc.).
     """
     mock = MagicMock()
     mock.individual_test_sets = individual_test_sets
@@ -140,6 +139,17 @@ def _build_resolved_opts(cli_args, individual_test_sets):
     mock.copr_api = {}
     mock.brew_api = {}
     mock.parallel_limit = None
+    # Attributes needed by SubmitTest (which now receives ctx directly)
+    mock.testing_farm_endpoint = MagicMock(
+        log_artifact_baseurl="https://artifacts.tf.example",
+        api_endpoint_url="https://api.tf.example/v0.1/requests",
+    )
+    mock.archive_tasks_latest = "/tmp/enge_golden_test_latest"
+    mock.archive_tasks_default = "/tmp/enge_golden_test_archive/"
+    mock.pool = None
+    mock.architectures = []
+    mock.environment_variables = {}
+    mock.tmt_context = {}
     return mock
 
 
@@ -195,8 +205,7 @@ class TestDispatchGolden(unittest.TestCase):
         resolved_opts = _build_resolved_opts(cli_args, individual_test_sets)
 
         # --- Step 1: expand_set_requests (uses real cartesian product logic) ---
-        with patch.object(set_flow, "_resolved_opts_placeholder", resolved_opts):
-            specs = expand_set_requests()
+        specs = expand_set_requests(ctx=resolved_opts)
 
         self.assertEqual(
             len(specs),
@@ -207,30 +216,7 @@ class TestDispatchGolden(unittest.TestCase):
         # --- Step 2: process each spec with stubs for network-touching code ---
         payloads = []
         for idx, spec in enumerate(specs, start=1):
-            # Mock parsed_opts in tf_send_request (accessed at SubmitTest.__init__
-            # time and in assess_summary_message / build_payload / send_request).
-            # Attributes that must NOT return auto-generated MagicMocks are set
-            # explicitly to their real values.
-            tf_parsed_opts = MagicMock()
-            tf_parsed_opts.testing_farm_endpoint.log_artifact_baseurl = (
-                "https://artifacts.tf.example"
-            )
-            tf_parsed_opts.testing_farm_endpoint.api_endpoint_url = (
-                "https://api.tf.example/v0.1/requests"
-            )
-            tf_parsed_opts.cli_args = cli_args
-            tf_parsed_opts.archive_tasks_latest = "/tmp/enge_golden_test_latest"
-            tf_parsed_opts.archive_tasks_default = "/tmp/enge_golden_test_archive/"
-            # Fallback attributes read by build_payload / assess_summary_message
-            # when set_specific_data values are None:
-            tf_parsed_opts.pool = None
-            tf_parsed_opts.architectures = []
-            tf_parsed_opts.environment_variables = {}
-            tf_parsed_opts.tmt_context = {}
-
-            with patch.object(
-                set_flow, "_resolved_opts_placeholder", resolved_opts
-            ), patch("enge.utils.opt_manager.parsed_opts", tf_parsed_opts), patch(
+            with patch(
                 "enge.dispatch.set_flow.ArtifactResolver.resolve_builds",
                 return_value=ARTIFACT_STUB,
             ):
@@ -240,6 +226,7 @@ class TestDispatchGolden(unittest.TestCase):
                     spec=spec,
                     shared_archive_filename="enge_golden_test_archive",
                     artifact_type="compose",
+                    ctx=resolved_opts,
                 )
 
             self.assertIsNotNone(

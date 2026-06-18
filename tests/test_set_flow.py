@@ -9,8 +9,7 @@ from enge.dispatch.set_flow import (
 
 
 class TestSetFlow(unittest.TestCase):
-    @patch("enge.dispatch.set_flow._get_parsed_opts")
-    def test_expand_set_requests_basic(self, mock_parsed_opts):
+    def test_expand_set_requests_basic(self):
         po = MagicMock()
         po.config = {"foo": "bar"}
         po.individual_test_sets = [
@@ -27,13 +26,12 @@ class TestSetFlow(unittest.TestCase):
                 "target_spec": {"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"},
             }
         ]
-        mock_parsed_opts.return_value = po
 
         with patch(
             "enge.dispatch.set_flow.generate_upgrade_path_alias",
             return_value="rhel-9.2-to-9.4",
         ), patch("enge.dispatch.set_flow.parse_architectures", return_value=["x86_64"]):
-            specs = expand_set_requests()
+            specs = expand_set_requests(ctx=po)
 
         self.assertEqual(len(specs), 1)
         spec = specs[0]
@@ -43,11 +41,14 @@ class TestSetFlow(unittest.TestCase):
         self.assertEqual(spec.plan, "/plans/p1")
         self.assertEqual(spec.arch, "x86_64")
 
-    @patch("enge.dispatch.set_flow._get_parsed_opts")
-    def test_process_request_spec_dry_run(self, mock_parsed_opts):
-        # Minimal parsed_opts needed by process_request_spec flow
+    def test_process_request_spec_dry_run(self):
+        # Minimal ctx needed by process_request_spec flow
         po = MagicMock()
         po.testing_farm = {"api_key": "token"}
+        po.testing_farm_endpoint = MagicMock(
+            log_artifact_baseurl="http://logs",
+            api_endpoint_url="http://api",
+        )
         po.tests = {
             "git_url": "https://git.example/repo",
             "git_ref": "main",
@@ -63,7 +64,12 @@ class TestSetFlow(unittest.TestCase):
         po.cli_args.rp = False
         po.cli_args.dryrun = True
         po.config = {}
-        mock_parsed_opts.return_value = po
+        po.archive_tasks_latest = "/tmp/enge_test_latest"
+        po.archive_tasks_default = "/tmp/enge_test_archive/"
+        po.pool = None
+        po.architectures = []
+        po.environment_variables = {}
+        po.tmt_context = {}
 
         spec = RequestSpec(
             set_name="setA",
@@ -98,14 +104,6 @@ class TestSetFlow(unittest.TestCase):
                 return_value=[
                     {"compose": "RHEL-9.2.0", "distro": "rhel-9", "build_id": None}
                 ],
-            ), patch(
-                "enge.utils.opt_manager.parsed_opts",
-                new=MagicMock(
-                    testing_farm_endpoint=MagicMock(
-                        log_artifact_baseurl="http://logs",
-                        api_endpoint_url="http://api",
-                    )
-                ),
             ):
                 ok = process_request_spec(
                     idx=1,
@@ -113,16 +111,20 @@ class TestSetFlow(unittest.TestCase):
                     spec=spec,
                     shared_archive_filename="shared",
                     artifact_type="compose",
+                    ctx=po,
                 )
 
         self.assertTrue(ok)
         mock_send.assert_called_once()
 
-    @patch("enge.dispatch.set_flow._get_parsed_opts")
-    def test_process_request_spec_failure_returns_dict(self, mock_parsed_opts):
+    def test_process_request_spec_failure_returns_dict(self):
         """Failure paths must return a dict with status='failed', not None."""
         po = MagicMock()
         po.testing_farm = {"api_key": "token"}
+        po.testing_farm_endpoint = MagicMock(
+            log_artifact_baseurl="http://logs",
+            api_endpoint_url="http://api",
+        )
         po.tests = {
             "git_url": "https://git.example/repo",
             "git_ref": "main",
@@ -138,7 +140,12 @@ class TestSetFlow(unittest.TestCase):
         po.cli_args.rp = False
         po.cli_args.dryrun = False
         po.config = {}
-        mock_parsed_opts.return_value = po
+        po.archive_tasks_latest = "/tmp/enge_test_latest"
+        po.archive_tasks_default = "/tmp/enge_test_archive/"
+        po.pool = None
+        po.architectures = []
+        po.environment_variables = {}
+        po.tmt_context = {}
 
         spec = RequestSpec(
             set_name="fail-set",
@@ -160,14 +167,6 @@ class TestSetFlow(unittest.TestCase):
             "enge.dispatch.set_flow.parse_environment_variables", return_value={}
         ), patch(
             "enge.dispatch.set_flow.merge_set_environment_variables", return_value={}
-        ), patch(
-            "enge.utils.opt_manager.parsed_opts",
-            new=MagicMock(
-                testing_farm_endpoint=MagicMock(
-                    log_artifact_baseurl="http://logs",
-                    api_endpoint_url="http://api",
-                )
-            ),
         ):
             result = process_request_spec(
                 idx=1,
@@ -175,6 +174,7 @@ class TestSetFlow(unittest.TestCase):
                 spec=spec,
                 shared_archive_filename="shared",
                 artifact_type="compose",
+                ctx=po,
             )
 
         self.assertIsNotNone(result)
@@ -182,12 +182,13 @@ class TestSetFlow(unittest.TestCase):
         self.assertEqual(result["set_name"], "fail-set")
         self.assertIn("error", result)
 
-    @patch("enge.dispatch.set_flow._get_parsed_opts")
-    def test_configure_submit_test_sets_skip_guest_setup_for_rhui(
-        self, mock_parsed_opts
-    ):
+    def test_configure_submit_test_sets_skip_guest_setup_for_rhui(self):
         po = MagicMock()
         po.testing_farm = {"api_key": "token"}
+        po.testing_farm_endpoint = MagicMock(
+            log_artifact_baseurl="http://logs",
+            api_endpoint_url="http://api",
+        )
         po.tests = {
             "git_url": "https://git.example/repo",
             "git_ref": "main",
@@ -202,7 +203,12 @@ class TestSetFlow(unittest.TestCase):
         po.cli_args.test = None
         po.cli_args.auto_tag = False
         po.cli_args.set_tag = None
-        mock_parsed_opts.return_value = po
+        po.archive_tasks_latest = "/tmp/enge_test_latest"
+        po.archive_tasks_default = "/tmp/enge_test_archive/"
+        po.pool = None
+        po.architectures = []
+        po.environment_variables = {}
+        po.tmt_context = {}
 
         from enge.dispatch.set_flow import _configure_submit_test
 
@@ -233,16 +239,7 @@ class TestSetFlow(unittest.TestCase):
                     upgrade_path="rhel-8-to-9",
                     effective_values={},
                 )
-                with patch(
-                    "enge.utils.opt_manager.parsed_opts",
-                    new=MagicMock(
-                        testing_farm_endpoint=MagicMock(
-                            log_artifact_baseurl="http://logs",
-                            api_endpoint_url="http://api",
-                        )
-                    ),
-                ):
-                    submit = _configure_submit_test(spec, po, "shared")
+                submit = _configure_submit_test(spec, po, "shared")
                 self.assertEqual(
                     submit.skip_guest_setup,
                     expected,
