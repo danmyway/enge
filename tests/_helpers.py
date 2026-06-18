@@ -13,6 +13,7 @@ def make_app_context(
     archive_tasks_default="/tmp/enge_archive",
     extra_cli=None,
     extra_config=None,
+    parsed_opts_ref=None,
 ):
     cli_attrs = {
         "action": action,
@@ -56,4 +57,5 @@ def make_app_context(
         testing_farm_endpoint=endpoint,
         archive_tasks_latest=archive_tasks_latest,
         archive_tasks_default=archive_tasks_default,
+        _parsed_opts_ref=parsed_opts_ref,
     )
