@@ -1,7 +1,7 @@
-from enge.utils.opt_manager import parsed_opts
 import requests
 from enge.utils.http_client import http_get
-from enge.utils.globals import VERBOSE
+from enge.utils.globals import VERBOSE, REQUEST_TIMEOUT_DEFAULT
+from enge.utils.errors import NetworkError, ValidationError
 import logging
 import re
 
@@ -162,13 +162,9 @@ def fetch_data_from_url(url):
     - SystemExit: If the request fails.
     """
     try:
-        from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT
-
         response = http_get(url, timeout=REQUEST_TIMEOUT_DEFAULT)
         response.raise_for_status()  # Raises HTTPError for bad responses
     except requests.exceptions.RequestException as e:
-        from enge.utils.errors import NetworkError
-
         raise NetworkError(f"Error accessing {url}: {e}") from e
 
     return response.json()
@@ -201,7 +197,7 @@ def find_compose(compose_arg, data):
     return None
 
 
-def _pin_compose_with_fallback(major, minor, suffix, composes_prod_url):
+def _pin_compose_with_fallback(major, minor, suffix, composes_prod_url, cli_args=None):
     """
     Attempts to pin a compose with fallback logic for different RHEL formats.
 
@@ -212,7 +208,9 @@ def _pin_compose_with_fallback(major, minor, suffix, composes_prod_url):
     Parameters:
     - major (int): Major version number
     - minor (int): Minor version number
+    - suffix (str): Compose suffix (e.g., "Nightly")
     - composes_prod_url (str): URL to fetch compose data from
+    - cli_args (Namespace, optional): CLI arguments for rerun mode detection
 
     Returns:
     - str: The found compose
@@ -233,11 +231,7 @@ def _pin_compose_with_fallback(major, minor, suffix, composes_prod_url):
     result = find_compose(compose_with_micro, data) or find_compose(
         compose_without_micro, data
     )
-    is_rerun = (
-        parsed_opts._instance is not None
-        and getattr(getattr(parsed_opts._instance, "cli_args", None), "action", None)
-        == "rerun"
-    )
+    is_rerun = cli_args is not None and getattr(cli_args, "action", None) == "rerun"
     if not result and is_rerun:
         LOGGER.warning(
             f"Rerun mode: Compose '{compose_with_micro}', '{compose_without_micro}' not found, falling back to the latest Nightly."
@@ -286,8 +280,6 @@ def _show_compose_not_found_error(attempted_composes, data, major=None, minor=No
         attempted_list = ", ".join(attempted_composes)
         LOGGER.error(f"Compose(s) {attempted_list} not found.")
         LOGGER.debug("Unable to show relevant alternatives - version parsing failed.")
-        from enge.utils.errors import ValidationError
-
         raise ValidationError("Compose not found and version parsing failed")
 
     # Safely get data with proper None handling
@@ -345,15 +337,13 @@ def _show_compose_not_found_error(attempted_composes, data, major=None, minor=No
             LOGGER.error(f"All available symbolic composes: \n{all_symbolic_names}")
         if all_compose_names:
             LOGGER.error(f"All available composes: \n{all_compose_names}")
-    from enge.utils.errors import ValidationError
-
     raise ValidationError("Compose not found")
 
 
 _repin_cache = {}
 
 
-def repin_compose(compose_name, composes_prod_url):
+def repin_compose(compose_name, composes_prod_url, cli_args=None):
     """
     Re-pin a compose name to the latest available nightly version.
 
@@ -370,6 +360,7 @@ def repin_compose(compose_name, composes_prod_url):
     Parameters:
     - compose_name (str): Original compose name (e.g., "RHEL-8.10.0-20241215.1")
     - composes_prod_url (str): URL to fetch compose data from.
+    - cli_args (Namespace, optional): CLI arguments for rerun mode detection
 
     Returns:
     - str: Updated compose name for RHEL composes, or the original name for non-RHEL.
@@ -407,7 +398,9 @@ def repin_compose(compose_name, composes_prod_url):
             "composes_prod_url is not configured, cannot validate compose availability"
         )
 
-    result = _pin_compose_with_fallback(major, minor, suffix, composes_prod_url)
+    result = _pin_compose_with_fallback(
+        major, minor, suffix, composes_prod_url, cli_args=cli_args
+    )
     if result != compose_name:
         LOGGER.warning("Compose re-pinned: %s -> %s", compose_name, result)
     else:
