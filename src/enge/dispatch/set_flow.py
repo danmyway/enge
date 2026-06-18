@@ -12,15 +12,16 @@ from enge.utils.source_target_parser import (
     merge_set_environment_variables,
     merge_tmt_context,
     format_ami_compose_name,
+    apply_centos_context_overrides,
+    generate_tmt_context,
+    parse_target_compose_from_url,
+    parse_tmt_context,
 )
-from enge.utils.globals import VERBOSE
+from enge.utils.globals import VERBOSE, TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.dispatch.artifacts import ArtifactResolver
 from enge.utils.reportportal_helper import create_launch as rp_create_launch
 from enge.utils.globals import RP_COMPATIBLE_EVENT
-
-
-_resolved_opts_placeholder = None  # set via tests when needed
 
 
 class _DispatchParsedOptsContext:
@@ -63,20 +64,14 @@ class RequestSpec:
     upgrade_path_detailed: Optional[str] = None
 
 
-def _get_parsed_opts():
-    global _resolved_opts_placeholder
-    if _resolved_opts_placeholder is not None:
-        return _resolved_opts_placeholder
-    from enge.utils import opt_manager  # local import to avoid import-time side effects
-
-    return opt_manager.parsed_opts
-
-
-def expand_set_requests() -> List[RequestSpec]:
+def expand_set_requests(ctx=None) -> List[RequestSpec]:
     """Build list of RequestSpec from --set configuration."""
+    if ctx is None:
+        from enge.utils import opt_manager
+
+        ctx = opt_manager.parsed_opts
     specs: List[RequestSpec] = []
-    resolved_opts = _get_parsed_opts()
-    for test_set in getattr(resolved_opts, "individual_test_sets", []) or []:
+    for test_set in getattr(ctx, "individual_test_sets", []) or []:
         set_name = test_set["name"]
         effective_values = test_set["effective_values"]
 
@@ -172,34 +167,33 @@ def _build_rp_context(spec, per_set_event):
     }
 
 
-def _configure_submit_test(spec, resolved_opts, shared_archive_filename):
+def _configure_submit_test(spec, ctx, shared_archive_filename):
     """Create and configure a SubmitTest instance."""
     submit_test = SubmitTest(
+        ctx,
         shared_archive_filename=shared_archive_filename,
         launch_uuid=None,
     )
-    submit_test.api_key = resolved_opts.testing_farm.get("api_key")
+    submit_test.api_key = ctx.testing_farm.get("api_key")
     submit_test.tests_git_url = (
-        getattr(resolved_opts.cli_args, "git_url", None)
+        getattr(ctx.cli_args, "git_url", None)
         or spec.effective_values.get("git_url")
-        or resolved_opts.tests.get("git_url")
-        or resolved_opts.project.get("repo_url")
+        or ctx.tests.get("git_url")
+        or ctx.project.get("repo_url")
     )
     submit_test.tests_git_ref = (
-        getattr(resolved_opts.cli_args, "git_ref", None)
+        getattr(ctx.cli_args, "git_ref", None)
         or spec.effective_values.get("git_ref")
-        or resolved_opts.tests.get("git_ref")
+        or ctx.tests.get("git_ref")
     )
-    submit_test.testfilter = getattr(resolved_opts.cli_args, "testfilter", None)
-    submit_test.test_name = getattr(resolved_opts.cli_args, "test", None)
+    submit_test.testfilter = getattr(ctx.cli_args, "testfilter", None)
+    submit_test.test_name = getattr(ctx.cli_args, "test", None)
     submit_test.plan = spec.plan.rstrip("/") if spec.plan else None
-    submit_test.business_unit_tag = resolved_opts.testing_farm.get(
-        "cloud_resources_tag"
-    )
+    submit_test.business_unit_tag = ctx.testing_farm.get("cloud_resources_tag")
     submit_test.parallel_limit = (
         spec.effective_values.get("parallel_limit")
-        or getattr(resolved_opts, "parallel_limit", None)
-        or resolved_opts.tests.get("parallel_limit")
+        or getattr(ctx, "parallel_limit", None)
+        or ctx.tests.get("parallel_limit")
     )
 
     if spec.source_spec.get("compose_name", "").endswith("-rhui"):
@@ -215,17 +209,13 @@ def _configure_submit_test(spec, resolved_opts, shared_archive_filename):
     return submit_test
 
 
-def _build_plan_filter(spec, resolved_opts):
+def _build_plan_filter(spec, ctx):
     """Build the plan filter string, or a failure dict on ValueError."""
     try:
         additional_filters = []
-        only_rhsm_mock_cdn = getattr(
-            resolved_opts.cli_args, "only_rhsm_mock_cdn", False
-        )
-        no_rhsm = getattr(resolved_opts.cli_args, "no_rhsm", False)
-        only_rhsm_stage_cdn = getattr(
-            resolved_opts.cli_args, "only_rhsm_stage_cdn", False
-        )
+        only_rhsm_mock_cdn = getattr(ctx.cli_args, "only_rhsm_mock_cdn", False)
+        no_rhsm = getattr(ctx.cli_args, "no_rhsm", False)
+        only_rhsm_stage_cdn = getattr(ctx.cli_args, "only_rhsm_stage_cdn", False)
         if only_rhsm_mock_cdn or only_rhsm_stage_cdn:
             additional_filters.append("tag:rhsm")
         elif no_rhsm:
@@ -235,7 +225,7 @@ def _build_plan_filter(spec, resolved_opts):
         tier_plan_filter = None
         base_plan_filter = None
         if spec.tier:
-            tier_config = resolved_opts.tests.get("tier", {})
+            tier_config = ctx.tests.get("tier", {})
             tier_plan_filter = generate_tier_plan_filter(
                 [spec.tier],
                 tier_config,
@@ -256,7 +246,7 @@ def _build_plan_filter(spec, resolved_opts):
             LOGGER.log(
                 VERBOSE, f"Generated base non-tier plan filter: {base_plan_filter}"
             )
-        cli_planfilter = getattr(resolved_opts.cli_args, "planfilter", None)
+        cli_planfilter = getattr(ctx.cli_args, "planfilter", None)
         planfilter = cli_planfilter or tier_plan_filter or base_plan_filter
         if spec.plan:
             LOGGER.log(VERBOSE, f"Using specific plan: {spec.plan}")
@@ -289,7 +279,7 @@ class _TempOpts:
         self.brew_api = {}
 
 
-def _build_tmt_context_and_env(spec, per_set_event, resolved_opts, ctx):
+def _build_tmt_context_and_env(spec, per_set_event, ctx, req_ctx):
     """Build TMT context, environment variables, and TempOpts."""
     temp_opts = _TempOpts()
     for attr in [
@@ -307,17 +297,12 @@ def _build_tmt_context_and_env(spec, per_set_event, resolved_opts, ctx):
         "brew_api",
         "config",
     ]:
-        if hasattr(resolved_opts, attr):
-            setattr(temp_opts, attr, getattr(resolved_opts, attr))
+        if hasattr(ctx, attr):
+            setattr(temp_opts, attr, getattr(ctx, attr))
     temp_opts.source_spec = spec.source_spec
     temp_opts.target_spec = spec.target_spec
     temp_opts.upgrade_path_alias = spec.upgrade_path
     temp_opts.architectures = [spec.arch]
-
-    from enge.utils.source_target_parser import (
-        apply_centos_context_overrides,
-        generate_tmt_context,
-    )
 
     temp_opts.tmt_context = generate_tmt_context(
         spec.source_spec,
@@ -326,14 +311,12 @@ def _build_tmt_context_and_env(spec, per_set_event, resolved_opts, ctx):
         tier=spec.tier,
     )
 
-    merged_env_vars = merge_set_environment_variables(ctx)
+    merged_env_vars = merge_set_environment_variables(req_ctx)
 
     temp_opts.tmt_context = apply_centos_context_overrides(
         temp_opts.tmt_context, spec.source_spec, spec.target_spec, merged_env_vars
     )
     if "TARGET_COMPOSE_URL" in merged_env_vars:
-        from enge.utils.source_target_parser import parse_target_compose_from_url
-
         target_compose = parse_target_compose_from_url(
             merged_env_vars["TARGET_COMPOSE_URL"]
         )
@@ -349,9 +332,7 @@ def _build_tmt_context_and_env(spec, per_set_event, resolved_opts, ctx):
         temp_opts.tmt_context = merge_tmt_context(temp_opts.tmt_context, set_context)
 
     try:
-        cli_context_args = getattr(resolved_opts.cli_args, "context", None)
-        from enge.utils.source_target_parser import parse_tmt_context
-
+        cli_context_args = getattr(ctx.cli_args, "context", None)
         cli_context = parse_tmt_context(cli_context_args)
         if cli_context:
             temp_opts.tmt_context = merge_tmt_context(
@@ -360,7 +341,7 @@ def _build_tmt_context_and_env(spec, per_set_event, resolved_opts, ctx):
     except ValueError as e:
         LOGGER.error(f"Failed to parse --context: {e}")
 
-    only_rhsm_stage_cdn = getattr(resolved_opts.cli_args, "only_rhsm_stage_cdn", False)
+    only_rhsm_stage_cdn = getattr(ctx.cli_args, "only_rhsm_stage_cdn", False)
     if only_rhsm_stage_cdn:
         merged_env_vars["RHSM_MODE"] = "stage"
         temp_opts.tmt_context["product_phase"] = "rc"
@@ -406,7 +387,7 @@ def _resolve_artifacts(spec, submit_test, temp_opts, artifact_type, artifact_res
     return None
 
 
-def _create_launch(spec, submit_test, rp_context, merged_env_vars, resolved_opts):
+def _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx):
     """Create RP launch if applicable; returns a failure dict or None on success."""
     per_set_event = rp_context["event"] if rp_context else None
     if not (rp_context and per_set_event in RP_COMPATIBLE_EVENT):
@@ -420,12 +401,12 @@ def _create_launch(spec, submit_test, rp_context, merged_env_vars, resolved_opts
         launch_uuid = rp_create_launch(
             context=rp_context,
             tmt_context=complete_tmt_context,
-            config=resolved_opts.config,
-            cli_args=resolved_opts.cli_args,
-            dryrun=getattr(resolved_opts.cli_args, "dryrun", False),
+            config=ctx.config,
+            cli_args=ctx.cli_args,
+            dryrun=getattr(ctx.cli_args, "dryrun", False),
         )
-        if launch_uuid or getattr(resolved_opts.cli_args, "dryrun", False):
-            if getattr(resolved_opts.cli_args, "dryrun", False):
+        if launch_uuid or getattr(ctx.cli_args, "dryrun", False):
+            if getattr(ctx.cli_args, "dryrun", False):
                 placeholder_uuid = "00000000-0000-0000-0000-000000000000"
                 complete_tmt_context["uniq_id"] = placeholder_uuid
             else:
@@ -433,7 +414,6 @@ def _create_launch(spec, submit_test, rp_context, merged_env_vars, resolved_opts
 
             launch_uuid_effective = launch_uuid or placeholder_uuid
             submit_test.set_launch_uuid(launch_uuid_effective)
-            from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
 
             rp_env = {
                 k: v
@@ -463,11 +443,11 @@ def _create_launch(spec, submit_test, rp_context, merged_env_vars, resolved_opts
 
 
 def _build_request_context(
-    spec, per_set_event, resolved_opts, shared_archive_filename, artifact_type
+    spec, per_set_event, ctx, shared_archive_filename, artifact_type
 ):
     """Construct the RequestContext for one dispatch request."""
-    copr_artifact = getattr(resolved_opts.cli_args, "copr", None)
-    brew_artifact = getattr(resolved_opts.cli_args, "brew", None)
+    copr_artifact = getattr(ctx.cli_args, "copr", None)
+    brew_artifact = getattr(ctx.cli_args, "brew", None)
     auto_env_vars = generate_environment_variables(
         spec.source_spec,
         spec.target_spec,
@@ -480,16 +460,16 @@ def _build_request_context(
             or spec.effective_values.get("brew_api", {}).get("build_references")
         ),
     )
-    cli_env_args = getattr(resolved_opts.cli_args, "environment", None)
+    cli_env_args = getattr(ctx.cli_args, "environment", None)
     cli_env_vars = parse_environment_variables(cli_env_args)
     set_env_vars = spec.effective_values.get("environment", {})
     from enge.dispatch.context import RequestContext
 
     return RequestContext(
         spec=spec,
-        config=resolved_opts.config,
-        cli_args=resolved_opts.cli_args,
-        api_key=resolved_opts.testing_farm.get("api_key"),
+        config=ctx.config,
+        cli_args=ctx.cli_args,
+        api_key=ctx.testing_farm.get("api_key"),
         event=per_set_event,
         auto_env_vars=auto_env_vars,
         set_env_vars=set_env_vars,
@@ -500,9 +480,9 @@ def _build_request_context(
     )
 
 
-def _send_and_collect(submit_test, resolved_opts, spec):
+def _send_and_collect(submit_test, ctx, spec):
     """Send the TF request and assemble the result dict."""
-    output_format = getattr(resolved_opts.cli_args, "output_format", "terminal")
+    output_format = getattr(ctx.cli_args, "output_format", "terminal")
     submit_test.compact_output = output_format != "json"
     submit_test.silent_output = output_format == "json"
     req_header, req_payload = submit_test.build_payload()
@@ -544,27 +524,31 @@ def process_request_spec(
     shared_archive_filename: str,
     artifact_type: str,
     artifact_resolver: Optional[ArtifactResolver] = None,
+    ctx=None,
 ) -> Optional[Dict[str, Any]]:
     """Prepare SubmitTest, optionally create RP launch, and send the request."""
-    resolved_opts = _get_parsed_opts()
+    if ctx is None:
+        from enge.utils import opt_manager
+
+        ctx = opt_manager.parsed_opts
     per_set_event = spec.effective_values.get("event") or getattr(
-        resolved_opts.cli_args, "event", None
+        ctx.cli_args, "event", None
     )
 
     _log_request(spec, idx, total_expected_requests)
 
-    submit_test = _configure_submit_test(spec, resolved_opts, shared_archive_filename)
+    submit_test = _configure_submit_test(spec, ctx, shared_archive_filename)
 
-    plan_filter_result = _build_plan_filter(spec, resolved_opts)
+    plan_filter_result = _build_plan_filter(spec, ctx)
     if isinstance(plan_filter_result, dict):
         return plan_filter_result
     submit_test.planfilter = plan_filter_result
 
-    ctx = _build_request_context(
-        spec, per_set_event, resolved_opts, shared_archive_filename, artifact_type
+    req_ctx = _build_request_context(
+        spec, per_set_event, ctx, shared_archive_filename, artifact_type
     )
     temp_opts, merged_env_vars = _build_tmt_context_and_env(
-        spec, per_set_event, resolved_opts, ctx
+        spec, per_set_event, ctx, req_ctx
     )
 
     pool = spec.effective_values.get("pool")
@@ -579,10 +563,8 @@ def process_request_spec(
         return failure
 
     rp_context = _build_rp_context(spec, per_set_event)
-    launch_failure = _create_launch(
-        spec, submit_test, rp_context, merged_env_vars, resolved_opts
-    )
+    launch_failure = _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx)
     if launch_failure:
         return launch_failure
 
-    return _send_and_collect(submit_test, resolved_opts, spec)
+    return _send_and_collect(submit_test, ctx, spec)
