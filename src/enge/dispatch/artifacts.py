@@ -6,7 +6,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ArtifactResolver:
-    def resolve_builds(self, compose_name: str, ctx=None) -> List[Dict[str, Any]]:
+    def resolve_builds(self, compose_name: str, ctx) -> List[Dict[str, Any]]:
         """
         Return a list of build dicts based on the active artifact configuration
         available in ctx.

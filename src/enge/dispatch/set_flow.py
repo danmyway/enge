@@ -18,11 +18,14 @@ from enge.utils.source_target_parser import (
     parse_target_compose_from_url,
     parse_tmt_context,
 )
-from enge.utils.globals import VERBOSE, TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
+from enge.utils.globals import (
+    VERBOSE,
+    TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX,
+    RP_COMPATIBLE_EVENT,
+)
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.dispatch.artifacts import ArtifactResolver
 from enge.utils.reportportal_helper import create_launch as rp_create_launch
-from enge.utils.globals import RP_COMPATIBLE_EVENT
 
 
 LOGGER = logging.getLogger(__name__)
@@ -468,7 +471,8 @@ def process_request_spec(
     shared_archive_filename: str,
     artifact_type: str,
     artifact_resolver: Optional[ArtifactResolver] = None,
-    ctx=None,
+    *,
+    ctx,
 ) -> Optional[Dict[str, Any]]:
     """Prepare SubmitTest, optionally create RP launch, and send the request."""
     per_set_event = spec.effective_values.get("event") or getattr(
