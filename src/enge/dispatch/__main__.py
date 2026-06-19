@@ -28,7 +28,9 @@ from typing import List, Dict, Any, Optional
 
 from enge.utils.globals import ARTIFACT_MAPPING
 from enge.utils.console import console
-from enge.utils.opt_manager import parsed_opts
+from enge.utils.errors import ConfigurationError, ValidationError
+from enge.utils.tf_artifact import CoprRef, BrewRef
+from enge.utils import get_datetime
 from .tf_send_request import SubmitTest, maybe_clear_latest_jobs_file
 from .set_flow import expand_set_requests, process_request_spec
 from .artifacts import ArtifactResolver
@@ -41,12 +43,12 @@ from .plan_flow import build_tier_plan_specs
 LOGGER = logging.getLogger(__name__)
 
 
-def _compute_tiers_and_plans():
-    cli_plans = getattr(parsed_opts.cli_args, "plan", None)
-    cli_tiers = getattr(parsed_opts.cli_args, "tier", None)
-    cli_sets = getattr(parsed_opts.cli_args, "set", None)
-    config_plans = parsed_opts.plans if parsed_opts.plans else []
-    effective_tiers = getattr(parsed_opts, "effective_tiers", None)
+def _compute_tiers_and_plans(ctx):
+    cli_plans = getattr(ctx.cli_args, "plan", None)
+    cli_tiers = getattr(ctx.cli_args, "tier", None)
+    cli_sets = getattr(ctx.cli_args, "set", None)
+    config_plans = ctx.plans if ctx.plans else []
+    effective_tiers = getattr(ctx, "effective_tiers", None)
 
     if cli_tiers or effective_tiers:
         tiers = cli_tiers or effective_tiers
@@ -60,11 +62,11 @@ def _compute_tiers_and_plans():
     return tiers, plans
 
 
-def _determine_artifact_type() -> str:
-    copr_artifact = getattr(parsed_opts.cli_args, "copr", None)
-    brew_artifact = getattr(parsed_opts.cli_args, "brew", None)
-    has_copr = copr_artifact or getattr(parsed_opts, "copr_references", [])
-    has_brew = brew_artifact or getattr(parsed_opts, "brew_references", [])
+def _determine_artifact_type(ctx) -> str:
+    copr_artifact = getattr(ctx.cli_args, "copr", None)
+    brew_artifact = getattr(ctx.cli_args, "brew", None)
+    has_copr = copr_artifact or getattr(ctx, "copr_references", [])
+    has_brew = brew_artifact or getattr(ctx, "brew_references", [])
     if has_copr:
         return ARTIFACT_MAPPING["copr"]
     if has_brew:
@@ -76,44 +78,40 @@ def validate_git_repository(url: str) -> None:
     validate_git_repo_util(url)
 
 
-def validate_plan_filters(plans_list: List[str]) -> None:
-    cli_planfilter = getattr(parsed_opts.cli_args, "planfilter", None)
-    generated_planfilter = getattr(parsed_opts, "plan_filter", None)
-    cli_testfilter = getattr(parsed_opts.cli_args, "testfilter", None)
-    cli_test_name = getattr(parsed_opts.cli_args, "test", None)
+def validate_plan_filters(plans_list: List[str], ctx) -> None:
+    cli_planfilter = getattr(ctx.cli_args, "planfilter", None)
+    generated_planfilter = getattr(ctx, "plan_filter", None)
+    cli_testfilter = getattr(ctx.cli_args, "testfilter", None)
+    cli_test_name = getattr(ctx.cli_args, "test", None)
     validate_plan_filters_util(
         plans_list, cli_planfilter, generated_planfilter, cli_testfilter, cli_test_name
     )
 
 
-def setup_submit_test(shared_archive_filename: Optional[str] = None) -> SubmitTest:
+def setup_submit_test(ctx, shared_archive_filename: Optional[str] = None) -> SubmitTest:
     """Initialize and configure the SubmitTest instance."""
     try:
-        submit_test = SubmitTest(shared_archive_filename=shared_archive_filename)
+        submit_test = SubmitTest(ctx, shared_archive_filename=shared_archive_filename)
 
-        submit_test.api_key = parsed_opts.testing_farm.get("api_key")
+        submit_test.api_key = ctx.testing_farm.get("api_key")
         submit_test.tests_git_url = (
-            getattr(parsed_opts.cli_args, "git_url", None)
-            or parsed_opts.tests.get("git_url")
-            or parsed_opts.project.get("repo_url")
+            getattr(ctx.cli_args, "git_url", None)
+            or ctx.tests.get("git_url")
+            or ctx.project.get("repo_url")
         )
         submit_test.tests_git_ref = getattr(
-            parsed_opts.cli_args, "git_ref", None
-        ) or parsed_opts.tests.get("git_ref")
+            ctx.cli_args, "git_ref", None
+        ) or ctx.tests.get("git_ref")
         # Use CLI planfilter if provided, otherwise use generated plan_filter
-        cli_planfilter = getattr(parsed_opts.cli_args, "planfilter", None)
-        submit_test.planfilter = cli_planfilter or getattr(
-            parsed_opts, "plan_filter", None
-        )
-        submit_test.testfilter = getattr(parsed_opts.cli_args, "testfilter", None)
-        submit_test.test_name = getattr(parsed_opts.cli_args, "test", None)
+        cli_planfilter = getattr(ctx.cli_args, "planfilter", None)
+        submit_test.planfilter = cli_planfilter or getattr(ctx, "plan_filter", None)
+        submit_test.testfilter = getattr(ctx.cli_args, "testfilter", None)
+        submit_test.test_name = getattr(ctx.cli_args, "test", None)
 
         # Note: Architecture handling is done in build_payload() method with full list support
-        submit_test.business_unit_tag = parsed_opts.testing_farm.get(
-            "cloud_resources_tag"
-        )
+        submit_test.business_unit_tag = ctx.testing_farm.get("cloud_resources_tag")
 
-        submit_test.parallel_limit = getattr(parsed_opts, "parallel_limit", None)
+        submit_test.parallel_limit = getattr(ctx, "parallel_limit", None)
 
         # Validate essential fields
         if not submit_test.api_key:
@@ -123,16 +121,14 @@ def setup_submit_test(shared_archive_filename: Optional[str] = None) -> SubmitTe
 
     except Exception as e:
         LOGGER.critical(f"Failed to initialize SubmitTest: {e}")
-        from enge.utils.errors import ConfigurationError
-
         raise ConfigurationError("Failed to initialize SubmitTest") from e
 
 
-def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
+def get_artifact_info(compose_name: str, ctx) -> List[Dict[str, Any]]:
     """Get artifact information based on the artifact type."""
     try:
-        copr_artifacts = getattr(parsed_opts.cli_args, "copr", None)
-        brew_artifacts = getattr(parsed_opts.cli_args, "brew", None)
+        copr_artifacts = getattr(ctx.cli_args, "copr", None)
+        brew_artifacts = getattr(ctx.cli_args, "brew", None)
 
         all_builds = []
 
@@ -147,27 +143,21 @@ def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
                 artifact_reference = getattr(copr_artifact, "ref", None)
                 if artifact_reference is None:
                     artifact_reference = (
-                        [parsed_opts.copr_reference]
-                        if parsed_opts.copr_reference
-                        else []
+                        [ctx.copr_reference] if ctx.copr_reference else []
                     )
                 elif not isinstance(artifact_reference, list):
                     artifact_reference = [artifact_reference]
 
                 copr_pkg_name = (
-                    parsed_opts.copr_api.get("package")
-                    or parsed_opts.project.get("name")
-                    or ""
+                    ctx.copr_api.get("package") or ctx.project.get("name") or ""
                 )
-                copr_repo = (
-                    parsed_opts.copr_api.get("repository") or copr_pkg_name or ""
-                )
+                copr_repo = ctx.copr_api.get("repository") or copr_pkg_name or ""
                 builds = copr_artifact.get_info(
                     packages=copr_pkg_name,
                     repo=copr_repo,
                     reference=artifact_reference,
                     composes=[compose_name],
-                    options=parsed_opts,
+                    options=ctx,
                 )
                 if builds:
                     all_builds.extend(builds)
@@ -183,110 +173,84 @@ def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
                 artifact_reference = getattr(brew_artifact, "ref", None)
                 if artifact_reference is None:
                     artifact_reference = (
-                        [parsed_opts.brew_reference]
-                        if parsed_opts.brew_reference
-                        else []
+                        [ctx.brew_reference] if ctx.brew_reference else []
                     )
                 elif not isinstance(artifact_reference, list):
                     artifact_reference = [artifact_reference]
                 brew_pkg_name = (
-                    parsed_opts.brew_api.get("package")
-                    or parsed_opts.project.get("name")
-                    or ""
+                    ctx.brew_api.get("package") or ctx.project.get("name") or ""
                 )
                 builds = brew_artifact.get_info(
                     packages=brew_pkg_name,
                     reference=artifact_reference,
                     composes=[compose_name],
-                    options=parsed_opts,
+                    options=ctx,
                 )
                 if builds:
                     all_builds.extend(builds)
-        elif getattr(parsed_opts, "copr_references", []):
+        elif getattr(ctx, "copr_references", []):
             LOGGER.debug("Getting COPR artifact information from configuration")
             # Handle COPR references from test set or config (no CLI artifacts)
-            from enge.utils.tf_artifact import CoprRef
-
-            for copr_ref in parsed_opts.copr_references:
+            for copr_ref in ctx.copr_references:
                 copr_pkg_name = (
-                    parsed_opts.copr_api.get("package")
-                    or parsed_opts.project.get("name")
-                    or ""
+                    ctx.copr_api.get("package") or ctx.project.get("name") or ""
                 )
-                copr_repo = (
-                    parsed_opts.copr_api.get("repository") or copr_pkg_name or ""
-                )
+                copr_repo = ctx.copr_api.get("repository") or copr_pkg_name or ""
                 copr_artifact = CoprRef([copr_ref])
                 builds = copr_artifact.get_info(
                     packages=copr_pkg_name,
                     repo=copr_repo,
                     reference=[copr_ref],
                     composes=[compose_name],
-                    options=parsed_opts,
+                    options=ctx,
                 )
                 if builds:
                     all_builds.extend(builds)
-        elif getattr(parsed_opts, "brew_references", []):
+        elif getattr(ctx, "brew_references", []):
             LOGGER.debug("Getting brew artifact information from configuration")
             # Handle Brew references from test set or config (no CLI artifacts)
-            from enge.utils.tf_artifact import BrewRef
-
-            for brew_ref in parsed_opts.brew_references:
+            for brew_ref in ctx.brew_references:
                 brew_pkg_name = (
-                    parsed_opts.brew_api.get("package")
-                    or parsed_opts.project.get("name")
-                    or ""
+                    ctx.brew_api.get("package") or ctx.project.get("name") or ""
                 )
                 brew_artifact = BrewRef([brew_ref])
                 builds = brew_artifact.get_info(
                     packages=brew_pkg_name,
                     reference=[brew_ref],
                     composes=[compose_name],
-                    options=parsed_opts,
+                    options=ctx,
                 )
                 if builds:
                     all_builds.extend(builds)
-        elif parsed_opts.copr_reference:
+        elif ctx.copr_reference:
             LOGGER.debug(
                 "Getting COPR artifact information from configuration (legacy)"
             )
             # Backward compatibility for single reference
-            from enge.utils.tf_artifact import CoprRef
-
-            copr_pkg_name = (
-                parsed_opts.copr_api.get("package")
-                or parsed_opts.project.get("name")
-                or ""
-            )
-            copr_repo = parsed_opts.copr_api.get("repository") or copr_pkg_name or ""
-            copr_artifact = CoprRef([parsed_opts.copr_reference])
+            copr_pkg_name = ctx.copr_api.get("package") or ctx.project.get("name") or ""
+            copr_repo = ctx.copr_api.get("repository") or copr_pkg_name or ""
+            copr_artifact = CoprRef([ctx.copr_reference])
             builds = copr_artifact.get_info(
                 packages=copr_pkg_name,
                 repo=copr_repo,
-                reference=[parsed_opts.copr_reference],
+                reference=[ctx.copr_reference],
                 composes=[compose_name],
-                options=parsed_opts,
+                options=ctx,
             )
             if builds:
                 all_builds.extend(builds)
-        elif parsed_opts.brew_reference:
+        elif ctx.brew_reference:
             LOGGER.debug(
                 "Getting brew artifact information from configuration (legacy)"
             )
             # Backward compatibility for single reference
-            from enge.utils.tf_artifact import BrewRef
-
-            brew_pkg_name = (
-                parsed_opts.brew_api.get("package")
-                or parsed_opts.project.get("name")
-                or ""
-            )
-            brew_artifact = BrewRef([parsed_opts.brew_reference])
+            brew_pkg_name = ctx.brew_api.get("package") or ctx.project.get("name") or ""
+            brew_artifact = BrewRef([ctx.brew_reference])
             builds = brew_artifact.get_info(
                 packages=brew_pkg_name,
-                reference=[parsed_opts.brew_reference],
+                reference=[ctx.brew_reference],
                 composes=[compose_name],
-                options=parsed_opts,
+                options=ctx,
             )
             if builds:
                 all_builds.extend(builds)
@@ -299,9 +263,9 @@ def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
                 {
                     "compose": compose_name,
                     "build_id": None,  # No build_id for compose artifacts
-                    "distro": parsed_opts.tmt_context.get(
+                    "distro": ctx.tmt_context.get(
                         "distro",
-                        f"rhel-{parsed_opts.source_spec['major']}.{parsed_opts.source_spec['minor']}",
+                        f"rhel-{ctx.source_spec['major']}.{ctx.source_spec['minor']}",
                     ),
                 }
             ]
@@ -310,8 +274,6 @@ def get_artifact_info(compose_name: str) -> List[Dict[str, Any]]:
 
     except Exception as e:
         LOGGER.critical(f"Failed to get artifact information: {e}")
-        from enge.utils.errors import ValidationError
-
         raise ValidationError("Failed to get artifact information") from e
 
 
@@ -364,16 +326,14 @@ def _print_dispatch_summaries(
                     print(summary)
 
 
-def main() -> int:
+def main(ctx) -> int:
     global artifact_type
     try:
-        output_format = getattr(parsed_opts.cli_args, "output_format", "terminal")
+        output_format = getattr(ctx.cli_args, "output_format", "terminal")
 
-        if getattr(parsed_opts.cli_args, "copr", None):
+        if getattr(ctx.cli_args, "copr", None):
             # Resolve repo URL lazily
-            repo_url = parsed_opts.tests.get("git_url") or parsed_opts.project.get(
-                "repo_url"
-            )
+            repo_url = ctx.tests.get("git_url") or ctx.project.get("repo_url")
             if repo_url:
                 validate_git_repository(repo_url)
 
@@ -381,33 +341,28 @@ def main() -> int:
         successful_requests = 0
 
         # Add event/set name for launch naming (used only when creating RP launch)
-        event_name = getattr(parsed_opts.cli_args, "event", None)
+        event_name = getattr(ctx.cli_args, "event", None)
         if (
             not event_name
-            and hasattr(parsed_opts, "individual_test_sets")
-            and parsed_opts.individual_test_sets
+            and hasattr(ctx, "individual_test_sets")
+            and ctx.individual_test_sets
         ):
-            first_set = parsed_opts.individual_test_sets[0]
+            first_set = ctx.individual_test_sets[0]
             event_name = first_set["effective_values"].get("event")
 
         # Generate a single shared archive filename for all requests from this command
-        from enge.utils import get_datetime
-
         shared_archive_filename = f"enge_jobs_archive_{get_datetime()}"
 
         # Determine tiers/plans and artifact type now (deferred to runtime)
-        tiers, plans = _compute_tiers_and_plans()
-        artifact_type = _determine_artifact_type()
+        tiers, plans = _compute_tiers_and_plans(ctx)
+        artifact_type = _determine_artifact_type(ctx)
 
         dispatch_results: List[Dict[str, Any]] = []
-        maybe_clear_latest_jobs_file()
+        maybe_clear_latest_jobs_file(ctx)
 
         # Check if we have individual test sets (new approach)
-        if (
-            hasattr(parsed_opts, "individual_test_sets")
-            and parsed_opts.individual_test_sets
-        ):
-            all_set_requests = expand_set_requests()
+        if hasattr(ctx, "individual_test_sets") and ctx.individual_test_sets:
+            all_set_requests = expand_set_requests(ctx=ctx)
             total_expected_requests = len(all_set_requests)
             LOGGER.info(f"Dispatching {total_expected_requests} request(s)")
             resolver = ArtifactResolver()
@@ -419,6 +374,7 @@ def main() -> int:
                     shared_archive_filename,
                     artifact_type,
                     resolver,
+                    ctx=ctx,
                 )
                 if result:
                     dispatch_results.append({**result, "idx": idx})
@@ -427,11 +383,11 @@ def main() -> int:
                 total_requests += 1
 
         else:
-            setup_submit_test(shared_archive_filename=shared_archive_filename)
+            setup_submit_test(ctx, shared_archive_filename=shared_archive_filename)
 
             resolver = ArtifactResolver()
-            validate_plan_filters(plans)
-            specs = build_tier_plan_specs(tiers, plans)
+            validate_plan_filters(plans, ctx)
+            specs = build_tier_plan_specs(tiers, plans, ctx)
             total_expected_requests = len(specs)
             if total_expected_requests == 0:
                 LOGGER.warning(
@@ -447,6 +403,7 @@ def main() -> int:
                     shared_archive_filename,
                     artifact_type,
                     resolver,
+                    ctx=ctx,
                 )
                 if result:
                     dispatch_results.append({**result, "idx": i})

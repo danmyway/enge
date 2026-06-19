@@ -48,17 +48,10 @@ def maybe_clear_latest_jobs_file(ctx) -> None:
 class SubmitTest:
     def __init__(
         self,
-        ctx=None,
+        ctx,
         shared_archive_filename: Optional[str] = None,
         launch_uuid: Optional[str] = None,
     ):
-        # Temporary backward compatibility during migration: if ctx is not provided,
-        # fall back to the parsed_opts singleton. This supports unmigrated callers
-        # (set_flow, dispatch/__main__) until Task 4 and Task 5 migrate them.
-        if ctx is None:
-            from enge.utils.opt_manager import parsed_opts
-
-            ctx = parsed_opts
         self.ctx = ctx
         self.api_key: Optional[str] = None
         self.tests_git_url: Optional[str] = None

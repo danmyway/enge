@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import List, Dict, Any, Optional
 
 from enge.utils.source_target_parser import (
@@ -24,30 +25,6 @@ from enge.utils.reportportal_helper import create_launch as rp_create_launch
 from enge.utils.globals import RP_COMPATIBLE_EVENT
 
 
-class _DispatchParsedOptsContext:
-    """Context manager to temporarily override dispatch module parsed_opts.
-
-    This avoids ad-hoc global swapping sprinkled in the code and centralizes
-    the readability of the temporary override for artifact resolution.
-    """
-
-    def __init__(self, temp_opts):
-        self.temp_opts = temp_opts
-        self._original = None
-
-    def __enter__(self):
-        import enge.dispatch.__main__ as dispatch_main
-
-        self._original = dispatch_main.parsed_opts
-        dispatch_main.parsed_opts = self.temp_opts
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        import enge.dispatch.__main__ as dispatch_main
-
-        dispatch_main.parsed_opts = self._original
-
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -64,12 +41,8 @@ class RequestSpec:
     upgrade_path_detailed: Optional[str] = None
 
 
-def expand_set_requests(ctx=None) -> List[RequestSpec]:
+def expand_set_requests(ctx) -> List[RequestSpec]:
     """Build list of RequestSpec from --set configuration."""
-    if ctx is None:
-        from enge.utils import opt_manager
-
-        ctx = opt_manager.parsed_opts
     specs: List[RequestSpec] = []
     for test_set in getattr(ctx, "individual_test_sets", []) or []:
         set_name = test_set["name"]
@@ -262,49 +235,9 @@ def _build_plan_filter(spec, ctx):
         }
 
 
-class _TempOpts:
-    def __init__(self):
-        self.source_spec = None
-        self.target_spec = None
-        self.upgrade_path_alias = None
-        self.tmt_context = {}
-        self.project = None
-        self.copr_references = []
-        self.brew_references = []
-        self.copr_reference = None
-        self.brew_reference = None
-        self.cli_args = None
-        self.architectures = []
-        self.copr_api = {}
-        self.brew_api = {}
-
-
 def _build_tmt_context_and_env(spec, per_set_event, ctx, req_ctx):
-    """Build TMT context, environment variables, and TempOpts."""
-    temp_opts = _TempOpts()
-    for attr in [
-        "source_spec",
-        "target_spec",
-        "upgrade_path_alias",
-        "tmt_context",
-        "project",
-        "copr_references",
-        "brew_references",
-        "copr_reference",
-        "brew_reference",
-        "cli_args",
-        "copr_api",
-        "brew_api",
-        "config",
-    ]:
-        if hasattr(ctx, attr):
-            setattr(temp_opts, attr, getattr(ctx, attr))
-    temp_opts.source_spec = spec.source_spec
-    temp_opts.target_spec = spec.target_spec
-    temp_opts.upgrade_path_alias = spec.upgrade_path
-    temp_opts.architectures = [spec.arch]
-
-    temp_opts.tmt_context = generate_tmt_context(
+    """Build TMT context dict and merged environment variables."""
+    tmt_context = generate_tmt_context(
         spec.source_spec,
         spec.target_spec,
         event=per_set_event,
@@ -313,77 +246,88 @@ def _build_tmt_context_and_env(spec, per_set_event, ctx, req_ctx):
 
     merged_env_vars = merge_set_environment_variables(req_ctx)
 
-    temp_opts.tmt_context = apply_centos_context_overrides(
-        temp_opts.tmt_context, spec.source_spec, spec.target_spec, merged_env_vars
+    tmt_context = apply_centos_context_overrides(
+        tmt_context, spec.source_spec, spec.target_spec, merged_env_vars
     )
     if "TARGET_COMPOSE_URL" in merged_env_vars:
         target_compose = parse_target_compose_from_url(
             merged_env_vars["TARGET_COMPOSE_URL"]
         )
         if target_compose:
-            temp_opts.tmt_context["target_compose"] = target_compose
+            tmt_context["target_compose"] = target_compose
 
     set_context = spec.effective_values.get("context", {}) or {}
     if per_set_event:
-        temp_opts.tmt_context = merge_tmt_context(
-            temp_opts.tmt_context, {"event": per_set_event}
-        )
+        tmt_context = merge_tmt_context(tmt_context, {"event": per_set_event})
     if set_context:
-        temp_opts.tmt_context = merge_tmt_context(temp_opts.tmt_context, set_context)
+        tmt_context = merge_tmt_context(tmt_context, set_context)
 
     try:
         cli_context_args = getattr(ctx.cli_args, "context", None)
         cli_context = parse_tmt_context(cli_context_args)
         if cli_context:
-            temp_opts.tmt_context = merge_tmt_context(
-                temp_opts.tmt_context, cli_context
-            )
+            tmt_context = merge_tmt_context(tmt_context, cli_context)
     except ValueError as e:
         LOGGER.error(f"Failed to parse --context: {e}")
 
     only_rhsm_stage_cdn = getattr(ctx.cli_args, "only_rhsm_stage_cdn", False)
     if only_rhsm_stage_cdn:
         merged_env_vars["RHSM_MODE"] = "stage"
-        temp_opts.tmt_context["product_phase"] = "rc"
+        tmt_context["product_phase"] = "rc"
         LOGGER.debug("Applied RHSM stage settings: RHSM_MODE=stage, product_phase=rc")
 
-    return temp_opts, merged_env_vars
+    return tmt_context, merged_env_vars
 
 
-def _resolve_artifacts(spec, submit_test, temp_opts, artifact_type, artifact_resolver):
+def _resolve_artifacts(
+    spec, submit_test, tmt_context, ctx, artifact_type, artifact_resolver
+):
     """Resolve build artifacts; returns a failure dict or None on success."""
-    with _DispatchParsedOptsContext(temp_opts):
-        resolver = artifact_resolver or ArtifactResolver()
-        info = resolver.resolve_builds(spec.source_spec["compose_name"])
-        if not info:
-            LOGGER.warning(
-                f"No artifact information found for {spec.set_name}"
-                f" tier: {spec.tier} arch: {spec.arch}"
+    # Build a per-spec ctx variant for artifact resolution, overriding
+    # source_spec and tmt_context with the per-spec values.
+    spec_ctx = SimpleNamespace(
+        cli_args=ctx.cli_args,
+        copr_reference=ctx.copr_reference,
+        copr_references=ctx.copr_references,
+        copr_api=ctx.copr_api,
+        brew_reference=ctx.brew_reference,
+        brew_references=ctx.brew_references,
+        brew_api=ctx.brew_api,
+        project=ctx.project,
+        tmt_context=tmt_context,
+        source_spec=spec.source_spec,
+    )
+    resolver = artifact_resolver or ArtifactResolver()
+    info = resolver.resolve_builds(spec.source_spec["compose_name"], ctx=spec_ctx)
+    if not info:
+        LOGGER.warning(
+            f"No artifact information found for {spec.set_name}"
+            f" tier: {spec.tier} arch: {spec.arch}"
+        )
+        return {
+            "status": "failed",
+            "set_name": spec.set_name,
+            "tier": spec.tier,
+            "arch": spec.arch,
+            "error": "no artifact information found",
+        }
+    first_build = info[0]
+    if spec.source_spec.get("is_ami_source", False):
+        submit_test.compose = format_ami_compose_name(spec.source_spec, spec.arch)
+    elif spec.source_spec.get("is_centos_stream", False):
+        submit_test.compose = spec.source_spec["compose_name"]
+    else:
+        submit_test.compose = first_build["compose"]
+    submit_test.tmt_distro = first_build["distro"]
+    submit_test.artifacts.clear()
+    for build in info:
+        if build.get("build_id") is not None:
+            submit_test.add_artifact(
+                artifact_id=str(build["build_id"]),
+                artifact_type=artifact_type,
+                packages=build["packages"],
+                nvr=build.get("nvr"),
             )
-            return {
-                "status": "failed",
-                "set_name": spec.set_name,
-                "tier": spec.tier,
-                "arch": spec.arch,
-                "error": "no artifact information found",
-            }
-        first_build = info[0]
-        if spec.source_spec.get("is_ami_source", False):
-            submit_test.compose = format_ami_compose_name(spec.source_spec, spec.arch)
-        elif spec.source_spec.get("is_centos_stream", False):
-            submit_test.compose = spec.source_spec["compose_name"]
-        else:
-            submit_test.compose = first_build["compose"]
-        submit_test.tmt_distro = first_build["distro"]
-        submit_test.artifacts.clear()
-        for build in info:
-            if build.get("build_id") is not None:
-                submit_test.add_artifact(
-                    artifact_id=str(build["build_id"]),
-                    artifact_type=artifact_type,
-                    packages=build["packages"],
-                    nvr=build.get("nvr"),
-                )
     return None
 
 
@@ -527,10 +471,6 @@ def process_request_spec(
     ctx=None,
 ) -> Optional[Dict[str, Any]]:
     """Prepare SubmitTest, optionally create RP launch, and send the request."""
-    if ctx is None:
-        from enge.utils import opt_manager
-
-        ctx = opt_manager.parsed_opts
     per_set_event = spec.effective_values.get("event") or getattr(
         ctx.cli_args, "event", None
     )
@@ -547,17 +487,15 @@ def process_request_spec(
     req_ctx = _build_request_context(
         spec, per_set_event, ctx, shared_archive_filename, artifact_type
     )
-    temp_opts, merged_env_vars = _build_tmt_context_and_env(
+    tmt_context, merged_env_vars = _build_tmt_context_and_env(
         spec, per_set_event, ctx, req_ctx
     )
 
     pool = spec.effective_values.get("pool")
-    submit_test.set_specific_data(
-        [spec.arch], merged_env_vars, temp_opts.tmt_context, pool=pool
-    )
+    submit_test.set_specific_data([spec.arch], merged_env_vars, tmt_context, pool=pool)
 
     failure = _resolve_artifacts(
-        spec, submit_test, temp_opts, artifact_type, artifact_resolver
+        spec, submit_test, tmt_context, ctx, artifact_type, artifact_resolver
     )
     if failure:
         return failure
