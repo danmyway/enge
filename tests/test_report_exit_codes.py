@@ -348,33 +348,41 @@ class TestReportExceptionMapping(unittest.TestCase):
     """report exceptions route through __main__'s error mapping to ExitCode."""
 
     @patch("enge.__main__.get_arguments")
-    @patch("enge.__main__.parsed_opts")
+    @patch("enge.utils.opt_manager.ParsedOpts")
     @patch("enge.report.__main__.main")
     def test_report_exception_maps_to_exit_1(
-        self, mock_report_main, mock_parsed, mock_get_args
+        self, mock_report_main, mock_po_cls, mock_get_args
     ):
         from types import SimpleNamespace
 
         import enge.__main__ as enge_main
         from enge.utils.globals import EXIT_GENERAL_ERROR
+        from enge.utils.opt_manager import TestingFarmEndpoint
 
         mock_get_args.return_value = SimpleNamespace(debug=False)
-        mock_parsed.cli_args = SimpleNamespace(action="report", debug=False)
-        mock_parsed.config = {
-            "testing_farm": {"api_endpoint_url": "u", "log_artifact_baseurl": "u"},
-            "common": {
-                "archive_tasks_latest": "/tmp/l",
-                "archive_tasks_default": "/tmp/d",
+        mock_po_cls.return_value = SimpleNamespace(
+            cli_args=SimpleNamespace(action="report", debug=False),
+            config={
+                "testing_farm": {
+                    "api_key": "k",
+                    "api_endpoint_url": "https://tf.example.com/api",
+                    "log_artifact_baseurl": "https://tf.example.com/artifacts",
+                },
+                "common": {
+                    "archive_tasks_latest": "/tmp/l",
+                    "archive_tasks_default": "/tmp/d",
+                },
+                "project": {},
+                "tests": {},
+                "reportportal": {},
             },
-            "project": {},
-            "tests": {},
-            "reportportal": {},
-        }
-        mock_parsed.testing_farm_endpoint = SimpleNamespace(
-            api_endpoint_url="u", log_artifact_baseurl="u"
+            testing_farm_endpoint=TestingFarmEndpoint(
+                "https://tf.example.com/api",
+                "https://tf.example.com/artifacts",
+            ),
+            archive_tasks_latest="/tmp/l",
+            archive_tasks_default="/tmp/d",
         )
-        mock_parsed.archive_tasks_latest = "/tmp/l"
-        mock_parsed.archive_tasks_default = "/tmp/d"
 
         from enge.utils.errors import NetworkError
 

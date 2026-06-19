@@ -186,39 +186,20 @@ def _parse_tasks_impl(ctx):
     return request_url_list, tasks_source, uuid_source_map
 
 
-def parse_tasks(ctx_or_none=None):
-    """Parse task IDs from CLI input/files/archives.
-
-    Accepts an optional AppContext; falls back to parsed_opts for
-    not-yet-migrated callers (rerun, cancel).
-    """
-    if ctx_or_none is None:
-        from enge.utils.opt_manager import parsed_opts
-
-        ctx_or_none = AppContext.from_parsed_opts(parsed_opts)
-    req, src, _ = _parse_tasks_impl(ctx_or_none)
+def parse_tasks(ctx):
+    """Parse task IDs from CLI input/files/archives."""
+    req, src, _ = _parse_tasks_impl(ctx)
     return req, src
 
 
-def parse_tasks_with_map(ctx_or_none=None):
-    if ctx_or_none is None:
-        from enge.utils.opt_manager import parsed_opts
-
-        ctx_or_none = AppContext.from_parsed_opts(parsed_opts)
-    return _parse_tasks_impl(ctx_or_none)
+def parse_tasks_with_map(ctx):
+    return _parse_tasks_impl(ctx)
 
 
 def parse_request_xunit(
-    request_url_list=None, tasks_source=None, skip_pass=False, ctx=None
+    request_url_list=None, tasks_source=None, skip_pass=False, *, ctx
 ):
-    """Parse request xunit — returns the parsed dict only (backward compat).
-
-    Callers that don't pass ctx get one built from parsed_opts.
-    """
-    if ctx is None:
-        from enge.utils.opt_manager import parsed_opts
-
-        ctx = AppContext.from_parsed_opts(parsed_opts)
+    """Parse request xunit — returns the parsed dict only."""
     from enge.report.concurrent_parser import parse_request_xunit_concurrent
 
     parsed_dict, _retval = parse_request_xunit_concurrent(

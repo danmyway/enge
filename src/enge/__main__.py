@@ -19,9 +19,6 @@ from enge.utils.globals import (
 from enge.utils.arg_parser import get_arguments
 from enge.utils.console import console, configure_console, EngeLogHandler
 
-# Placeholder for tests to patch without triggering opt_manager initialization
-parsed_opts = None
-
 
 def setup_logging():
     """Setup logging configuration based on verbosity flags."""
@@ -146,34 +143,30 @@ def main():
         if _handle_list_sets():
             return 0
 
-        # Resolve parsed_opts lazily to avoid argparse parsing at import time
-        resolved_opts = parsed_opts
-        if resolved_opts is None:
-            from enge.utils.opt_manager import parsed_opts as _parsed_opts
-
-            resolved_opts = _parsed_opts
-
+        from enge.utils.opt_manager import ParsedOpts
         from enge.utils.app_context import AppContext
 
-        ctx = AppContext.from_parsed_opts(resolved_opts)
+        po = ParsedOpts()
+        ctx = AppContext.from_parsed_opts(po)
 
-        if resolved_opts.cli_args.action == "test":
+        action = ctx.cli_args.action
+        if action == "test":
             from enge.dispatch.__main__ import main as dispatch_main
 
             return dispatch_main(ctx)
-        elif resolved_opts.cli_args.action == "report":
+        elif action == "report":
             from enge.report.__main__ import main as report_main
 
             return report_main(ctx)
-        elif resolved_opts.cli_args.action == "rerun":
+        elif action == "rerun":
             from enge.rerun.__main__ import main as rerun_main
 
             return rerun_main(ctx)
-        elif resolved_opts.cli_args.action == "cancel":
+        elif action == "cancel":
             from enge.cancel.__main__ import main as cancel_main
 
             return cancel_main(ctx)
-        elif resolved_opts.cli_args.action == "reportportal":
+        elif action == "reportportal":
             from enge.reportportal.__main__ import main as reportportal_main
 
             return reportportal_main(ctx)

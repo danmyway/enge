@@ -33,7 +33,7 @@ class CancelJobs:
         self.task_source = None
 
         # Retrieve task URLs and their source using the same logic as report/rerun
-        self.req_url_list, self.task_source = parse_tasks()
+        self.req_url_list, self.task_source = parse_tasks(ctx)
 
     def cancel_tasks(self) -> List[dict]:
         """

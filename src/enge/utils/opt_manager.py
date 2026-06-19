@@ -3,7 +3,6 @@ import logging
 import re
 import os
 from typing import Dict, List, Any, Optional, Callable
-from contextlib import contextmanager
 
 from enge.utils.arg_parser import get_arguments
 from enge.utils.config_parser import (
@@ -71,9 +70,6 @@ class ParsedOpts:
         # These are validated to be strings in _validate_static_configuration
         self.archive_tasks_latest = os.path.expanduser(str(archive_latest))
         self.archive_tasks_default = os.path.expanduser(str(archive_default))
-
-        # Test-specific attribute derivation now lives in
-        # AppContext.from_parsed_opts → build_test_attributes.
 
     def _apply_env_var_fallbacks(self):
         """Populate missing API tokens from environment variables.
@@ -905,37 +901,3 @@ class ParsedOpts:
                     return opts
 
         raise AttributeError(f"'ParsedOpts' object has no attribute '{item}'")
-
-
-class _LazyParsedOpts:
-    """Lazy accessor for a singleton ParsedOpts instance.
-
-    Creates the ParsedOpts only upon first attribute access, parsing CLI args
-    at that moment. This avoids side effects during module import and makes the
-    package more friendly to library usage.
-    """
-
-    _instance: Optional[ParsedOpts] = None
-
-    def _ensure(self) -> ParsedOpts:
-        if self._instance is None:
-            self._instance = ParsedOpts()
-        return self._instance
-
-    def __getattr__(self, item):
-        return getattr(self._ensure(), item)
-
-    def set(self, instance: "ParsedOpts") -> None:
-        self._instance = instance
-
-    @contextmanager
-    def use(self, instance: "ParsedOpts"):
-        previous = self._instance
-        self._instance = instance
-        try:
-            yield
-        finally:
-            self._instance = previous
-
-
-parsed_opts = _LazyParsedOpts()

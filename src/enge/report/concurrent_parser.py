@@ -55,15 +55,11 @@ class ConcurrentRequestParser:
 
     def __init__(
         self,
-        ctx: "AppContext | None" = None,
+        ctx: "AppContext",
         max_workers: int = 10,
         timeout: int = 30,
         max_retries: int = 3,
     ):
-        if ctx is None:
-            from enge.utils.opt_manager import parsed_opts
-
-            ctx = AppContext.from_parsed_opts(parsed_opts)
         self.ctx = ctx
         self.max_workers = max_workers
         self.timeout = timeout
