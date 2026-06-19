@@ -2,11 +2,10 @@
 
 import unittest
 from datetime import datetime, timezone
-from types import SimpleNamespace
-from unittest.mock import patch
 
 from enge.reportportal.operations import _launch_start_time_ms
 from enge.reportportal.__main__ import ReportPortalLaunch
+from tests._helpers import make_app_context
 
 
 class TestLaunchStartTimeMs(unittest.TestCase):
@@ -28,21 +27,19 @@ class TestLaunchStartTimeMs(unittest.TestCase):
         self.assertIsNone(_launch_start_time_ms(None))
 
 
-_RP_CONFIG_STUB = SimpleNamespace(
-    config={
-        "reportportal": {
-            "url": "http://rp.example.com",
-            "token": "fake-token",
-            "project": "test-project",
-        }
-    },
-)
-
-
 class TestGenerateLaunchPayloadExtraTags(unittest.TestCase):
     def _make_launch(self):
-        with patch("enge.reportportal.__main__.parsed_opts", _RP_CONFIG_STUB):
-            return ReportPortalLaunch()
+        ctx = make_app_context(
+            action="reportportal",
+            extra_config={
+                "reportportal": {
+                    "url": "http://rp.example.com",
+                    "token": "fake-token",
+                    "project": "test-project",
+                }
+            },
+        )
+        return ReportPortalLaunch(ctx)
 
     def test_extra_tags_appended_and_deduplicated(self):
         launch = self._make_launch()

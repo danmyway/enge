@@ -346,10 +346,9 @@ def _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx):
             complete_tmt_context["arch"] = spec.arch
 
         launch_uuid = rp_create_launch(
+            ctx=ctx,
             context=rp_context,
             tmt_context=complete_tmt_context,
-            config=ctx.config,
-            cli_args=ctx.cli_args,
             dryrun=getattr(ctx.cli_args, "dryrun", False),
         )
         if launch_uuid or getattr(ctx.cli_args, "dryrun", False):

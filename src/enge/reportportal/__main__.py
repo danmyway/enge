@@ -21,14 +21,24 @@ from datetime import datetime
 from enge.utils.http_client import http_get, http_post, http_put, http_delete
 from requests.exceptions import RequestException
 
-from enge.utils.opt_manager import parsed_opts
 from enge.utils.errors import ConfigurationError, NetworkError, EngeError
 
 from enge.reportportal.utils import (
     DEFAULT_ENRICH_MAX_FILE_SIZE,
     ArtifactFile,
+    derive_status_from_items,
     get_artifact_log_level,
     should_skip_artifact,
+)
+from enge.reportportal.operations import (
+    finish_launch_from_task,
+    enrich_logs_from_task,
+    enrich_all_launches,
+    delete_logs_from_task,
+    test_connection_and_data,
+    finish_all_in_progress_launches,
+    delete_logs_all_launches,
+    delete_stale_launches,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -39,9 +49,10 @@ class ReportPortalLaunch:
     Handle ReportPortal launch creation and management via API.
     """
 
-    def __init__(self):
+    def __init__(self, ctx):
         """Initialize ReportPortal launch manager."""
-        self.config = parsed_opts.config.get("reportportal", {})
+        self.ctx = ctx
+        self.config = ctx.reportportal
         self.url = self.config.get("url", "").rstrip("/")
         self.token = self.config.get("token", "")
         self.project = self.config.get("project", "")
@@ -474,7 +485,7 @@ class ReportPortalLaunch:
                 page += 1
 
             LOGGER.debug(f"Found {len(items)} test item(s) in launch {launch_id}")
-            if getattr(parsed_opts.cli_args, "delete_stale", False) and len(items) == 0:
+            if getattr(self.ctx.cli_args, "delete_stale", False) and len(items) == 0:
                 LOGGER.info(f"Found stale launch {launch_id} with no test items")
             if items:
                 for item in items[:10]:
@@ -909,7 +920,6 @@ class ReportPortalLaunch:
 
     def derive_launch_status(self, launch_id: int) -> str:
         """Derive an overall status for a launch from its test items."""
-        from enge.reportportal.utils import derive_status_from_items
 
         items = self.get_launch_test_items(launch_id)
         return derive_status_from_items(items)
@@ -920,7 +930,7 @@ class ReportPortalLaunch:
 # ===================================================================
 
 
-def main() -> int:
+def main(ctx) -> int:
     """
     Main entry point for reportportal subcommand.
 
@@ -929,26 +939,15 @@ def main() -> int:
     then finish the launch.  ``--all-launches`` bypasses TF task resolution
     and operates directly on all IN_PROGRESS launches.
     """
-    from enge.reportportal.operations import (
-        finish_launch_from_task,
-        enrich_logs_from_task,
-        enrich_all_launches,
-        delete_logs_from_task,
-        test_connection_and_data,
-        finish_all_in_progress_launches,
-        delete_logs_all_launches,
-        delete_stale_launches,
-    )
-
     try:
-        rp_launch = ReportPortalLaunch()
+        rp_launch = ReportPortalLaunch(ctx)
 
-        wants_enrich = getattr(parsed_opts.cli_args, "enrich_logs", False)
-        wants_finish = getattr(parsed_opts.cli_args, "finish", False)
-        wants_test = getattr(parsed_opts.cli_args, "test", False)
-        wants_delete_logs = getattr(parsed_opts.cli_args, "delete_logs", False)
-        wants_delete_stale = getattr(parsed_opts.cli_args, "delete_stale", False)
-        wants_all = getattr(parsed_opts.cli_args, "all_launches", False)
+        wants_enrich = getattr(ctx.cli_args, "enrich_logs", False)
+        wants_finish = getattr(ctx.cli_args, "finish", False)
+        wants_test = getattr(ctx.cli_args, "test", False)
+        wants_delete_logs = getattr(ctx.cli_args, "delete_logs", False)
+        wants_delete_stale = getattr(ctx.cli_args, "delete_stale", False)
+        wants_all = getattr(ctx.cli_args, "all_launches", False)
 
         # --delete-stale (standalone, no task input needed)
         if wants_delete_stale:
