@@ -720,7 +720,7 @@ def main(ctx: AppContext):
     jobs.drop_payload_keys(["environments.0.tmt.context.uniq_id"])
 
     # Set up the submitter (only for API key and headers)
-    submit = SubmitTest()
+    submit = SubmitTest(ctx)
     base_tags = submit.set_tag or []
 
     submit.print_header = True
@@ -731,7 +731,7 @@ def main(ctx: AppContext):
 
     is_dryrun = getattr(ctx.cli_args, "dryrun", False)
 
-    maybe_clear_latest_jobs_file()
+    maybe_clear_latest_jobs_file(ctx)
     # Send each rerun request using the filtered original payload
     for i, payload in enumerate(jobs.rerun_payloads):
         # Add rerun_of to tmt.context
