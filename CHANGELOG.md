@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Structured JSON output (`-o json`) with honest success/failure counts
 
 ### Changed
+- Report exit-code precedence is now severity-ranked error-dominates (3 > 2 > 4): a result set mixing test errors, failures, and missing results returns the most severe code (3, error) where it previously returned whichever was numerically highest (4, missing). Exit codes are now defined once as the `ExitCode` enum in `utils/globals.py`; missing results are rerun candidates and no longer mask a real error.
 - Migrated terminal output from prettytable/ANSI to rich library (tables, panels, styled text)
 - Logging now renders to stderr via dedicated console, keeping stdout clean for data output
 - Request summary redesigned as a rich Panel with key-value grid

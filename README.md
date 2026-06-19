@@ -149,9 +149,9 @@ The hidden `--jira` flag produces `{noformat}` fences for Jira tickets.
 - `-v` — VERBOSE-level (extra detail without full debug noise)
 - `-vv` or `--debug` — DEBUG-level (all internal tracing)
 
-**Dry run (`-n` / `--dryrun`)**
+**Dry run (`-n` / `--dry-run`)**
 
-Shows what would be sent without making API calls. Sensitive fields in payloads are redacted.
+Shows what would be sent without making API calls. Sensitive fields in payloads are redacted. The legacy spelling `--dryrun` is accepted as an alias.
 
 **Short flags**
 
@@ -162,7 +162,7 @@ Shows what would be sent without making API calls. Sensitive fields in payloads 
 | `--tier` | `-T` |
 | `--plan` | `-p` |
 | `--set` | `-S` |
-| `--dryrun` | `-n` |
+| `--dry-run` | `-n` |
 
 **Test set discovery (`--list-sets` / `--list-sets-detail`)**
 
@@ -205,9 +205,9 @@ Multiple `--plan` options can be specified and will be dispatched in separate jo
 `--set` options allow you to use pre-configured test sets (see Test Sets section below).
 `--set-regex` allows selecting multiple test sets by Python regular expression (expanded to concrete set names before validation).
 **Plan Override Behavior:** When using `--plan` with `--tier` or `--set`, the CLI plans override any `plans` defined in configuration or test sets.
-When using `--planfilter` or `--test` to specify singular test it is disallowed to request multiple `--plan` options in one command.<br>
+When using `--plan-filter` or `--test-filter` to specify a singular test, it is disallowed to request multiple `--plan` options in one command (legacy spellings `--planfilter`/`--testfilter` are accepted).<br>
 Use `--wait` if waiting for a successful response from the endpoint is required.
-If for any reason you would need to verify the validity of the raw payload, use `--dryrun` to get it pretty-printed to the command line.
+If for any reason you would need to verify the validity of the raw payload, use `--dry-run` to get it pretty-printed to the command line.
 
 Use `--set-tag` to tag archived task files with custom tags for later retrieval (can be used multiple times).
 Use `--auto-tag` to automatically tag archived task files with contextual information (set name, architecture, tier) and create separate, organized archive files for each unique combination.
@@ -656,7 +656,7 @@ enge reportportal --finish -i <tf-task-uuid>
 enge reportportal --finish --all-launches
 
 # Preview what would be finished
-enge reportportal --finish --all-launches --dryrun
+enge reportportal --finish --all-launches --dry-run
 ```
 
 When using `--all-launches`, the status and end time are derived from the RP test items within each launch (not from the current time). The Testing Farm artifacts URL is extracted from test-item descriptions and added to the launch description.
@@ -679,7 +679,7 @@ enge reportportal --enrich-logs --all-launches
 enge reportportal --finish --enrich-logs --all-launches
 
 # Preview enrichment
-enge reportportal --enrich-logs --all-launches --dryrun
+enge reportportal --enrich-logs --all-launches --dry-run
 ```
 
 With `--all-launches`, the artifacts URL is extracted from RP test-item descriptions (set by the TMT plugin), then `results.xml` is fetched to discover artifact files. No Testing Farm task input is needed.
@@ -705,7 +705,7 @@ enge reportportal --delete-logs -i <tf-task-uuid>
 enge reportportal --delete-logs --all-launches
 
 # Preview deletion
-enge reportportal --delete-logs --all-launches --dryrun
+enge reportportal --delete-logs --all-launches --dry-run
 ```
 
 **Deleting Stale Launches (`--delete-stale`):**
@@ -717,7 +717,7 @@ Delete launches that are stopped or interrupted and have no test items — empty
 enge reportportal --delete-stale
 
 # Preview which launches would be deleted
-enge reportportal --delete-stale --dryrun
+enge reportportal --delete-stale --dry-run
 
 # Only stale launches started before a given date
 enge reportportal --delete-stale --until 2025-12-31
@@ -827,15 +827,28 @@ to `''` (empty string) or `null`, enge inherits the default from
 the override was ignored.  Validators only fire when *no layer* provides a
 non-empty value.
 
-Corresponding return code is set based on the results with following logic:
- * 0 - The results are complete for each request and all are pass
- * 1 - Python exception or bailout
- * 2 - No error was hit, at least one fail was found
- * 3 - At least one error was hit
- * 4 - At least one request didn't have any result
- * everything else - consult with Tesar maintainer(s)
+enge uses a single `ExitCode` enum (`utils/globals.py`). The universal floor applies to every subcommand:
 
-The default way to show results is by showing each run details as a separate table. In order to combine test results of several different tft runs you can use comparison mode which is triggered by the `--compare` flag of `enge report`.
+| Code | Meaning |
+|------|---------|
+| 0    | Success |
+| 1    | Unhandled exception |
+| 99   | Configuration error (bad/missing config, invalid endpoint URL) |
+| 130  | Interrupted (Ctrl-C) |
+
+`enge report` additionally returns result-grading codes, since it is the only command that grades multi-plan result sets:
+
+| Code | Meaning |
+|------|---------|
+| 2    | Ran; at least one test FAILED (no errors) |
+| 3    | Ran; at least one ERROR was hit |
+| 4    | Ran; at least one request had no results (missing/expired) |
+
+When a report run mixes these, the most severe wins: **3 > 2 > 4 > 0** (error-dominates — missing results are rerun candidates and must not mask a real error). `enge test` also uses code 2 for partial dispatch failure (some requests submitted, some failed).
+
+**Comparison mode (`--compare`, `--unify`):**
+
+By default each run's results are shown as a separate table. Use `--compare` to build a side-by-side comparison table across multiple runs. `--unify PLAN1=PLAN2` treats renamed plans as equivalent when comparing (can be specified multiple times).
 
 ```
 ❯ enge report -i 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b -i c3726a72-8e6b-4c51-88d8-612556df7ac1 --short --unify tier2=tier2_7to8 --compare
@@ -846,7 +859,7 @@ Rerun tasks which report as FAILED or ERROR.<br>
 Only works for whole plans.<br>
 Reads the same input as the report module - `--file`, `--input` or `--get-tag` (with regex pattern support), which can be combined.<br>
 Use `--error` or `--fail` if you want to further specify which type of non-zero result you want to re-run, default is both results. If the whole task reports state error, the original plan filtering will be used, otherwise each of the failing/erroring plans will be passed to the plan name field connected by a pipe `|`, meaning all qualified plans from a single original request will be sent as one request for a re-run.<br>
-Use `--dryrun` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
+Use `--dry-run` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
 Use `--set-tag` to label the archived jobs file.
 When rerun pulls UUIDs from an archived file (direct path or `--get-tag`), the newly archived rerun file inherits all original tags and appends a `.rerun` suffix automatically so follow-up runs stay linked to their source.
 
