@@ -160,7 +160,7 @@ def main():
         if resolved_opts.cli_args.action == "test":
             from enge.dispatch.__main__ import main as dispatch_main
 
-            return dispatch_main()
+            return dispatch_main(ctx)
         elif resolved_opts.cli_args.action == "report":
             from enge.report.__main__ import main as report_main
 

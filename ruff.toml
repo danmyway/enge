@@ -24,7 +24,6 @@ max-complexity = 12
 "src/enge/utils/http_client.py" = ["BLE001"]
 "src/enge/utils/console.py" = ["BLE001"]
 "src/enge/cancel/__main__.py" = ["BLE001"]
-"src/enge/dispatch/plan_flow.py" = ["C901"]
 "src/enge/dispatch/tf_send_request.py" = ["C901"]
 "src/enge/report/__main__.py" = ["C901"]
 "src/enge/utils/source_target_parser.py" = ["C901"]
