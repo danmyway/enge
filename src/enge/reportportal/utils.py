@@ -6,6 +6,7 @@ Contains pure functions, constants, and dataclasses that have no dependency
 on the ReportPortalLaunch class instance.
 """
 
+import json
 import logging
 import os
 import re
@@ -15,6 +16,9 @@ from dataclasses import dataclass
 
 import lxml.etree
 from rich.markup import escape
+
+from enge.utils import redact_sensitive
+from enge.utils.console import console
 
 LOGGER = logging.getLogger(__name__)
 
@@ -457,8 +461,6 @@ def extract_artifacts_url_from_items(
     all items and returns the first ``http(s)://`` URL found that
     looks like an artifacts link.
     """
-    import re
-
     url_pattern = re.compile(r"(https?://\S*artifacts\S*)", re.IGNORECASE)
 
     for item in items:
@@ -587,8 +589,6 @@ def extract_existing_log_headers(
     Also recognises the pattern when RP strips backticks or wraps the
     name in ``<code>`` tags.
     """
-    import re
-
     headers: set = set()
     for log in logs:
         msg = log.get("message", "")
@@ -728,12 +728,8 @@ def show_dryrun_finish_data(
     attributes: Optional[List[Dict[str, str]]] = None,
 ) -> None:
     """Display what would be sent to ReportPortal in dry run mode."""
-    import json
-
     from rich.panel import Panel
     from rich.table import Table
-
-    from enge.utils.console import console
 
     finish_data: Dict[str, Any] = {
         "endTime": end_time,
@@ -774,8 +770,6 @@ def show_dryrun_finish_data(
         ),
         border_style="blue",
     )
-    from enge.utils import redact_sensitive
-
     console.print()
     console.print(panel)
     print(json.dumps(redact_sensitive(finish_data), indent=2, ensure_ascii=False))
@@ -790,8 +784,6 @@ def show_dryrun_enrichment(
     """Display what would be uploaded in dry-run mode."""
     from rich.panel import Panel
     from rich.table import Table
-
-    from enge.utils.console import console
 
     launch_level = [a for a, uid in mapped if uid is None]
     item_level = [a for a, uid in mapped if uid is not None]
@@ -837,8 +829,6 @@ def show_dryrun_delete_logs(
     """Display what would be deleted in dry-run mode."""
     from rich.panel import Panel
     from rich.table import Table
-
-    from enge.utils.console import console
 
     kv = Table.grid(padding=(0, 2))
     kv.add_column(style="bold")
@@ -887,8 +877,6 @@ def show_dryrun_delete_stale(launches: List[Dict[str, Any]]) -> None:
     """Display stale launches that would be deleted in dry-run mode."""
     from rich.panel import Panel
     from rich.table import Table
-
-    from enge.utils.console import console
 
     kv = Table.grid(padding=(0, 2))
     kv.add_column(style="bold")

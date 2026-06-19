@@ -11,11 +11,15 @@ living as a method on the class, keeping the class focused on API concerns.
 from __future__ import annotations
 
 import logging
+import re
+import traceback
 from datetime import datetime
 from typing import TYPE_CHECKING, Dict, Any, List, Optional
 
+from enge.utils import parse_date_arg
 from enge.utils.http_client import http_get
-from enge.utils.opt_manager import parsed_opts
+from enge.report.concurrent_parser import ConcurrentRequestParser
+from enge.report.__main__ import parse_tasks
 
 from enge.reportportal.utils import (
     parse_size_string,
@@ -66,6 +70,7 @@ def _launch_start_time_ms(start_time: Any) -> Optional[int]:
 
 def _apply_date_filters(
     launches: List[Dict[str, Any]],
+    ctx,
 ) -> List[Dict[str, Any]]:
     """Narrow a list of launches using ``--since`` / ``--until`` CLI dates.
 
@@ -73,10 +78,8 @@ def _apply_date_filters(
     against the user-supplied boundaries.  Returns the original list
     unchanged when neither flag is set.
     """
-    from enge.utils import parse_date_arg
-
-    since_str = getattr(parsed_opts.cli_args, "since", None)
-    until_str = getattr(parsed_opts.cli_args, "until", None)
+    since_str = getattr(ctx.cli_args, "since", None)
+    until_str = getattr(ctx.cli_args, "until", None)
 
     if not since_str and not until_str:
         return launches
@@ -115,8 +118,6 @@ def _extract_tf_uuid(artifacts_url: str) -> Optional[str]:
     ``https://artifacts.dev.testing-farm.io/<uuid>`` or
     ``https://…/artifacts/<uuid>/``.
     """
-    import re
-
     match = re.search(
         r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
         artifacts_url,
@@ -125,13 +126,13 @@ def _extract_tf_uuid(artifacts_url: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def _get_tf_task_info(task_uuid: str) -> Optional[Dict[str, Any]]:
+def _get_tf_task_info(task_uuid: str, ctx) -> Optional[Dict[str, Any]]:
     """Query the Testing Farm API for a task's state and result.
 
     Returns ``{"state": …, "overall": …}`` or ``None`` when TF
     credentials are unavailable or the query fails.
     """
-    tf_cfg = parsed_opts.config.get("testing_farm", {})
+    tf_cfg = ctx.testing_farm
     api_key = tf_cfg.get("api_key", "")
     api_url = tf_cfg.get("api_endpoint_url", "")
     if not api_key or not api_url:
@@ -193,6 +194,7 @@ def _stamp_logs_attached(
 
 def extract_tmt_context_from_task(
     task_result,
+    ctx,
 ) -> Optional[Dict[str, Any]]:
     """
     Extract TMT context from a Testing Farm task result.
@@ -206,9 +208,7 @@ def extract_tmt_context_from_task(
 
         response = http_get(
             task_url,
-            headers={
-                "Authorization": (f"Bearer {parsed_opts.testing_farm.get('api_key')}")
-            },
+            headers={"Authorization": f"Bearer {ctx.testing_farm.get('api_key')}"},
             timeout=30,
         )
 
@@ -255,8 +255,6 @@ def extract_tmt_context_from_task(
 
     except Exception as e:
         LOGGER.error(f"Error extracting TMT context: {e}")
-        import traceback
-
         LOGGER.debug(f"Traceback: {traceback.format_exc()}")
         return None
 
@@ -274,12 +272,9 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
         Exit code (0 success, non-zero error)
     """
     try:
-        from enge.report.concurrent_parser import ConcurrentRequestParser
-        from enge.report.__main__ import parse_tasks
+        is_dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
 
-        is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
-
-        request_url_list, _tasks_source = parse_tasks()
+        request_url_list, _tasks_source = parse_tasks(rp.ctx)
         if not request_url_list:
             LOGGER.error("No task URLs found to process")
             return 1
@@ -289,7 +284,7 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
         for task_url in request_url_list:
             LOGGER.info(f"Processing task: {task_url}")
 
-            with ConcurrentRequestParser() as parser:
+            with ConcurrentRequestParser(ctx=rp.ctx) as parser:
                 task_result = parser._fetch_task_info(task_url, process_state=False)
                 if not task_result:
                     LOGGER.warning(f"Could not fetch task info for {task_url}")
@@ -317,7 +312,7 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
 
                 task_result = parser._fetch_xml_results(task_result)
 
-                tmt_context = extract_tmt_context_from_task(task_result)
+                tmt_context = extract_tmt_context_from_task(task_result, rp.ctx)
                 if not tmt_context:
                     LOGGER.warning(f"No TMT context found for task {task_uuid}")
                     continue
@@ -420,8 +415,6 @@ def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
 
     except Exception as e:
         LOGGER.error(f"Error in finish launch logic: {e}")
-        import traceback
-
         LOGGER.debug(f"Traceback: {traceback.format_exc()}")
         return 1
 
@@ -434,17 +427,14 @@ def enrich_logs_from_task(rp: ReportPortalLaunch) -> int:
         Exit code (0 success, non-zero error)
     """
     try:
-        from enge.report.__main__ import parse_tasks
-        from enge.report.concurrent_parser import ConcurrentRequestParser
-
-        is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
+        is_dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
 
         max_size_str = rp.config.get("enrich_max_file_size", "5 MB")
         max_file_size = parse_size_string(str(max_size_str))
 
         LOGGER.info("Starting log enrichment from Testing Farm results.xml")
 
-        request_url_list, tasks_source = parse_tasks()
+        request_url_list, tasks_source = parse_tasks(rp.ctx)
         if not request_url_list:
             LOGGER.error("No task URLs found to process")
             return 1
@@ -454,7 +444,7 @@ def enrich_logs_from_task(rp: ReportPortalLaunch) -> int:
         for task_url in request_url_list:
             LOGGER.info(f"Processing task: {task_url}")
 
-            with ConcurrentRequestParser() as parser:
+            with ConcurrentRequestParser(ctx=rp.ctx) as parser:
                 task_result = parser._fetch_task_info(task_url, process_state=False)
                 if not task_result:
                     LOGGER.warning(f"Could not fetch task info for {task_url}")
@@ -486,7 +476,7 @@ def enrich_logs_from_task(rp: ReportPortalLaunch) -> int:
                     )
                     continue
 
-                tmt_context = extract_tmt_context_from_task(task_result)
+                tmt_context = extract_tmt_context_from_task(task_result, rp.ctx)
                 if not tmt_context:
                     LOGGER.warning(f"No TMT context found for task {task_uuid}")
                     continue
@@ -581,9 +571,7 @@ def enrich_logs_from_task(rp: ReportPortalLaunch) -> int:
 
     except Exception as e:
         LOGGER.error(f"Error during log enrichment: {e}")
-        import traceback as tb
-
-        LOGGER.debug(f"Traceback: {tb.format_exc()}")
+        LOGGER.debug(f"Traceback: {traceback.format_exc()}")
         return 1
 
 
@@ -595,13 +583,10 @@ def delete_logs_from_task(rp: ReportPortalLaunch) -> int:
         Exit code (0 success, non-zero error)
     """
     try:
-        from enge.report.__main__ import parse_tasks
-        from enge.report.concurrent_parser import ConcurrentRequestParser
-
-        is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
+        is_dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
         LOGGER.info("Starting log deletion for ReportPortal launches")
 
-        request_url_list, tasks_source = parse_tasks()
+        request_url_list, tasks_source = parse_tasks(rp.ctx)
         if not request_url_list:
             LOGGER.error("No task URLs found to process")
             return 1
@@ -609,14 +594,14 @@ def delete_logs_from_task(rp: ReportPortalLaunch) -> int:
         processed_count = 0
         for task_url in request_url_list:
             LOGGER.info(f"Processing task: {task_url}")
-            with ConcurrentRequestParser() as parser:
+            with ConcurrentRequestParser(ctx=rp.ctx) as parser:
                 task_result = parser._fetch_task_info(task_url, process_state=False)
                 if not task_result:
                     LOGGER.warning(f"Could not fetch task info for {task_url}")
                     continue
 
                 task_uuid = task_result.request_uuid
-                tmt_context = extract_tmt_context_from_task(task_result)
+                tmt_context = extract_tmt_context_from_task(task_result, rp.ctx)
                 if not tmt_context:
                     LOGGER.warning(f"No TMT context found for task {task_uuid}")
                     continue
@@ -666,9 +651,7 @@ def delete_logs_from_task(rp: ReportPortalLaunch) -> int:
 
     except Exception as e:
         LOGGER.error(f"Error during log deletion: {e}")
-        import traceback as tb
-
-        LOGGER.debug(f"Traceback: {tb.format_exc()}")
+        LOGGER.debug(f"Traceback: {traceback.format_exc()}")
         return 1
 
 
@@ -694,9 +677,8 @@ def test_connection_and_data(rp: ReportPortalLaunch) -> int:
             )
 
         LOGGER.info("Testing report module integration...")
-        from enge.report.__main__ import parse_tasks
 
-        request_url_list, tasks_source = parse_tasks()
+        request_url_list, tasks_source = parse_tasks(rp.ctx)
 
         if request_url_list:
             LOGGER.info(
@@ -714,8 +696,6 @@ def test_connection_and_data(rp: ReportPortalLaunch) -> int:
 
     except Exception as e:
         LOGGER.error(f"Connection test failed: {e}")
-        import traceback
-
         LOGGER.debug(f"Traceback: {traceback.format_exc()}")
         return 1
 
@@ -734,9 +714,9 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
     Falls back to the current timestamp only when no item end times
     are available.
     """
-    is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
+    is_dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
 
-    launches = _apply_date_filters(rp.get_all_launches("IN_PROGRESS"))
+    launches = _apply_date_filters(rp.get_all_launches("IN_PROGRESS"), rp.ctx)
     if not launches:
         LOGGER.info("No IN_PROGRESS launches found")
         return 0
@@ -779,7 +759,7 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
         if artifacts_url:
             task_uuid_from_url = _extract_tf_uuid(artifacts_url)
             if task_uuid_from_url:
-                tf_info = _get_tf_task_info(task_uuid_from_url)
+                tf_info = _get_tf_task_info(task_uuid_from_url, rp.ctx)
 
         tf_state = (tf_info or {}).get("state", "")
         if tf_state and tf_state.upper() in ("NEW", "QUEUED", "RUNNING"):
@@ -852,9 +832,9 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
 
 def delete_logs_all_launches(rp: ReportPortalLaunch) -> int:
     """Delete logs from all IN_PROGRESS launches in the project."""
-    is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
+    is_dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
 
-    launches = _apply_date_filters(rp.get_all_launches("IN_PROGRESS"))
+    launches = _apply_date_filters(rp.get_all_launches("IN_PROGRESS"), rp.ctx)
     if not launches:
         LOGGER.warning("No IN_PROGRESS launches found")
         return 1
@@ -930,12 +910,12 @@ def enrich_all_launches(
         status_filter: RP status to filter (``"IN_PROGRESS"`` or
             ``None`` for all launches).
     """
-    is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
+    is_dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
 
     max_size_str = rp.config.get("enrich_max_file_size", "5 MB")
     max_file_size = parse_size_string(str(max_size_str))
 
-    launches = _apply_date_filters(rp.get_all_launches(status=status_filter))
+    launches = _apply_date_filters(rp.get_all_launches(status=status_filter), rp.ctx)
 
     if not launches:
         LOGGER.info("No launches found for enrichment")
@@ -973,7 +953,7 @@ def enrich_all_launches(
         # or if complete with all passed (nothing to enrich)
         task_uuid_from_url = _extract_tf_uuid(artifacts_url)
         if task_uuid_from_url:
-            tf_info = _get_tf_task_info(task_uuid_from_url)
+            tf_info = _get_tf_task_info(task_uuid_from_url, rp.ctx)
             if tf_info:
                 tf_state = (tf_info.get("state") or "").upper()
                 if tf_state in ("NEW", "QUEUED", "RUNNING"):
@@ -1102,7 +1082,7 @@ def delete_stale_launches(rp: ReportPortalLaunch) -> int:
     Fetches all STOPPED and INTERRUPTED launches, checks each for test
     items, and deletes those that have none.
     """
-    is_dryrun = getattr(parsed_opts.cli_args, "dryrun", False)
+    is_dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
 
     launches: List[Dict[str, Any]] = []
     seen_ids: set = set()
@@ -1112,7 +1092,7 @@ def delete_stale_launches(rp: ReportPortalLaunch) -> int:
             if lid and lid not in seen_ids:
                 seen_ids.add(lid)
                 launches.append(launch)
-    launches = _apply_date_filters(launches)
+    launches = _apply_date_filters(launches, rp.ctx)
 
     if not launches:
         LOGGER.info("No STOPPED/INTERRUPTED launches found")

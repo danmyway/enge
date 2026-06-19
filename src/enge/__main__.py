@@ -176,7 +176,7 @@ def main():
         elif resolved_opts.cli_args.action == "reportportal":
             from enge.reportportal.__main__ import main as reportportal_main
 
-            return reportportal_main()
+            return reportportal_main(ctx)
         else:
             logging.error("No valid action specified")
             return EXIT_GENERAL_ERROR

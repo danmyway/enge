@@ -6,9 +6,9 @@ Provides a small façade over ReportPortalLaunch to reduce duplication across
 modules (dispatch, rerun).
 """
 
-from typing import Optional, Dict, Any
 import json
 import logging
+from typing import Optional, Dict, Any
 
 from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
 from enge.utils.source_target_parser import (
@@ -19,11 +19,11 @@ from enge.utils.source_target_parser import (
 LOGGER = logging.getLogger(__name__)
 
 
-def _resolve_launch_name(context: Optional[Dict[str, Any]], config, cli_args) -> str:
+def _resolve_launch_name(context: Optional[Dict[str, Any]], ctx) -> str:
     """Derive a ReportPortal launch name using config + context rules."""
     rp_env_vars = generate_reportportal_environment_variables(
-        config=config,
-        cli_args=cli_args,
+        config=ctx.config,
+        cli_args=ctx.cli_args,
         set_name=context.get("set_name") if context else None,
         architecture=context.get("architecture") if context else None,
         tier=context.get("tier") if context else None,
@@ -39,10 +39,9 @@ def _resolve_launch_name(context: Optional[Dict[str, Any]], config, cli_args) ->
 
 def create_launch(
     *,
+    ctx,
     context: Optional[Dict[str, Any]] = None,
     tmt_context: Optional[Dict[str, Any]] = None,
-    config: Optional[Dict[str, Any]] = None,
-    cli_args: Optional[object] = None,
     dryrun: bool = False,
 ) -> Optional[str]:
     """
@@ -50,14 +49,13 @@ def create_launch(
 
     Returns a launch UUID when created, or None when dry-run or on failure.
     """
-    # Resolve name using config + CLI overrides + context
-    launch_name = _resolve_launch_name(context, config or {}, cli_args)
+    launch_name = _resolve_launch_name(context, ctx)
 
     from enge.reportportal.__main__ import ReportPortalLaunch
 
     if dryrun:
         try:
-            rp_launch = ReportPortalLaunch()
+            rp_launch = ReportPortalLaunch(ctx)
             payload = rp_launch.generate_launch_payload(
                 name=launch_name, context=context, tmt_context=tmt_context
             )
@@ -71,7 +69,7 @@ def create_launch(
         return None
 
     try:
-        rp_launch = ReportPortalLaunch()
+        rp_launch = ReportPortalLaunch(ctx)
         launch_uuid = rp_launch.create_launch(
             name=launch_name, context=context, tmt_context=tmt_context
         )
