@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Characterization tests for enge.utils.opt_manager — ParsedOpts and _LazyParsedOpts.
+Characterization tests for enge.utils.opt_manager — ParsedOpts.
 
 These tests PIN the current behavior before refactoring.  Where behavior
 looks unintended, the test is marked:
@@ -30,7 +30,7 @@ from unittest.mock import patch
 
 from enge.utils.config_parser import merge_configs
 from enge.utils.errors import ConfigurationError, ValidationError
-from enge.utils.opt_manager import ParsedOpts, _LazyParsedOpts, TestingFarmEndpoint
+from enge.utils.opt_manager import ParsedOpts, TestingFarmEndpoint
 from enge.utils.arg_parser import get_arguments
 from enge.utils.source_target_parser import resolve_effective_values
 
@@ -635,70 +635,8 @@ class TestDynamicGetattr(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 9. _LazyParsedOpts — singleton management (set / use)
 # ---------------------------------------------------------------------------
-
-
-class TestLazyParsedOpts(unittest.TestCase):
-    """Uses fresh _LazyParsedOpts() instances to avoid touching the module-level
-    'parsed_opts' singleton during pytest collection (safe_getattr would trigger
-    eager initialization via __getattr__ → _ensure() → ParsedOpts() → sys.argv)."""
-
-    def _new_lazy(self):
-        return _LazyParsedOpts()
-
-    def test_set_stores_instance(self):
-        lazy = self._new_lazy()
-        po = _make_partial_opts()
-        lazy.set(po)
-        self.assertIs(lazy._instance, po)
-
-    def test_use_context_manager_temporarily_swaps_instance(self):
-        lazy = self._new_lazy()
-        po_before = _make_partial_opts()
-        po_during = _make_partial_opts()
-        lazy.set(po_before)
-        with lazy.use(po_during):
-            self.assertIs(lazy._instance, po_during)
-
-    def test_use_restores_previous_on_normal_exit(self):
-        lazy = self._new_lazy()
-        po_before = _make_partial_opts()
-        po_during = _make_partial_opts()
-        lazy.set(po_before)
-        with lazy.use(po_during):
-            pass
-        self.assertIs(lazy._instance, po_before)
-
-    def test_use_restores_previous_on_exception(self):
-        lazy = self._new_lazy()
-        po_before = _make_partial_opts()
-        po_during = _make_partial_opts()
-        lazy.set(po_before)
-        try:
-            with lazy.use(po_during):
-                raise RuntimeError("boom")
-        except RuntimeError:
-            pass
-        self.assertIs(lazy._instance, po_before)
-
-    def test_getattr_delegates_to_wrapped_instance(self):
-        lazy = self._new_lazy()
-        po = _make_partial_opts()
-        lazy.set(po)
-        self.assertEqual(lazy.testing_farm, po.config["testing_farm"])
-
-    def test_use_with_none_previous_restores_to_none(self):
-        lazy = self._new_lazy()
-        po = _make_partial_opts()
-        lazy._instance = None
-        with lazy.use(po):
-            self.assertIsNotNone(lazy._instance)
-        self.assertIsNone(lazy._instance)
-
-
-# ---------------------------------------------------------------------------
-# 10. Full constructor (integration) — 'report' action with patched load_config
+# 9. Full constructor (integration) — 'report' action with patched load_config
 # ---------------------------------------------------------------------------
 
 
