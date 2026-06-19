@@ -42,16 +42,22 @@ tests/               unittest.TestCase style ONLY (see Conventions)
 
 ## Architecture facts you must know
 
-- **`parsed_opts` is a lazily-initialized module-level singleton**
-  (`utils/opt_manager.py`, `_LazyParsedOpts`) imported by every command
-  module. Its `__getattr__` resolves attributes by searching config sections
-  at runtime. Tests populate it via `parsed_opts.set(stub)` or the
-  `parsed_opts.use(stub)` context manager. A migration to an explicit
-  AppContext is planned — do not extend the singleton's surface; do not
-  start the migration unless explicitly asked.
-- **~60 deferred in-function imports exist as circular-import workarounds**
-  caused by the singleton. Do not "clean them up" casually; they disappear
-  with the DI migration.
+- **`AppContext` is the runtime context object**, constructed once in
+  `__main__` from the validated `ParsedOpts` output. For `action="test"`,
+  computed test attributes (source_spec, target_spec, architectures,
+  effective_tiers, environment_variables, etc.) are derived at construction
+  time by `build_test_attributes()` in `utils/test_attribute_builder.py`
+  and stored as frozen fields. For all other actions, defaults apply.
+  `AppContext` is passed explicitly to every subcommand main.
+  `ParsedOpts` (`utils/opt_manager.py`) handles config loading, env-var
+  fallbacks, and validation — it no longer holds computed test attributes
+  and no singleton wrapper exists.
+- **~30 deferred in-function imports remain** as circular-import workarounds
+  between dispatch/report/rerun/reportportal modules. Do not "clean them up"
+  casually; most are genuine cross-module cycles (e.g.
+  `source_target_parser ↔ dispatch.pin_compose`,
+  `report.__main__ ↔ report.concurrent_parser`,
+  `rerun ↔ reportportal.__main__`).
 - **`utils/console.py` exposes `console` as a proxy** delegating to a
   module-private `_current`; `configure_console(output_format)` swaps
   `_current`. Never rebind `console` itself; never construct ad-hoc Consoles
@@ -134,10 +140,10 @@ tests/               unittest.TestCase style ONLY (see Conventions)
 ## Known debt — planned, do not preempt piecemeal
 
 Sequenced roadmap (do not start these as side effects of other work):
-characterization tests for opt_manager → `RequestContext` dataclass
-(kills the 14-parameter functions in source_target_parser and decomposes
-`set_flow.process_request_spec`) → singleton → AppContext DI, module by
-module → unify reportportal task/all-launches pipelines under subcommands →
+~~characterization tests for opt_manager~~ ✓ →
+~~`RequestContext` dataclass~~ ✓ →
+~~singleton → AppContext DI, module by module~~ ✓ →
+unify reportportal task/all-launches pipelines under subcommands →
 manifest-based state store (XDG paths, retires filename tags) →
 config-as-data (RHSM flag presets, source→target mapping table replacing the
 `minor - 6` formula, RP event list).
