@@ -11,17 +11,40 @@ class AppContext:
     testing_farm_endpoint: TestingFarmEndpoint
     archive_tasks_latest: str
     archive_tasks_default: str
-    _parsed_opts_ref: Any = field(default=None, repr=False)
+
+    copr_api: Dict[str, Any] = field(default_factory=dict)
+    brew_api: Dict[str, Any] = field(default_factory=dict)
+    tmt_context: Dict[str, Any] = field(default_factory=dict)
+    source_spec: Dict[str, Any] = field(default_factory=dict)
+    target_spec: Dict[str, Any] = field(default_factory=dict)
+    upgrade_path_alias: str = ""
+    architectures: List[str] = field(default_factory=list)
+    copr_reference: Optional[str] = None
+    brew_reference: Optional[str] = None
+    copr_references: List[str] = field(default_factory=list)
+    brew_references: List[str] = field(default_factory=list)
+    plans: List[str] = field(default_factory=list)
+    effective_tiers: Optional[List[str]] = None
+    plan_filter: Optional[str] = None
+    parallel_limit: Optional[int] = None
+    individual_test_sets: Optional[List[Dict[str, Any]]] = None
+    environment_variables: Dict[str, str] = field(default_factory=dict)
+    pool: Optional[str] = None
 
     @classmethod
     def from_parsed_opts(cls, po) -> "AppContext":
+        derived = {}
+        if getattr(po.cli_args, "action", None) == "test":
+            from enge.utils.test_attribute_builder import build_test_attributes
+
+            derived = build_test_attributes(po.cli_args, po.config)
         return cls(
             cli_args=po.cli_args,
             config=po.config,
             testing_farm_endpoint=po.testing_farm_endpoint,
             archive_tasks_latest=po.archive_tasks_latest,
             archive_tasks_default=po.archive_tasks_default,
-            _parsed_opts_ref=po,
+            **derived,
         )
 
     @property
@@ -43,77 +66,3 @@ class AppContext:
     @property
     def reportportal(self) -> Dict[str, Any]:
         return self.config.get("reportportal", {})
-
-    # -- Dispatch-required delegation properties --
-
-    @property
-    def copr_api(self) -> Dict[str, Any]:
-        return getattr(self._parsed_opts_ref, "copr_api", {})
-
-    @property
-    def brew_api(self) -> Dict[str, Any]:
-        return getattr(self._parsed_opts_ref, "brew_api", {})
-
-    @property
-    def tmt_context(self) -> Dict[str, Any]:
-        return getattr(self._parsed_opts_ref, "tmt_context", {})
-
-    @property
-    def source_spec(self) -> Dict[str, Any]:
-        return getattr(self._parsed_opts_ref, "source_spec", {})
-
-    @property
-    def target_spec(self) -> Dict[str, Any]:
-        return getattr(self._parsed_opts_ref, "target_spec", {})
-
-    @property
-    def upgrade_path_alias(self) -> str:
-        return getattr(self._parsed_opts_ref, "upgrade_path_alias", "")
-
-    @property
-    def architectures(self) -> List[str]:
-        return getattr(self._parsed_opts_ref, "architectures", [])
-
-    @property
-    def copr_reference(self) -> Optional[str]:
-        return getattr(self._parsed_opts_ref, "copr_reference", None)
-
-    @property
-    def brew_reference(self) -> Optional[str]:
-        return getattr(self._parsed_opts_ref, "brew_reference", None)
-
-    @property
-    def copr_references(self) -> List[str]:
-        return getattr(self._parsed_opts_ref, "copr_references", [])
-
-    @property
-    def brew_references(self) -> List[str]:
-        return getattr(self._parsed_opts_ref, "brew_references", [])
-
-    @property
-    def plans(self) -> List[str]:
-        return getattr(self._parsed_opts_ref, "plans", [])
-
-    @property
-    def effective_tiers(self) -> Optional[List[str]]:
-        return getattr(self._parsed_opts_ref, "effective_tiers", None)
-
-    @property
-    def plan_filter(self) -> Optional[str]:
-        return getattr(self._parsed_opts_ref, "plan_filter", None)
-
-    @property
-    def parallel_limit(self) -> Optional[int]:
-        return getattr(self._parsed_opts_ref, "parallel_limit", None)
-
-    @property
-    def individual_test_sets(self) -> Optional[List[Dict[str, Any]]]:
-        return getattr(self._parsed_opts_ref, "individual_test_sets", None)
-
-    @property
-    def environment_variables(self) -> Dict[str, str]:
-        return getattr(self._parsed_opts_ref, "environment_variables", {})
-
-    @property
-    def pool(self) -> Optional[str]:
-        return getattr(self._parsed_opts_ref, "pool", None)

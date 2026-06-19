@@ -23,6 +23,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
+from enge.utils.app_context import AppContext
 from enge.utils.errors import ConfigurationError, ValidationError
 from enge.utils.opt_manager import ParsedOpts
 from enge.utils.arg_parser import get_arguments
@@ -457,8 +458,9 @@ class TestFullConstructorTestAction(unittest.TestCase):
         mock_load.return_value = copy.deepcopy(SETS_CONFIG)
         cli = get_arguments(args=["test", "-S", "alpha-set"])
         po = ParsedOpts(cli_args=cli)
-        self.assertEqual(len(po.individual_test_sets), 1)
-        entry = po.individual_test_sets[0]
+        ctx = AppContext.from_parsed_opts(po)
+        self.assertEqual(len(ctx.individual_test_sets), 1)
+        entry = ctx.individual_test_sets[0]
         self.assertEqual(entry["name"], "alpha-set")
 
     @patch("enge.utils.opt_manager.load_config")
@@ -466,7 +468,8 @@ class TestFullConstructorTestAction(unittest.TestCase):
         mock_load.return_value = copy.deepcopy(SETS_CONFIG)
         cli = get_arguments(args=["test", "-S", "alpha-set"])
         po = ParsedOpts(cli_args=cli)
-        entry = po.individual_test_sets[0]
+        ctx = AppContext.from_parsed_opts(po)
+        entry = ctx.individual_test_sets[0]
         for key in ("name", "config", "effective_values", "source_spec", "target_spec"):
             self.assertIn(
                 key, entry, f"Missing key '{key}' in individual_test_sets entry"
@@ -477,7 +480,8 @@ class TestFullConstructorTestAction(unittest.TestCase):
         mock_load.return_value = copy.deepcopy(SETS_CONFIG)
         cli = get_arguments(args=["test", "-S", "alpha-set"])
         po = ParsedOpts(cli_args=cli)
-        ev = po.individual_test_sets[0]["effective_values"]
+        ctx = AppContext.from_parsed_opts(po)
+        ev = ctx.individual_test_sets[0]["effective_values"]
         self.assertEqual(ev["source"], "CentOS-Stream-9")
         self.assertEqual(ev["architectures"], ["x86_64"])
         self.assertEqual(ev["plans"], ["/plans/smoke"])
@@ -488,30 +492,33 @@ class TestFullConstructorTestAction(unittest.TestCase):
         mock_load.return_value = copy.deepcopy(SETS_CONFIG)
         cli = get_arguments(args=["test", "-S", "alpha-set"])
         po = ParsedOpts(cli_args=cli)
-        source_spec = po.individual_test_sets[0]["source_spec"]
+        ctx = AppContext.from_parsed_opts(po)
+        source_spec = ctx.individual_test_sets[0]["source_spec"]
         self.assertEqual(source_spec["major"], 9)
         self.assertTrue(source_spec["is_centos_stream"])
         self.assertEqual(source_spec["compose_name"], "CentOS-Stream-9")
 
     @patch("enge.utils.opt_manager.load_config")
     def test_self_plans_is_empty_when_using_sets(self, mock_load):
-        # CHARACTERIZATION: self.plans is set from cli_plans or top-level
-        # config plans only — set plans are NOT merged into self.plans.
+        # CHARACTERIZATION: ctx.plans is set from cli_plans or top-level
+        # config plans only — set plans are NOT merged into ctx.plans.
         # Per-set plans live in individual_test_sets[i]["effective_values"]["plans"].
         mock_load.return_value = copy.deepcopy(SETS_CONFIG)
         cli = get_arguments(args=["test", "-S", "alpha-set"])
         po = ParsedOpts(cli_args=cli)
+        ctx = AppContext.from_parsed_opts(po)
         self.assertEqual(
-            po.plans, []
-        )  # self.plans is [] even though alpha-set has plans
+            ctx.plans, []
+        )  # ctx.plans is [] even though alpha-set has plans
 
     @patch("enge.utils.opt_manager.load_config")
     def test_multiple_sets_produce_multiple_entries(self, mock_load):
         mock_load.return_value = copy.deepcopy(SETS_CONFIG)
         cli = get_arguments(args=["test", "-S", "alpha-set", "-S", "beta-set"])
         po = ParsedOpts(cli_args=cli)
-        self.assertEqual(len(po.individual_test_sets), 2)
-        names = [e["name"] for e in po.individual_test_sets]
+        ctx = AppContext.from_parsed_opts(po)
+        self.assertEqual(len(ctx.individual_test_sets), 2)
+        names = [e["name"] for e in ctx.individual_test_sets]
         self.assertIn("alpha-set", names)
         self.assertIn("beta-set", names)
 
@@ -523,8 +530,11 @@ class TestFullConstructorTestAction(unittest.TestCase):
         # alpha-set has architectures=["x86_64"]; CLI provides aarch64
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-S", "alpha-set", "--arch", "aarch64"])
-        with self.assertLogs("enge.utils.opt_manager", level="WARNING") as log:
-            ParsedOpts(cli_args=cli)
+        po = ParsedOpts(cli_args=cli)
+        with self.assertLogs(
+            "enge.utils.test_attribute_builder", level="WARNING"
+        ) as log:
+            AppContext.from_parsed_opts(po)
         warning_msgs = [
             m for m in log.output if "overrides" in m and "architectures" in m
         ]
@@ -542,10 +552,11 @@ class TestFullConstructorTestAction(unittest.TestCase):
         }
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-S", "no-source-set"])
-        # With no source, _initialize_test_attributes raises ValidationError
+        # With no source, build_test_attributes raises ValidationError
         # "Source compose specification is required".
+        po = ParsedOpts(cli_args=cli)
         with self.assertRaises(ValidationError):
-            ParsedOpts(cli_args=cli)
+            AppContext.from_parsed_opts(po)
 
     @patch("enge.utils.opt_manager.load_config")
     def test_test_action_no_sets_produces_empty_individual_test_sets(self, mock_load):
@@ -555,7 +566,8 @@ class TestFullConstructorTestAction(unittest.TestCase):
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-s", "CentOS-Stream-9", "-T", "tier0"])
         po = ParsedOpts(cli_args=cli)
-        self.assertEqual(po.individual_test_sets, [])
+        ctx = AppContext.from_parsed_opts(po)
+        self.assertEqual(ctx.individual_test_sets, [])
 
     @patch("enge.utils.opt_manager.load_config")
     def test_parallel_limit_defaults_to_constant_when_not_configured(self, mock_load):
@@ -566,7 +578,8 @@ class TestFullConstructorTestAction(unittest.TestCase):
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-s", "CentOS-Stream-9", "-T", "tier0"])
         po = ParsedOpts(cli_args=cli)
-        self.assertEqual(po.parallel_limit, PARALLEL_LIMIT_DEFAULT)
+        ctx = AppContext.from_parsed_opts(po)
+        self.assertEqual(ctx.parallel_limit, PARALLEL_LIMIT_DEFAULT)
 
 
 # ---------------------------------------------------------------------------
@@ -590,7 +603,8 @@ class TestTierResolution(unittest.TestCase):
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-S", "alpha-set"])
         po = ParsedOpts(cli_args=cli)
-        ev = po.individual_test_sets[0]["effective_values"]
+        ctx = AppContext.from_parsed_opts(po)
+        ev = ctx.individual_test_sets[0]["effective_values"]
         self.assertEqual(ev["tiers"], ["tier3"])
 
     @patch("enge.utils.opt_manager.load_config")
@@ -599,7 +613,8 @@ class TestTierResolution(unittest.TestCase):
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-S", "alpha-set", "-T", "tier0"])
         po = ParsedOpts(cli_args=cli)
-        ev = po.individual_test_sets[0]["effective_values"]
+        ctx = AppContext.from_parsed_opts(po)
+        ev = ctx.individual_test_sets[0]["effective_values"]
         self.assertEqual(ev["tiers"], ["tier0"])
 
     @patch("enge.utils.opt_manager.load_config")
@@ -609,7 +624,8 @@ class TestTierResolution(unittest.TestCase):
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-S", "alpha-set"])
         po = ParsedOpts(cli_args=cli)
-        ev = po.individual_test_sets[0]["effective_values"]
+        ctx = AppContext.from_parsed_opts(po)
+        ev = ctx.individual_test_sets[0]["effective_values"]
         self.assertEqual(ev["tiers"], ["tier1"])
 
     @patch("enge.utils.opt_manager.load_config")
@@ -622,8 +638,9 @@ class TestTierResolution(unittest.TestCase):
         cfg["tests"].pop("tiers", None)
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-S", "alpha-set"])
+        po = ParsedOpts(cli_args=cli)
         with self.assertRaises(ConfigurationError):
-            ParsedOpts(cli_args=cli)
+            AppContext.from_parsed_opts(po)
 
     def test_no_tiers_anywhere_raises_configuration_error(self):
         # Direct unit test: resolve_effective_values raises ConfigurationError
@@ -639,14 +656,15 @@ class TestTierResolution(unittest.TestCase):
     @patch("enge.utils.opt_manager.load_config")
     def test_tier_fallback_log_emitted_exactly_once(self, mock_load):
         # The INFO fallback message for tiers-from-[tests].tiers must appear
-        # exactly once through the full init path.  The validation pass no
-        # longer calls resolve_effective_values (git_ref check moved to
-        # _initialize_test_attributes), so the INFO line fires once.
+        # exactly once through the full init path.  build_test_attributes
+        # (called by AppContext.from_parsed_opts) delegates to
+        # resolve_effective_values which emits the INFO line once.
         cfg = copy.deepcopy(SETS_CONFIG)
         mock_load.return_value = cfg
         cli = get_arguments(args=["test", "-S", "alpha-set"])
+        po = ParsedOpts(cli_args=cli)
         with self.assertLogs("enge.utils.source_target_parser", level="INFO") as log:
-            ParsedOpts(cli_args=cli)
+            AppContext.from_parsed_opts(po)
         fallback_msgs = [m for m in log.output if "using default from [tests]" in m]
         self.assertEqual(len(fallback_msgs), 1)
 
