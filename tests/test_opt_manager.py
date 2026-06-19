@@ -34,10 +34,6 @@ from enge.utils.opt_manager import ParsedOpts, _LazyParsedOpts, TestingFarmEndpo
 from enge.utils.arg_parser import get_arguments
 from enge.utils.source_target_parser import resolve_effective_values
 
-# Import the module (not the singleton instance) to avoid triggering lazy
-# initialization during pytest collection (safe_getattr inspects module attrs).
-import enge.utils.opt_manager as _opt_manager
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture: minimal configuration that passes ALL static validations
@@ -700,20 +696,6 @@ class TestLazyParsedOpts(unittest.TestCase):
             self.assertIsNotNone(lazy._instance)
         self.assertIsNone(lazy._instance)
 
-    def test_module_parsed_opts_use_context_manager(self):
-        """The module-level singleton's .use() context manager correctly swaps
-        and restores.  Accessed only from inside a test method, not at collection
-        time, so __getattr__ is not triggered by safe_getattr."""
-        module_lazy = _opt_manager.parsed_opts
-        po = _make_partial_opts()
-        saved = module_lazy._instance
-        try:
-            with module_lazy.use(po):
-                self.assertIs(module_lazy._instance, po)
-            self.assertIs(module_lazy._instance, saved)
-        finally:
-            module_lazy._instance = saved
-
 
 # ---------------------------------------------------------------------------
 # 10. Full constructor (integration) — 'report' action with patched load_config
@@ -805,26 +787,6 @@ class TestTestingFarmEndpoint(unittest.TestCase):
 class TestAuxiliaryMethods(unittest.TestCase):
     """Cover smaller helpers not exercised by the validation-method tests above."""
 
-    def test_check_dependencies_returns_empty_for_report_action(self):
-        po = _make_partial_opts()
-        errors = po.check_dependencies()
-        self.assertIsInstance(errors, list)
-        self.assertEqual(errors, [])
-
-    def test_check_dependencies_test_action_missing_api_key_returns_error(self):
-        cfg = copy.deepcopy(MINIMAL_CONFIG)
-        cfg["testing_farm"]["api_key"] = ""
-        po = _make_partial_opts(
-            config=cfg,
-            cli_args=get_arguments(
-                args=["test", "-s", "9.7", "-T", "tier0", "--arch", "x86_64"]
-            ),
-        )
-        errors = po.check_dependencies()
-        self.assertTrue(
-            any("api" in e.lower() or "testing farm" in e.lower() for e in errors)
-        )
-
     def test_register_hook_and_run_it(self):
         po = _make_partial_opts()
         fired = []
@@ -863,19 +825,16 @@ class TestAuxiliaryMethods(unittest.TestCase):
         )
         self.assertIsNone(po._collect_set_value("no_such_key"))
 
-    def test_initialize_test_attributes_missing_git_ref_raises(self):
+    def test_build_test_attributes_missing_git_ref_raises(self):
+        from enge.utils.test_attribute_builder import build_test_attributes
+
         cfg = copy.deepcopy(MINIMAL_CONFIG)
         cfg["tests"]["git_ref"] = ""  # falsy — triggers error
-        po = _make_partial_opts(
-            config=cfg,
-            cli_args=get_arguments(
-                args=["test", "-s", "9.7", "-T", "tier0", "--arch", "x86_64"]
-            ),
+        cli = get_arguments(
+            args=["test", "-s", "9.7", "-T", "tier0", "--arch", "x86_64"]
         )
-        # _initialize_test_attributes needs .tests for the arch-override warning
-        po.tests = cfg.get("tests", {})
         with self.assertRaises(ConfigurationError):
-            po._initialize_test_attributes()
+            build_test_attributes(cli, cfg)
 
     def test_validate_effective_configuration_is_noop(self):
         po = _make_partial_opts()

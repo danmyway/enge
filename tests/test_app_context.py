@@ -75,6 +75,28 @@ class TestAppContext(unittest.TestCase):
         with self.assertRaises(AttributeError):
             ctx.config = {}
 
+    def test_non_test_action_uses_defaults(self):
+        po = self._make_po()
+        ctx = AppContext.from_parsed_opts(po)
+        self.assertEqual(ctx.source_spec, {})
+        self.assertEqual(ctx.target_spec, {})
+        self.assertEqual(ctx.architectures, [])
+        self.assertIsNone(ctx.effective_tiers)
+        self.assertIsNone(ctx.plan_filter)
+        self.assertEqual(ctx.environment_variables, {})
+        self.assertIsNone(ctx.individual_test_sets)
+        self.assertEqual(ctx.plans, [])
+        self.assertEqual(ctx.copr_references, [])
+        self.assertEqual(ctx.brew_references, [])
+        self.assertIsNone(ctx.copr_reference)
+        self.assertIsNone(ctx.brew_reference)
+        self.assertEqual(ctx.upgrade_path_alias, "")
+        self.assertIsNone(ctx.pool)
+        self.assertIsNone(ctx.parallel_limit)
+        self.assertEqual(ctx.copr_api, {})
+        self.assertEqual(ctx.brew_api, {})
+        self.assertEqual(ctx.tmt_context, {})
+
 
 if __name__ == "__main__":
     unittest.main()
