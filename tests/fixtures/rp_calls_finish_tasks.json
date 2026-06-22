@@ -32,7 +32,7 @@
         }
       ],
       "description": "\nhttps://artifacts.dev.testing-farm.io/aabbccdd-1111-2222-3333-444455551234",
-      "endTime": "2026-06-19T12:00:00.000Z",
+      "endTime": "2026-06-19T10:05:00.000Z",
       "status": "FAILED"
     },
     "url_path": "/api/v1/test-project/launch/aabbccdd-1111-2222-3333-444455556666/finish"
