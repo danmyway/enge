@@ -1,0 +1,40 @@
+[
+  {
+    "method": "GET",
+    "payload": {
+      "filter.eq.status": "IN_PROGRESS",
+      "filter.has.attributeKey": "event",
+      "filter.has.attributeValue": "TEST",
+      "page.page": 0,
+      "page.size": 50
+    },
+    "url_path": "/api/v1/test-project/launch"
+  },
+  {
+    "method": "PUT",
+    "payload": {
+      "attributes": [
+        {
+          "key": "uniq_id",
+          "value": "aabbccdd"
+        },
+        {
+          "key": "tier",
+          "value": "tier0"
+        },
+        {
+          "key": "architecture",
+          "value": "x86_64"
+        },
+        {
+          "key": "event",
+          "value": "TEST"
+        }
+      ],
+      "description": "\nhttps://artifacts.dev.testing-farm.io/aabbccdd-1111-2222-3333-444455551234",
+      "endTime": "2026-06-19T12:00:00.000Z",
+      "status": "FAILED"
+    },
+    "url_path": "/api/v1/test-project/launch/aabbccdd-1111-2222-3333-444455556666/finish"
+  }
+]
