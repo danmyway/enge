@@ -1,0 +1,110 @@
+[
+  {
+    "method": "GET",
+    "payload": {
+      "filter.eq.status": "IN_PROGRESS",
+      "filter.has.attributeKey": "event",
+      "filter.has.attributeValue": "TEST",
+      "page.page": 0,
+      "page.size": 50
+    },
+    "url_path": "/api/v1/test-project/launch"
+  },
+  {
+    "method": "GET",
+    "payload": {
+      "filter.eq.uuid": "aabbccdd-1111-2222-3333-444455556666",
+      "page.size": 1
+    },
+    "url_path": "/api/v1/test-project/launch"
+  },
+  {
+    "method": "GET",
+    "payload": {
+      "filter.eq.launchId": 101,
+      "page.page": 1,
+      "page.size": 300
+    },
+    "url_path": "/api/v1/test-project/item"
+  },
+  {
+    "method": "GET",
+    "payload": {
+      "filter.eq.launch": 101,
+      "page.page": 1,
+      "page.size": 300
+    },
+    "url_path": "/api/v1/test-project/log"
+  },
+  {
+    "method": "GET",
+    "payload": {
+      "filter.eq.launchId": 101,
+      "page.page": 1,
+      "page.size": 300
+    },
+    "url_path": "/api/v1/test-project/item"
+  },
+  {
+    "method": "GET",
+    "payload": {
+      "filter.eq.item": 5001,
+      "page.page": 1,
+      "page.size": 300
+    },
+    "url_path": "/api/v1/test-project/log"
+  },
+  {
+    "method": "GET",
+    "payload": {
+      "filter.eq.item": 5002,
+      "page.page": 1,
+      "page.size": 300
+    },
+    "url_path": "/api/v1/test-project/log"
+  },
+  {
+    "method": "GET",
+    "url_path": "/aabbccdd-1111-2222-3333-444455551234/artifact-A.log"
+  },
+  {
+    "method": "GET",
+    "url_path": "/aabbccdd-1111-2222-3333-444455551234/artifact-B.log"
+  },
+  {
+    "method": "POST",
+    "payload": [
+      {
+        "itemUuid": "item-uuid-001",
+        "launchUuid": "aabbccdd-1111-2222-3333-444455556666",
+        "level": "INFO",
+        "message": "### `artifact-A.log`\n",
+        "time": "1781863200000"
+      },
+      {
+        "itemUuid": "item-uuid-001",
+        "launchUuid": "aabbccdd-1111-2222-3333-444455556666",
+        "level": "INFO",
+        "message": "### `artifact-B.log`\n",
+        "time": "1781863200000"
+      }
+    ],
+    "url_path": "/api/v1/test-project/log"
+  },
+  {
+    "method": "GET",
+    "url_path": "/api/v1/test-project/launch/101"
+  },
+  {
+    "method": "PUT",
+    "payload": {
+      "attributes": [
+        {
+          "key": "logs_attached",
+          "value": "true"
+        }
+      ]
+    },
+    "url_path": "/api/v1/test-project/launch/101/update"
+  }
+]
