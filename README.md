@@ -639,50 +639,55 @@ When `--rp` is used, enge automatically excludes conflicting variables to preven
 
 ###### ReportPortal Launch Management
 
-The `enge reportportal` subcommand provides tools for managing ReportPortal launches after dispatch — finishing launches, enriching them with artifact logs, and deleting logs.
+The `enge reportportal` subcommand provides tools for managing ReportPortal launches after dispatch — finishing launches, enriching them with artifact logs, and deleting logs. Operations are organized as subcommands with explicit verbs instead of flag combinations.
 
-**Finishing Launches (`--finish`):**
+**Subcommands:**
+
+- `enge reportportal finish` — Finish IN_PROGRESS launches
+- `enge reportportal enrich` — Enrich launches with artifact logs
+- `enge reportportal delete-logs` — Delete logs from launches
+- `enge reportportal delete-stale` — Delete empty launches
+- `enge reportportal check` — Test ReportPortal connectivity
+
+**Finishing Launches:**
 
 Finish an IN_PROGRESS launch by resolving the Testing Farm task status and setting the appropriate end time and status on the RP launch.
 
 ```bash
 # Finish launches resolved from the latest archived tasks
-enge reportportal --finish
+enge reportportal finish
 
 # Finish launches for specific Testing Farm task(s)
-enge reportportal --finish -i <tf-task-uuid>
+enge reportportal finish -i <tf-task-uuid>
 
 # Finish all IN_PROGRESS launches in the project (no TF input needed)
-enge reportportal --finish --all-launches
+enge reportportal finish --all
 
 # Preview what would be finished
-enge reportportal --finish --all-launches --dry-run
+enge reportportal finish --all --dry-run
+
+# Enrich then finish in one step
+enge reportportal finish --enrich -i <tf-task-uuid>
 ```
 
-When using `--all-launches`, the status and end time are derived from the RP test items within each launch (not from the current time). The Testing Farm artifacts URL is extracted from test-item descriptions and added to the launch description.
+When using `--all`, the status and end time are derived from the RP test items within each launch (not from the current time). The Testing Farm artifacts URL is extracted from test-item descriptions and added to the launch description.
 
-**Enriching Launches with Logs (`--enrich-logs`):**
+**Enriching Launches with Logs:**
 
 Download artifact logs from the Testing Farm artifact endpoint and upload them to the corresponding RP launch. Only logs belonging to failed test items are attached — passed and skipped items are excluded to keep the RP interface focused on failures. Suite-level (unmapped) logs are included when at least one item in the launch has failed. Logs are downloaded in memory and uploaded in batches — nothing is written to disk.
 
 ```bash
 # Enrich launches from specific TF task(s)
-enge reportportal --enrich-logs -i <tf-task-uuid>
-
-# Enrich then finish in one step
-enge reportportal --enrich-logs --finish -i <tf-task-uuid>
+enge reportportal enrich -i <tf-task-uuid>
 
 # Enrich all launches regardless of status (carpet bomb)
-enge reportportal --enrich-logs --all-launches
-
-# Enrich IN_PROGRESS launches, then finish them
-enge reportportal --finish --enrich-logs --all-launches
+enge reportportal enrich --all
 
 # Preview enrichment
-enge reportportal --enrich-logs --all-launches --dry-run
+enge reportportal enrich --all --dry-run
 ```
 
-With `--all-launches`, the artifacts URL is extracted from RP test-item descriptions (set by the TMT plugin), then `results.xml` is fetched to discover artifact files. No Testing Farm task input is needed.
+With `--all`, the artifacts URL is extracted from RP test-item descriptions (set by the TMT plugin), then `results.xml` is fetched to discover artifact files. No Testing Farm task input is needed.
 
 **Deduplication:**
 
@@ -691,88 +696,90 @@ Enge prevents duplicate log uploads through two layers:
 1. **Launch attribute** (`logs_attached=true`): After successful enrichment, this attribute is stamped on the launch. Subsequent runs skip launches with this attribute entirely — no API calls needed.
 2. **Message-header matching**: Each uploaded log starts with a `### \`artifact-name\`` header. Before uploading, enge fetches existing logs from the launch's test items and filters out artifacts whose headers already exist.
 
-This means you can safely run `--enrich-logs --all-launches` repeatedly without creating duplicates.
+This means you can safely run `enge reportportal enrich --all` repeatedly without creating duplicates.
 
-**Deleting Logs (`--delete-logs`):**
+**Deleting Logs:**
 
 Remove all log entries from a launch.
 
 ```bash
 # Delete logs from launches resolved from TF task(s)
-enge reportportal --delete-logs -i <tf-task-uuid>
+enge reportportal delete-logs -i <tf-task-uuid>
 
 # Delete logs from all IN_PROGRESS launches
-enge reportportal --delete-logs --all-launches
+enge reportportal delete-logs --all
 
 # Preview deletion
-enge reportportal --delete-logs --all-launches --dry-run
+enge reportportal delete-logs --all --dry-run
 ```
 
-**Deleting Stale Launches (`--delete-stale`):**
+**Deleting Stale Launches:**
 
 Delete launches that are stopped or interrupted and have no test items — empty launches left behind by failed or aborted dispatches.
 
 ```bash
 # Delete all stale launches
-enge reportportal --delete-stale
+enge reportportal delete-stale
 
 # Preview which launches would be deleted
-enge reportportal --delete-stale --dry-run
+enge reportportal delete-stale --dry-run
 
 # Only stale launches started before a given date
-enge reportportal --delete-stale --until 2025-12-31
+enge reportportal delete-stale --until 2025-12-31
 
 # Combine both bounds
-enge reportportal --delete-stale --since 2025-01-01 --until 2025-06-30
+enge reportportal delete-stale --since 2025-01-01 --until 2025-06-30
 ```
 
 **Date Filters (`--since` / `--until`):**
 
-Narrow any launch-listing operation by date. Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y` — meaning "that many units ago from now"). Effective with `--all-launches` and `--delete-stale`; ignored for task-based operations.
+Narrow any launch-listing operation by date. Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y` — meaning "that many units ago from now"). Effective with `--all` and `delete-stale`; ignored for task-based operations.
 
 ```bash
 # Finish only launches started after a date
-enge reportportal --finish --all-launches --since 2025-07-01
+enge reportportal finish --all --since 2025-07-01
 
 # Delete stale launches from the last 3 days
-enge reportportal --delete-stale --since 3d
+enge reportportal delete-stale --since 3d
 
 # Delete stale launches older than 2 weeks
-enge reportportal --delete-stale --until 2w
+enge reportportal delete-stale --until 2w
 
 # Enrich launches within a relative window
-enge reportportal --enrich-logs --all-launches --since 1m
+enge reportportal enrich --all --since 1m
 
 # Mix absolute and relative
-enge reportportal --enrich-logs --all-launches --since 2025-01-01 --until 3m
+enge reportportal enrich --all --since 2025-01-01 --until 3m
 ```
 
 The same `--since` / `--until` flags are also available on the `report` subcommand — see [Report](#report).
 
-**Testing Connection (`--test`):**
+**Testing Connection:**
 
 Verify your ReportPortal configuration and connectivity.
 
 ```bash
-enge reportportal --test
+enge reportportal check
 ```
 
 **Input Sources:**
 
-All task-based operations (`--finish`, `--enrich-logs`, `--delete-logs` without `--all-launches`) accept the same input sources as the report module:
+All task-based operations (`finish`, `enrich`, `delete-logs` without `--all`) accept the same input sources as the report module:
 - `-i/--input <uuid>` — Testing Farm task UUID(s)
 - `-f/--file <path>` — file containing task UUIDs
 - `--get-tag <pattern>` — query archived task files by regex
 
-**`--all-launches` Summary:**
+**Subcommand Reference:**
 
-| Combination | Scope | Behaviour |
+| Subcommand | Scope | Behavior |
 |---|---|---|
-| `--finish --all-launches` | IN_PROGRESS | Derives status & end time from test items, sets artifacts URL as description |
-| `--enrich-logs --all-launches` | All statuses | Enriches every launch; skips already-enriched (`logs_attached`) |
-| `--finish --enrich-logs --all-launches` | IN_PROGRESS | Enriches first, then finishes |
-| `--delete-logs --all-launches` | IN_PROGRESS | Deletes all logs from each launch |
-| `--delete-stale` | STOPPED / INTERRUPTED | Deletes empty launches (no test items); standalone, no `--all-launches` needed |
+| `finish --all` | IN_PROGRESS | Derives status & end time from test items, sets artifacts URL as description |
+| `finish --enrich` | Task-based | Enriches artifact logs then finishes the launch in one command |
+| `enrich --all` | All statuses | Enriches every launch; skips already-enriched (`logs_attached`) |
+| `delete-logs --all` | IN_PROGRESS | Deletes all logs from each launch |
+| `delete-stale` | STOPPED / INTERRUPTED | Deletes empty launches (no test items); standalone, no `--all` needed |
+
+**Note:** The old flag-verb spellings (`--finish`, `--enrich-logs`, `--delete-logs`, `--delete-stale`, `--test`, `--all-launches`) still work for backward compatibility but emit a deprecation warning. They will be removed in a future release.
 
 ##### Report
 With the report command you are able to get the results of the requested jobs straight to the command line.<br>

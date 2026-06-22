@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Shell completion via `argcomplete` (optional dependency)
 - Sensitive field redaction in dry-run payload output
 - Structured JSON output (`-o json`) with honest success/failure counts
+- `enge reportportal` subcommands: `finish`, `enrich`, `delete-logs`, `delete-stale`, `check` — replacing the flag-verb grammar
+- `finish --enrich` combined flow: enrich artifact logs then finish the launch in one command
 
 ### Changed
 - Report exit-code precedence is now severity-ranked error-dominates (3 > 2 > 4): a result set mixing test errors, failures, and missing results returns the most severe code (3, error) where it previously returned whichever was numerically highest (4, missing). Exit codes are now defined once as the `ExitCode` enum in `utils/globals.py`; missing results are rerun candidates and no longer mask a real error.
@@ -27,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Deprecated
 - `--jira` flag in `report` — use `-o gitlab` for merge-request-friendly output
+- Old flag-verb spellings (`--finish`, `--enrich-logs`, `--delete-logs`, `--delete-stale`, `--test`, `--all-launches`) — use subcommands instead; old spellings emit a deprecation warning and will be removed in a future release
 
 ### Removed
 - Dead functions: `merge_environment_variables`, `parse_test_sets` (source_target_parser), `get_config_value`, `validate_config_section` (config_parser), `_maybe_create_rp_launch` (dispatch), `_collect_inherited_tags` (rerun)
@@ -48,6 +51,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exception message instead of only in the CRITICAL log. The full log output is unchanged.
 - `-o json` mode no longer silences log output; logs go to stderr independently
 - `-o json --dry-run` produces a single JSON document instead of interleaved payloads
+- `enge reportportal` with `ConfigurationError` now returns exit code 99 (was 1), consistent with other subcommands
+- All reportportal operations now skip CANCELED Testing Farm tasks uniformly (previously inconsistent: finish skipped, enrich did not)
 - GitLab output format uses triple-backtick fences instead of Jira `{noformat}` tags
 - External strings (compose names, plan names, test results) escaped to prevent rich markup injection
 - Partial dispatch failures now exit with code 2; previously they incorrectly exited 0 due to a request-counting bug
