@@ -16,7 +16,7 @@ import json
 import os
 import unittest
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import patch, MagicMock
 
@@ -24,8 +24,9 @@ from tests._helpers import make_app_context
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
-# Frozen time for deterministic golden files
-FROZEN_DT = datetime(2026, 6, 19, 12, 0, 0, 0)
+# Frozen time for deterministic golden files — UTC-aware so epoch ms is
+# identical regardless of the machine's local timezone.
+FROZEN_DT = datetime(2026, 6, 19, 12, 0, 0, 0, tzinfo=timezone.utc)
 FROZEN_DT_ISO = "2026-06-19T12:00:00.000Z"
 FROZEN_DT_MS = str(int(FROZEN_DT.timestamp() * 1000))
 
@@ -102,11 +103,14 @@ SAMPLE_LOGS_WITH_HEADER = [
 SAMPLE_XML_CONTENT = (
     '<?xml version="1.0" encoding="utf-8"?>\n'
     "<testsuites>\n"
-    '  <testsuite name="/tests/plan1" tests="2" failures="1">\n'
-    '    <testcase name="test_upgrade" time="120.5">\n'
+    '  <testsuite name="/tests/plan1" tests="2" failures="1"'
+    ' end-time="2026-06-19T10:05:00.000Z">\n'
+    '    <testcase name="test_upgrade" time="120.5"'
+    ' end-time="2026-06-19T10:03:00.000Z">\n'
     '      <failure message="upgrade failed"/>\n'
     "    </testcase>\n"
-    '    <testcase name="test_verify" time="30.2"/>\n'
+    '    <testcase name="test_verify" time="30.2"'
+    ' end-time="2026-06-19T10:05:00.000Z"/>\n'
     "    <logs>\n"
     '      <log name="artifact-A.log"\n'
     f'           href="{ARTIFACTS_BASE}/artifact-A.log"/>\n'
