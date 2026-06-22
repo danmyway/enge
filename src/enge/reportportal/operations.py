@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from enge.utils import parse_date_arg
+from enge.utils.globals import ExitCode
 from enge.utils.http_client import http_get
 from enge.report.concurrent_parser import ConcurrentRequestParser
 from enge.report.__main__ import parse_tasks
@@ -442,7 +443,7 @@ def op_finish(
         LOGGER.info(f"Successfully {action} {processed} launch(es)")
     else:
         LOGGER.info("No launches required finishing")
-    return 0
+    return ExitCode.SUCCESS
 
 
 def op_enrich(
@@ -570,7 +571,7 @@ def op_enrich(
         LOGGER.info(f"Log enrichment complete: {enriched_count} launch(es) {action}")
     else:
         LOGGER.info("No launches required enrichment")
-    return 0
+    return ExitCode.SUCCESS
 
 
 def op_delete_logs(
@@ -611,9 +612,9 @@ def op_delete_logs(
     if processed > 0:
         action = "shown" if dryrun else "processed"
         LOGGER.info(f"Log deletion complete: {processed} launch(es) {action}")
-        return 0
+        return ExitCode.SUCCESS
     LOGGER.warning("No launches had logs deleted")
-    return 1
+    return ExitCode.EXCEPTION
 
 
 # ===================================================================
@@ -641,7 +642,7 @@ def op_delete_stale(
 
     if not launches:
         LOGGER.info("No STOPPED/INTERRUPTED launches found")
-        return 0
+        return ExitCode.SUCCESS
 
     stale = [
         lch
@@ -653,11 +654,11 @@ def op_delete_stale(
             f"No stale launches found among "
             f"{len(launches)} STOPPED/INTERRUPTED launch(es)"
         )
-        return 0
+        return ExitCode.SUCCESS
 
     if dryrun:
         show_dryrun_delete_stale(stale)
-        return 0
+        return ExitCode.SUCCESS
 
     deleted = 0
     for launch in stale:
@@ -670,7 +671,7 @@ def op_delete_stale(
             LOGGER.error(f"Failed to delete launch '{name}' ({uuid})")
 
     LOGGER.info(f"Deleted {deleted}/{len(stale)} stale launch(es)")
-    return 0 if deleted > 0 else 1
+    return ExitCode.SUCCESS if deleted > 0 else ExitCode.EXCEPTION
 
 
 def op_check(rp: ReportPortalLaunch, ctx) -> int:
@@ -701,79 +702,32 @@ def op_check(rp: ReportPortalLaunch, ctx) -> int:
                 "No task URLs found - you may need to provide "
                 "task IDs via -i, -f, or --get-tag"
             )
-        return 0
+        return ExitCode.SUCCESS
     except Exception as e:
         LOGGER.error(f"Connection test failed: {e}")
         LOGGER.debug(f"Traceback: {traceback.format_exc()}")
-        return 1
+        return ExitCode.EXCEPTION
 
 
 # ===================================================================
-# Legacy wrappers — called by parity tests and main()
+# Query-path normalizers — bridge resolve_from_query to op_*
 # ===================================================================
 
 
-def finish_launch_from_task(rp: ReportPortalLaunch) -> int:
-    """Finish RP launches from TF tasks (resolve + op_finish)."""
-    try:
-        dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
-        launches = resolve_from_tasks(rp, rp.ctx)
-        if not launches:
-            LOGGER.warning("No launches were finished")
-            return 1
-        rc = op_finish(rp, launches, rp.ctx, dryrun)
-        if dryrun:
-            LOGGER.info(f"Successfully shown {len(launches)} launch(es)")
-        return rc
-    except Exception as e:
-        LOGGER.error(f"Error in finish launch logic: {e}")
-        LOGGER.debug(f"Traceback: {traceback.format_exc()}")
-        return 1
+def normalize_for_finish(
+    rp: ReportPortalLaunch,
+    raw_launches: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Normalize query-resolved launches for ``op_finish``.
 
-
-def enrich_logs_from_task(rp: ReportPortalLaunch) -> int:
-    """Enrich RP launch logs from TF tasks (resolve + op_enrich)."""
-    try:
-        dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
-        LOGGER.info("Starting log enrichment from Testing Farm results.xml")
-        launches = resolve_from_tasks(rp, rp.ctx)
-        if not launches:
-            LOGGER.warning("No launches were enriched")
-            return 1
-        return op_enrich(rp, launches, rp.ctx, dryrun)
-    except Exception as e:
-        LOGGER.error(f"Error during log enrichment: {e}")
-        LOGGER.debug(f"Traceback: {traceback.format_exc()}")
-        return 1
-
-
-def delete_logs_from_task(rp: ReportPortalLaunch) -> int:
-    """Delete launch logs from TF tasks (resolve + op_delete_logs)."""
-    try:
-        dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
-        LOGGER.info("Starting log deletion for ReportPortal launches")
-        launches = resolve_from_tasks(rp, rp.ctx)
-        if not launches:
-            LOGGER.warning("No launches had logs deleted")
-            return 1
-        return op_delete_logs(rp, launches, rp.ctx, dryrun)
-    except Exception as e:
-        LOGGER.error(f"Error during log deletion: {e}")
-        LOGGER.debug(f"Traceback: {traceback.format_exc()}")
-        return 1
-
-
-def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
-    """Finish all IN_PROGRESS launches (query-resolve + op_finish)."""
-    raw = resolve_from_query(rp, rp.ctx, status_filter="IN_PROGRESS")
-    if not raw:
-        LOGGER.info("No IN_PROGRESS launches found")
-        return 0
-
+    Fetches test items, checks TF task state, derives finish status
+    and end time.  Skips launches with in-progress items or active TF
+    tasks.
+    """
     fallback_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     normalized: List[Dict[str, Any]] = []
 
-    for launch in raw:
+    for launch in raw_launches:
         uuid = launch["_launch_uuid"]
         name = launch.get("name", "Unknown")
         nid = launch.get("id")
@@ -796,7 +750,7 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
                 tf_info = _get_tf_task_info(tf_uuid, rp.ctx)
 
         tf_state = (tf_info or {}).get("state", "")
-        if tf_state and tf_state.upper() in ("NEW", "QUEUED", "RUNNING"):
+        if tf_state and _is_tf_task_incomplete(tf_state):
             LOGGER.info(f"TF task for launch '{name}' is '{tf_state}', skipping")
             continue
 
@@ -818,44 +772,21 @@ def finish_all_in_progress_launches(rp: ReportPortalLaunch) -> int:
             }
         )
 
-    dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
-    return op_finish(rp, normalized, rp.ctx, dryrun)
+    return normalized
 
 
-def delete_logs_all_launches(rp: ReportPortalLaunch) -> int:
-    """Delete logs from all IN_PROGRESS launches (query + op_delete_logs)."""
-    raw = resolve_from_query(rp, rp.ctx, status_filter="IN_PROGRESS")
-    if not raw:
-        LOGGER.warning("No IN_PROGRESS launches found")
-        return 1
-
-    normalized: List[Dict[str, Any]] = []
-    for launch in raw:
-        uuid = launch["_launch_uuid"]
-        nid = launch.get("id")
-        if not uuid or nid is None:
-            LOGGER.warning(f"Launch missing UUID/ID, skipping: {launch}")
-            continue
-        normalized.append({**launch, "_launch_id": nid, "_task_uuid": None})
-
-    dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
-    return op_delete_logs(rp, normalized, rp.ctx, dryrun)
-
-
-def enrich_all_launches(
+def normalize_for_enrich(
     rp: ReportPortalLaunch,
-    status_filter: Optional[str] = None,
-) -> int:
-    """Enrich logs for RP-queried launches (query-resolve + op_enrich)."""
-    raw = resolve_from_query(rp, rp.ctx, status_filter=status_filter)
-    if not raw:
-        LOGGER.info("No launches found for enrichment")
-        return 0
+    raw_launches: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Normalize query-resolved launches for ``op_enrich``.
 
-    dryrun = getattr(rp.ctx.cli_args, "dryrun", False)
+    Filters already-enriched launches, fetches test items and TF task
+    state, downloads ``results.xml``, and attaches XML content.
+    """
     normalized: List[Dict[str, Any]] = []
 
-    for launch in raw:
+    for launch in raw_launches:
         uuid = launch["_launch_uuid"]
         name = launch.get("name", "Unknown")
         nid = launch.get("id")
@@ -881,7 +812,7 @@ def enrich_all_launches(
             tf_info = _get_tf_task_info(tf_uuid, rp.ctx)
             if tf_info:
                 tf_state = (tf_info.get("state") or "").upper()
-                if tf_state in ("NEW", "QUEUED", "RUNNING"):
+                if _is_tf_task_incomplete(tf_state):
                     LOGGER.info(
                         f"TF task {tf_uuid} for launch '{name}' "
                         f"is '{tf_state}', skipping enrichment"
@@ -922,17 +853,19 @@ def enrich_all_launches(
             }
         )
 
-    if not normalized:
-        LOGGER.info("No launches required enrichment")
-        return 0
-    return op_enrich(rp, normalized, rp.ctx, dryrun)
+    return normalized
 
 
-def delete_stale_launches(rp: ReportPortalLaunch) -> int:
-    """Legacy wrapper for op_delete_stale."""
-    return op_delete_stale(rp, rp.ctx, getattr(rp.ctx.cli_args, "dryrun", False))
-
-
-def test_connection_and_data(rp: ReportPortalLaunch) -> int:
-    """Legacy wrapper for op_check."""
-    return op_check(rp, rp.ctx)
+def normalize_for_delete_logs(
+    raw_launches: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Normalize query-resolved launches for ``op_delete_logs``."""
+    normalized: List[Dict[str, Any]] = []
+    for launch in raw_launches:
+        uuid = launch["_launch_uuid"]
+        nid = launch.get("id")
+        if not uuid or nid is None:
+            LOGGER.warning(f"Launch missing UUID/ID, skipping: {launch}")
+            continue
+        normalized.append({**launch, "_launch_id": nid, "_task_uuid": None})
+    return normalized

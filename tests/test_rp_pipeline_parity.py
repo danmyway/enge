@@ -511,10 +511,11 @@ class TestFinishFromTasksParity(_ParityTestBase):
 
         with recorder.patch(), self._freeze_time(), patches[0], patches[1], patches[2]:
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import finish_launch_from_task
+            from enge.reportportal.operations import resolve_from_tasks, op_finish
 
             rp = ReportPortalLaunch(ctx)
-            finish_launch_from_task(rp)
+            launches = resolve_from_tasks(rp, ctx)
+            op_finish(rp, launches, ctx, dryrun=False)
 
         self._assert_has_calls_matching(recorder, "PUT", "/finish")
         self._run_and_compare(recorder, "rp_calls_finish_tasks.json")
@@ -527,10 +528,11 @@ class TestFinishFromTasksParity(_ParityTestBase):
 
         with recorder.patch(), patches[0], patches[1], patches[2]:
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import finish_launch_from_task
+            from enge.reportportal.operations import resolve_from_tasks, op_finish
 
             rp = ReportPortalLaunch(ctx)
-            finish_launch_from_task(rp)
+            launches = resolve_from_tasks(rp, ctx)
+            op_finish(rp, launches, ctx, dryrun=False)
 
         self._assert_no_calls_matching(recorder, "PUT", "/finish")
         self._run_and_compare(recorder, "rp_calls_finish_tasks_running_tf.json")
@@ -581,11 +583,15 @@ class TestFinishFromQueryParity(_ParityTestBase):
         with recorder.patch(), self._freeze_time():
             from enge.reportportal.__main__ import ReportPortalLaunch
             from enge.reportportal.operations import (
-                finish_all_in_progress_launches,
+                resolve_from_query,
+                normalize_for_finish,
+                op_finish,
             )
 
             rp = ReportPortalLaunch(ctx)
-            finish_all_in_progress_launches(rp)
+            raw = resolve_from_query(rp, ctx, status_filter="IN_PROGRESS")
+            normalized = normalize_for_finish(rp, raw)
+            op_finish(rp, normalized, ctx, dryrun=False)
 
         self._assert_has_calls_matching(recorder, "PUT", "/finish")
         self._run_and_compare(recorder, "rp_calls_finish_query.json")
@@ -598,11 +604,15 @@ class TestFinishFromQueryParity(_ParityTestBase):
         with recorder.patch(), self._freeze_time():
             from enge.reportportal.__main__ import ReportPortalLaunch
             from enge.reportportal.operations import (
-                finish_all_in_progress_launches,
+                resolve_from_query,
+                normalize_for_finish,
+                op_finish,
             )
 
             rp = ReportPortalLaunch(ctx)
-            finish_all_in_progress_launches(rp)
+            raw = resolve_from_query(rp, ctx, status_filter="IN_PROGRESS")
+            normalized = normalize_for_finish(rp, raw)
+            op_finish(rp, normalized, ctx, dryrun=False)
 
         self._assert_no_calls_matching(recorder, "PUT", "/finish")
         self._run_and_compare(recorder, "rp_calls_finish_query_running_tf.json")
@@ -676,10 +686,11 @@ class TestEnrichFromTasksParity(_ParityTestBase):
 
         with recorder.patch(), self._freeze_time(), patches[0], patches[1], patches[2]:
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import enrich_logs_from_task
+            from enge.reportportal.operations import resolve_from_tasks, op_enrich
 
             rp = ReportPortalLaunch(ctx)
-            enrich_logs_from_task(rp)
+            launches = resolve_from_tasks(rp, ctx)
+            op_enrich(rp, launches, ctx, dryrun=False)
 
         self._assert_has_calls_matching(recorder, "POST", "/log")
         self._run_and_compare(recorder, "rp_calls_enrich_tasks.json")
@@ -692,10 +703,11 @@ class TestEnrichFromTasksParity(_ParityTestBase):
 
         with recorder.patch(), patches[0], patches[1], patches[2]:
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import enrich_logs_from_task
+            from enge.reportportal.operations import resolve_from_tasks, op_enrich
 
             rp = ReportPortalLaunch(ctx)
-            enrich_logs_from_task(rp)
+            launches = resolve_from_tasks(rp, ctx)
+            op_enrich(rp, launches, ctx, dryrun=False)
 
         self._assert_no_calls_matching(recorder, "POST", "/log")
         self._run_and_compare(recorder, "rp_calls_enrich_tasks_running_tf.json")
@@ -775,10 +787,16 @@ class TestEnrichFromQueryParity(_ParityTestBase):
 
         with recorder.patch(), self._freeze_time():
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import enrich_all_launches
+            from enge.reportportal.operations import (
+                resolve_from_query,
+                normalize_for_enrich,
+                op_enrich,
+            )
 
             rp = ReportPortalLaunch(ctx)
-            enrich_all_launches(rp, status_filter=None)
+            raw = resolve_from_query(rp, ctx, status_filter=None)
+            normalized = normalize_for_enrich(rp, raw)
+            op_enrich(rp, normalized, ctx, dryrun=False)
 
         self._assert_has_calls_matching(recorder, "POST", "/log")
         self._run_and_compare(recorder, "rp_calls_enrich_query.json")
@@ -790,10 +808,16 @@ class TestEnrichFromQueryParity(_ParityTestBase):
 
         with recorder.patch(), self._freeze_time():
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import enrich_all_launches
+            from enge.reportportal.operations import (
+                resolve_from_query,
+                normalize_for_enrich,
+                op_enrich,
+            )
 
             rp = ReportPortalLaunch(ctx)
-            enrich_all_launches(rp, status_filter=None)
+            raw = resolve_from_query(rp, ctx, status_filter=None)
+            normalized = normalize_for_enrich(rp, raw)
+            op_enrich(rp, normalized, ctx, dryrun=False)
 
         self._assert_no_calls_matching(recorder, "POST", "/log")
         self._run_and_compare(recorder, "rp_calls_enrich_query_running_tf.json")
@@ -827,10 +851,16 @@ class TestEnrichDedupParity(_ParityTestBase):
 
         with recorder.patch(), self._freeze_time():
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import enrich_all_launches
+            from enge.reportportal.operations import (
+                resolve_from_query,
+                normalize_for_enrich,
+                op_enrich,
+            )
 
             rp = ReportPortalLaunch(ctx)
-            enrich_all_launches(rp, status_filter=None)
+            raw = resolve_from_query(rp, ctx, status_filter=None)
+            normalized = normalize_for_enrich(rp, raw)
+            op_enrich(rp, normalized, ctx, dryrun=False)
 
         self._assert_no_calls_matching(recorder, "POST", "/log")
         self._run_and_compare(recorder, "rp_calls_enrich_dedup_attribute.json")
@@ -890,10 +920,16 @@ class TestEnrichDedupParity(_ParityTestBase):
 
         with recorder.patch(), self._freeze_time():
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import enrich_all_launches
+            from enge.reportportal.operations import (
+                resolve_from_query,
+                normalize_for_enrich,
+                op_enrich,
+            )
 
             rp = ReportPortalLaunch(ctx)
-            enrich_all_launches(rp, status_filter=None)
+            raw = resolve_from_query(rp, ctx, status_filter=None)
+            normalized = normalize_for_enrich(rp, raw)
+            op_enrich(rp, normalized, ctx, dryrun=False)
 
         # Must have uploaded something (artifact-B)
         self._assert_has_calls_matching(recorder, "POST", "/log")
@@ -1068,10 +1104,14 @@ class TestDeleteLogsFromTasksParity(_ParityTestBase):
 
         with recorder.patch(), patches[0], patches[1], patches[2]:
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import delete_logs_from_task
+            from enge.reportportal.operations import (
+                resolve_from_tasks,
+                op_delete_logs,
+            )
 
             rp = ReportPortalLaunch(ctx)
-            delete_logs_from_task(rp)
+            launches = resolve_from_tasks(rp, ctx)
+            op_delete_logs(rp, launches, ctx, dryrun=False)
 
         self._assert_has_calls_matching(recorder, "DELETE", "/log")
         self._run_and_compare(recorder, "rp_calls_delete_logs_tasks.json")
@@ -1103,10 +1143,10 @@ class TestDeleteStaleParity(_ParityTestBase):
 
         with recorder.patch():
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import delete_stale_launches
+            from enge.reportportal.operations import op_delete_stale
 
             rp = ReportPortalLaunch(ctx)
-            delete_stale_launches(rp)
+            op_delete_stale(rp, ctx, dryrun=False)
 
         self._assert_has_calls_matching(recorder, "DELETE", "/launch/")
         self._run_and_compare(recorder, "rp_calls_delete_stale.json")
@@ -1132,12 +1172,168 @@ class TestCheckParity(_ParityTestBase):
             return_value=([TASK_URL], {}),
         ):
             from enge.reportportal.__main__ import ReportPortalLaunch
-            from enge.reportportal.operations import (
-                test_connection_and_data,
-            )
+            from enge.reportportal.operations import op_check
 
             rp = ReportPortalLaunch(ctx)
-            test_connection_and_data(rp)
+            op_check(rp, ctx)
 
         self._assert_has_calls_matching(recorder, "GET", "/launch")
         self._run_and_compare(recorder, "rp_calls_check.json")
+
+
+# ===================================================================
+# Task 7: CANCELED skip behavior tests
+# ===================================================================
+
+
+class TestCanceledSkipBehavior(_ParityTestBase):
+    """Verify CANCELED TF tasks produce ZERO operation calls."""
+
+    def test_enrich_tasks_canceled_tf(self):
+        """Enrich from tasks: CANCELED TF task -> ZERO upload calls."""
+        ctx = make_rp_context(
+            extra_cli={
+                "enrich_logs": True,
+                "input": [TASK_URL],
+            }
+        )
+        recorder = HttpRecorder()
+        recorder.register(
+            "GET",
+            "/launch",
+            response_json={
+                "content": [SAMPLE_LAUNCH_IN_PROGRESS],
+                "page": {"totalPages": 1},
+            },
+        )
+
+        patches = self._patch_from_tasks(
+            task_state="CANCELED",
+            task_overall="Undefined",
+        )
+
+        with recorder.patch(), patches[0], patches[1], patches[2]:
+            from enge.reportportal.__main__ import ReportPortalLaunch
+            from enge.reportportal.operations import resolve_from_tasks, op_enrich
+
+            rp = ReportPortalLaunch(ctx)
+            launches = resolve_from_tasks(rp, ctx)
+            op_enrich(rp, launches, ctx, dryrun=False)
+
+        self._assert_no_calls_matching(recorder, "POST", "/log")
+
+    def test_enrich_query_canceled_tf(self):
+        """Enrich from query: CANCELED TF task -> ZERO upload calls."""
+        ctx = make_rp_context(extra_cli={"enrich_logs": True, "all_launches": True})
+        recorder = HttpRecorder()
+        recorder.register(
+            "GET",
+            "/launch",
+            response_json={
+                "content": [SAMPLE_LAUNCH_IN_PROGRESS],
+                "page": {"totalPages": 1},
+            },
+        )
+        recorder.register(
+            "GET",
+            "/item",
+            response_json={
+                "content": SAMPLE_ITEMS,
+                "page": {"totalPages": 1},
+            },
+        )
+        recorder.register(
+            "GET",
+            TASK_UUID,
+            response_json=SAMPLE_TF_TASK_DATA_CANCELED,
+        )
+
+        with recorder.patch():
+            from enge.reportportal.__main__ import ReportPortalLaunch
+            from enge.reportportal.operations import (
+                resolve_from_query,
+                normalize_for_enrich,
+                op_enrich,
+            )
+
+            rp = ReportPortalLaunch(ctx)
+            raw = resolve_from_query(rp, ctx, status_filter=None)
+            normalized = normalize_for_enrich(rp, raw)
+            op_enrich(rp, normalized, ctx, dryrun=False)
+
+        self._assert_no_calls_matching(recorder, "POST", "/log")
+
+    def test_finish_tasks_canceled_tf(self):
+        """Finish from tasks: CANCELED TF task -> ZERO finish calls."""
+        ctx = make_rp_context(
+            extra_cli={
+                "finish": True,
+                "input": [TASK_URL],
+            }
+        )
+        recorder = HttpRecorder()
+        recorder.register(
+            "GET",
+            "/launch",
+            response_json={
+                "content": [SAMPLE_LAUNCH_IN_PROGRESS],
+                "page": {"totalPages": 1},
+            },
+        )
+        recorder.register("PUT", "/finish", response_json={"msg": "ok"})
+
+        patches = self._patch_from_tasks(
+            task_state="CANCELED",
+            task_overall="Undefined",
+        )
+
+        with recorder.patch(), patches[0], patches[1], patches[2]:
+            from enge.reportportal.__main__ import ReportPortalLaunch
+            from enge.reportportal.operations import resolve_from_tasks, op_finish
+
+            rp = ReportPortalLaunch(ctx)
+            launches = resolve_from_tasks(rp, ctx)
+            op_finish(rp, launches, ctx, dryrun=False)
+
+        self._assert_no_calls_matching(recorder, "PUT", "/finish")
+
+    def test_finish_query_canceled_tf(self):
+        """Finish from query: CANCELED TF task -> ZERO finish calls."""
+        ctx = make_rp_context(extra_cli={"finish": True, "all_launches": True})
+        recorder = HttpRecorder()
+        recorder.register(
+            "GET",
+            "/launch",
+            response_json={
+                "content": [SAMPLE_LAUNCH_IN_PROGRESS],
+                "page": {"totalPages": 1},
+            },
+        )
+        recorder.register(
+            "GET",
+            "/item",
+            response_json={
+                "content": SAMPLE_ITEMS,
+                "page": {"totalPages": 1},
+            },
+        )
+        recorder.register(
+            "GET",
+            TASK_UUID,
+            response_json=SAMPLE_TF_TASK_DATA_CANCELED,
+        )
+
+        with recorder.patch():
+            from enge.reportportal.__main__ import ReportPortalLaunch
+            from enge.reportportal.operations import (
+                resolve_from_query,
+                normalize_for_finish,
+                op_finish,
+            )
+
+            rp = ReportPortalLaunch(ctx)
+            raw = resolve_from_query(rp, ctx, status_filter="IN_PROGRESS")
+            normalized = normalize_for_finish(rp, raw)
+            op_finish(rp, normalized, ctx, dryrun=False)
+
+        self._assert_no_calls_matching(recorder, "PUT", "/finish")
