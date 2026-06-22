@@ -31,14 +31,16 @@ from enge.reportportal.utils import (
     should_skip_artifact,
 )
 from enge.reportportal.operations import (
+    # New unified API
+    op_delete_stale,
+    op_check,
+    # Legacy wrappers (used by parity tests and combined flow)
     finish_launch_from_task,
     enrich_logs_from_task,
     enrich_all_launches,
     delete_logs_from_task,
-    test_connection_and_data,
     finish_all_in_progress_launches,
     delete_logs_all_launches,
-    delete_stale_launches,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -999,6 +1001,13 @@ def _resolve_subcommand(ctx):
     return None, False, wants_all, dryrun
 
 
+def _status_filter_for(subcommand: str) -> Optional[str]:
+    """Map subcommand to the RP status filter for query-based resolution."""
+    if subcommand in ("finish", "delete-logs"):
+        return "IN_PROGRESS"
+    return None  # enrich: all statuses
+
+
 def main(ctx) -> int:
     """Entry point for the reportportal subcommand."""
     from enge.utils.globals import ExitCode
@@ -1016,13 +1025,12 @@ def main(ctx) -> int:
 
         # Standalone operations
         if subcommand == "check":
-            return test_connection_and_data(rp)
+            return op_check(rp, ctx)
 
         if subcommand == "delete-stale":
-            return delete_stale_launches(rp)
+            return op_delete_stale(rp, ctx, dryrun)
 
-        # Pipeline operations — dispatch to current functions
-        # (will be unified in the next commit)
+        # Pipeline operations — resolve then apply
         if wants_all:
             if subcommand == "finish" and wants_enrich:
                 enrich_rc = enrich_all_launches(rp, status_filter="IN_PROGRESS")
