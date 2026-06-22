@@ -32,8 +32,8 @@ src/enge/
                      ExitCode threaded via TaskResult.retval, severity-precedence aggregation)
   rerun/             requalify FAILED/ERROR plans and re-dispatch
   cancel/            cancel TF tasks
-  reportportal/      launch finish/enrich/delete operations (flag-verbs, two parallel
-                     task-based vs --all-launches pipelines — known debt)
+  reportportal/      launch finish/enrich/delete operations (subcommands; unified pipeline
+                     via resolvers.py + operations.py)
   utils/             opt_manager (config+CLI god object), arg_parser, console,
                      source_target_parser, tf_artifact (COPR/Brew), config_parser,
                      http_client (use this, never raw requests), errors, globals
@@ -92,6 +92,10 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   pair), `-S/--set` and `-T/--tier` (selection pair). `-t tier0` is a
   silently-accepted wrong compose name — keep help text and README examples
   exactly consistent with these semantics.
+- **Enrich requires TF task completion** (not NEW/QUEUED/RUNNING/CANCELED) —
+  incomplete runs yield incomplete log sets. The TF-state guard
+  (`_is_tf_task_incomplete`) is the correctness boundary; RP launch status
+  is downstream bookkeeping.
 
 ## Conventions
 
@@ -143,7 +147,7 @@ Sequenced roadmap (do not start these as side effects of other work):
 ~~characterization tests for opt_manager~~ ✓ →
 ~~`RequestContext` dataclass~~ ✓ →
 ~~singleton → AppContext DI, module by module~~ ✓ →
-unify reportportal task/all-launches pipelines under subcommands →
+~~unify reportportal task/all-launches pipelines under subcommands~~ ✓ →
 manifest-based state store (XDG paths, retires filename tags) →
 config-as-data (RHSM flag presets, source→target mapping table replacing the
 `minor - 6` formula, RP event list).
