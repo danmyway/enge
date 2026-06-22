@@ -930,116 +930,134 @@ class ReportPortalLaunch:
 # ===================================================================
 
 
+def _resolve_subcommand(ctx):
+    """Map CLI args to (subcommand, wants_enrich, wants_all, dryrun).
+
+    Handles both new subcommand syntax and deprecated flag-verb aliases.
+    """
+    rp_sub = getattr(ctx.cli_args, "rp_subcommand", None)
+    dryrun = getattr(ctx.cli_args, "dryrun", False)
+    wants_all = getattr(ctx.cli_args, "all_launches", False)
+
+    if rp_sub:
+        wants_enrich = getattr(ctx.cli_args, "enrich", False)
+        return rp_sub, wants_enrich, wants_all, dryrun
+
+    # Deprecated flag-verb mapping
+    wants_finish = getattr(ctx.cli_args, "finish", False)
+    wants_enrich_logs = getattr(ctx.cli_args, "enrich_logs", False)
+    wants_test = getattr(ctx.cli_args, "test", False)
+    wants_delete_logs = getattr(ctx.cli_args, "delete_logs", False)
+    wants_delete_stale = getattr(ctx.cli_args, "delete_stale", False)
+
+    if wants_delete_stale:
+        LOGGER.warning(
+            "Deprecated: use 'enge reportportal delete-stale' instead of "
+            "'--delete-stale'. "
+            "Old spellings will be removed in a future release."
+        )
+        return "delete-stale", False, wants_all, dryrun
+
+    if wants_test:
+        LOGGER.warning(
+            "Deprecated: use 'enge reportportal check' instead of '--test'. "
+            "Old spellings will be removed in a future release."
+        )
+        return "check", False, wants_all, dryrun
+
+    if wants_finish:
+        LOGGER.warning(
+            "Deprecated: use 'enge reportportal finish' instead of "
+            "'--finish'. "
+            "Old spellings will be removed in a future release."
+        )
+        return "finish", wants_enrich_logs, wants_all, dryrun
+
+    if wants_enrich_logs:
+        LOGGER.warning(
+            "Deprecated: use 'enge reportportal enrich' instead of "
+            "'--enrich-logs'. "
+            "Old spellings will be removed in a future release."
+        )
+        return "enrich", False, wants_all, dryrun
+
+    if wants_delete_logs:
+        LOGGER.warning(
+            "Deprecated: use 'enge reportportal delete-logs' instead of "
+            "'--delete-logs'. "
+            "Old spellings will be removed in a future release."
+        )
+        return "delete-logs", False, wants_all, dryrun
+
+    if wants_all:
+        LOGGER.warning(
+            "Deprecated: use 'enge reportportal <subcommand> --all' "
+            "instead of '--all-launches'. "
+            "Old spellings will be removed in a future release."
+        )
+
+    return None, False, wants_all, dryrun
+
+
 def main(ctx) -> int:
-    """
-    Main entry point for reportportal subcommand.
+    """Entry point for the reportportal subcommand."""
+    from enge.utils.globals import ExitCode
 
-    Handles different ReportPortal operations based on CLI arguments.
-    Supports combining ``--enrich-logs`` with ``--finish`` to enrich first,
-    then finish the launch.  ``--all-launches`` bypasses TF task resolution
-    and operates directly on all IN_PROGRESS launches.
-    """
     try:
-        rp_launch = ReportPortalLaunch(ctx)
+        rp = ReportPortalLaunch(ctx)
+        subcommand, wants_enrich, wants_all, dryrun = _resolve_subcommand(ctx)
 
-        wants_enrich = getattr(ctx.cli_args, "enrich_logs", False)
-        wants_finish = getattr(ctx.cli_args, "finish", False)
-        wants_test = getattr(ctx.cli_args, "test", False)
-        wants_delete_logs = getattr(ctx.cli_args, "delete_logs", False)
-        wants_delete_stale = getattr(ctx.cli_args, "delete_stale", False)
-        wants_all = getattr(ctx.cli_args, "all_launches", False)
-
-        # --delete-stale (standalone, no task input needed)
-        if wants_delete_stale:
-            LOGGER.info("ReportPortal module - Deleting stale launches")
-            return delete_stale_launches(rp_launch)
-
-        # --all-launches mode
-        if wants_all:
-            # --finish --enrich-logs --all-launches
-            # → enrich IN_PROGRESS launches, then finish them
-            if wants_enrich and wants_finish:
-                LOGGER.info(
-                    "ReportPortal module - Enriching then "
-                    "finishing all IN_PROGRESS launches"
-                )
-                enrich_rc = enrich_all_launches(rp_launch, status_filter="IN_PROGRESS")
-                finish_rc = finish_all_in_progress_launches(rp_launch)
-                return enrich_rc or finish_rc
-
-            # --enrich-logs --all-launches
-            # → enrich all launches regardless of status
-            if wants_enrich:
-                LOGGER.info("ReportPortal module - Enriching logs for " "all launches")
-                return enrich_all_launches(rp_launch, status_filter=None)
-
-            if wants_finish:
-                LOGGER.info(
-                    "ReportPortal module - " "Finishing all IN_PROGRESS launches"
-                )
-                return finish_all_in_progress_launches(rp_launch)
-
-            if wants_delete_logs:
-                LOGGER.info(
-                    "ReportPortal module - "
-                    "Deleting logs from all IN_PROGRESS launches"
-                )
-                return delete_logs_all_launches(rp_launch)
-
+        if subcommand is None:
             LOGGER.error(
-                "--all-launches must be combined with "
-                "--finish, --enrich-logs, or --delete-logs"
+                "No reportportal subcommand specified. "
+                "Run 'enge reportportal --help' for usage."
             )
-            return 1
+            return ExitCode.EXCEPTION
 
-        # --enrich-logs (possibly combined with --finish)
-        if wants_enrich:
-            LOGGER.info(
-                "ReportPortal module - " "Enriching launch logs from TF artifacts"
-            )
-            enrich_rc = enrich_logs_from_task(rp_launch)
+        # Standalone operations
+        if subcommand == "check":
+            return test_connection_and_data(rp)
 
-            if wants_finish:
-                LOGGER.info(
-                    "ReportPortal module - Finishing launches (after enrichment)"
-                )
-                finish_rc = finish_launch_from_task(rp_launch)
+        if subcommand == "delete-stale":
+            return delete_stale_launches(rp)
+
+        # Pipeline operations — dispatch to current functions
+        # (will be unified in the next commit)
+        if wants_all:
+            if subcommand == "finish" and wants_enrich:
+                enrich_rc = enrich_all_launches(rp, status_filter="IN_PROGRESS")
+                finish_rc = finish_all_in_progress_launches(rp)
                 return enrich_rc or finish_rc
+            if subcommand == "finish":
+                return finish_all_in_progress_launches(rp)
+            if subcommand == "enrich":
+                return enrich_all_launches(rp, status_filter=None)
+            if subcommand == "delete-logs":
+                return delete_logs_all_launches(rp)
+        else:
+            if subcommand == "finish" and wants_enrich:
+                enrich_rc = enrich_logs_from_task(rp)
+                finish_rc = finish_launch_from_task(rp)
+                return enrich_rc or finish_rc
+            if subcommand == "finish":
+                return finish_launch_from_task(rp)
+            if subcommand == "enrich":
+                return enrich_logs_from_task(rp)
+            if subcommand == "delete-logs":
+                return delete_logs_from_task(rp)
 
-            return enrich_rc
-
-        # --finish only
-        if wants_finish:
-            LOGGER.info("ReportPortal module - Finishing launches")
-            return finish_launch_from_task(rp_launch)
-
-        # --test
-        if wants_test:
-            LOGGER.info("ReportPortal module - Testing connection and data")
-            return test_connection_and_data(rp_launch)
-
-        # --delete-logs
-        if wants_delete_logs:
-            LOGGER.info("ReportPortal module - Deleting launch logs")
-            return delete_logs_from_task(rp_launch)
-
-        # Default behavior: create a launch
-        LOGGER.info("ReportPortal module - Launch creation")
-
-        launch_uuid = rp_launch.create_launch()
-        rp_launch.store_launch_uuid(launch_uuid)
-
-        return 0
+        LOGGER.error(f"Unknown reportportal subcommand: {subcommand}")
+        return ExitCode.EXCEPTION
 
     except ConfigurationError as e:
         LOGGER.error(f"Configuration error: {e}")
-        return 1
+        return ExitCode.CONFIG_ERROR
     except NetworkError as e:
         LOGGER.error(f"ReportPortal API/network error: {e}")
-        return 1
+        return ExitCode.EXCEPTION
     except EngeError as e:
         LOGGER.error(f"Unexpected error: {e}")
-        return 1
+        return ExitCode.EXCEPTION
 
 
 if __name__ == "__main__":

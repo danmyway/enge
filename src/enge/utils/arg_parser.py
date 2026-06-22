@@ -547,64 +547,119 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         parents=[common],
     )
 
-    # ReportPortal action type (mutually exclusive)
-    rp_action = reportportal.add_mutually_exclusive_group()
+    rp_subparsers = reportportal.add_subparsers(dest="rp_subcommand")
 
-    rp_action.add_argument(
-        "--finish",
+    # --- finish ---
+    rp_finish = rp_subparsers.add_parser(
+        "finish",
+        help="Finish ReportPortal launches by resolving task state.",
+        parents=[common],
+    )
+    rp_finish.add_argument(
+        "--enrich",
         action="store_true",
-        help="Finish a ReportPortal launch. Uses the report module to check task state and finish the launch if ready.",
+        dest="enrich",
+        help="Enrich launches with artifact logs before finishing.",
+    )
+    rp_finish.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_launches",
+        help="Operate on all IN_PROGRESS launches (no task input needed).",
+    )
+    _add_input_source_args(rp_finish)
+    _add_date_filter_args(rp_finish)
+    _add_dryrun_arg(
+        rp_finish,
+        help_text="Show what would be sent to ReportPortal without actually sending it.",
     )
 
-    rp_action.add_argument(
-        "--test",
+    # --- enrich ---
+    rp_enrich = rp_subparsers.add_parser(
+        "enrich",
+        help="Enrich launches with Testing Farm artifact logs.",
+        parents=[common],
+    )
+    rp_enrich.add_argument(
+        "--all",
         action="store_true",
-        help="Test ReportPortal connection and show sample data for debugging.",
+        dest="all_launches",
+        help="Enrich all launches (any status, no task input needed).",
+    )
+    _add_input_source_args(rp_enrich)
+    _add_date_filter_args(rp_enrich)
+    _add_dryrun_arg(
+        rp_enrich,
+        help_text="Show what would be sent to ReportPortal without actually sending it.",
     )
 
-    rp_action.add_argument(
+    # --- delete-logs ---
+    rp_delete_logs = rp_subparsers.add_parser(
+        "delete-logs",
+        help="Delete all log entries from ReportPortal launches.",
+        parents=[common],
+    )
+    rp_delete_logs.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_launches",
+        help="Delete logs from all IN_PROGRESS launches.",
+    )
+    _add_input_source_args(rp_delete_logs)
+    _add_dryrun_arg(
+        rp_delete_logs,
+        help_text="Show which logs would be deleted without actually deleting them.",
+    )
+
+    # --- delete-stale ---
+    rp_delete_stale = rp_subparsers.add_parser(
+        "delete-stale",
+        help="Delete stale launches (stopped/interrupted with no test items).",
+        parents=[common],
+    )
+    _add_date_filter_args(rp_delete_stale)
+    _add_dryrun_arg(
+        rp_delete_stale,
+        help_text="Show which launches would be deleted without actually deleting them.",
+    )
+
+    # --- check ---
+    rp_subparsers.add_parser(
+        "check",
+        help="Test ReportPortal connection and show sample data.",
+        parents=[common],
+    )
+
+    # --- Deprecated flag-verb aliases (hidden from help) ---
+    rp_compat = reportportal.add_mutually_exclusive_group()
+    rp_compat.add_argument("--finish", action="store_true", help=argparse.SUPPRESS)
+    rp_compat.add_argument("--test", action="store_true", help=argparse.SUPPRESS)
+    rp_compat.add_argument(
         "--delete-logs",
         action="store_true",
-        help="Delete all log entries from a ReportPortal launch. "
-        "Uses the report module to find the matching launch via TMT context.",
+        dest="delete_logs",
+        help=argparse.SUPPRESS,
     )
-
-    rp_action.add_argument(
+    rp_compat.add_argument(
         "--delete-stale",
         action="store_true",
-        help="Delete stale launches — stopped/interrupted launches with no test items.",
+        dest="delete_stale",
+        help=argparse.SUPPRESS,
     )
-
-    # Log enrichment (can be combined with --finish to enrich then finish)
     reportportal.add_argument(
         "--enrich-logs",
         action="store_true",
-        help="Fetch all available artifacts from the Testing Farm artifact endpoint "
-        "and upload them as logs to the corresponding ReportPortal launch. "
-        "Can be combined with --finish to enrich logs before finishing the launch. "
-        "With --all-launches: enriches launches directly from RP test-item descriptions "
-        "(no TF task input needed). Already-enriched launches are skipped.",
+        dest="enrich_logs",
+        help=argparse.SUPPRESS,
     )
-
-    # Operate on all IN_PROGRESS launches without providing task input
     reportportal.add_argument(
         "--all-launches",
         action="store_true",
-        help="Operate on launches in the ReportPortal project without "
-        "providing Testing Farm task input. "
-        "Supported with --finish, --enrich-logs, and --delete-logs. "
-        "With --enrich-logs alone: enriches all launches (any status). "
-        "With --finish --enrich-logs: enriches then finishes IN_PROGRESS launches. "
-        "Launches already enriched by enge are skipped automatically.",
+        dest="all_launches",
+        help=argparse.SUPPRESS,
     )
-
-    # Date filters (effective with --all-launches and --delete-stale)
-    _add_date_filter_args(reportportal)
-
-    # Input sources (for --finish and --enrich-logs actions)
     _add_input_source_args(reportportal)
-
-    # ReportPortal control options
+    _add_date_filter_args(reportportal)
     _add_dryrun_arg(
         reportportal,
         help_text="Show what would be sent to ReportPortal without actually sending it.",
