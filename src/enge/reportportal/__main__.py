@@ -31,16 +31,16 @@ from enge.reportportal.utils import (
     should_skip_artifact,
 )
 from enge.reportportal.operations import (
-    # New unified API
+    resolve_from_tasks,
+    resolve_from_query,
+    op_finish,
+    op_enrich,
+    op_delete_logs,
     op_delete_stale,
     op_check,
-    # Legacy wrappers (used by parity tests and combined flow)
-    finish_launch_from_task,
-    enrich_logs_from_task,
-    enrich_all_launches,
-    delete_logs_from_task,
-    finish_all_in_progress_launches,
-    delete_logs_all_launches,
+    normalize_for_finish,
+    normalize_for_enrich,
+    normalize_for_delete_logs,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -1033,26 +1033,40 @@ def main(ctx) -> int:
         # Pipeline operations — resolve then apply
         if wants_all:
             if subcommand == "finish" and wants_enrich:
-                enrich_rc = enrich_all_launches(rp, status_filter="IN_PROGRESS")
-                finish_rc = finish_all_in_progress_launches(rp)
+                # Combined flow: enrich then finish, each with its own
+                # resolve pass (preserves call ordering).
+                enrich_raw = resolve_from_query(rp, ctx, status_filter="IN_PROGRESS")
+                enrich_norm = normalize_for_enrich(rp, enrich_raw)
+                enrich_rc = op_enrich(rp, enrich_norm, ctx, dryrun)
+                finish_raw = resolve_from_query(rp, ctx, status_filter="IN_PROGRESS")
+                finish_norm = normalize_for_finish(rp, finish_raw)
+                finish_rc = op_finish(rp, finish_norm, ctx, dryrun)
                 return enrich_rc or finish_rc
+
+            status_filter = _status_filter_for(subcommand)
+            raw = resolve_from_query(rp, ctx, status_filter=status_filter)
+
             if subcommand == "finish":
-                return finish_all_in_progress_launches(rp)
+                normalized = normalize_for_finish(rp, raw)
+                return op_finish(rp, normalized, ctx, dryrun)
             if subcommand == "enrich":
-                return enrich_all_launches(rp, status_filter=None)
+                normalized = normalize_for_enrich(rp, raw)
+                return op_enrich(rp, normalized, ctx, dryrun)
             if subcommand == "delete-logs":
-                return delete_logs_all_launches(rp)
+                normalized = normalize_for_delete_logs(raw)
+                return op_delete_logs(rp, normalized, ctx, dryrun)
         else:
+            launches = resolve_from_tasks(rp, ctx)
             if subcommand == "finish" and wants_enrich:
-                enrich_rc = enrich_logs_from_task(rp)
-                finish_rc = finish_launch_from_task(rp)
+                enrich_rc = op_enrich(rp, launches, ctx, dryrun)
+                finish_rc = op_finish(rp, launches, ctx, dryrun)
                 return enrich_rc or finish_rc
             if subcommand == "finish":
-                return finish_launch_from_task(rp)
+                return op_finish(rp, launches, ctx, dryrun)
             if subcommand == "enrich":
-                return enrich_logs_from_task(rp)
+                return op_enrich(rp, launches, ctx, dryrun)
             if subcommand == "delete-logs":
-                return delete_logs_from_task(rp)
+                return op_delete_logs(rp, launches, ctx, dryrun)
 
         LOGGER.error(f"Unknown reportportal subcommand: {subcommand}")
         return ExitCode.EXCEPTION
