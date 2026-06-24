@@ -109,7 +109,7 @@ class TestSetFlow(unittest.TestCase):
                     idx=1,
                     total_expected_requests=1,
                     spec=spec,
-                    shared_archive_filename="shared",
+                    shared_archive_filename=None,
                     artifact_type="compose",
                     ctx=po,
                 )
@@ -172,7 +172,7 @@ class TestSetFlow(unittest.TestCase):
                 idx=1,
                 total_expected_requests=1,
                 spec=spec,
-                shared_archive_filename="shared",
+                shared_archive_filename=None,
                 artifact_type="compose",
                 ctx=po,
             )

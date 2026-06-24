@@ -57,5 +57,7 @@ def make_app_context(
         testing_farm_endpoint=endpoint,
         archive_tasks_latest=archive_tasks_latest,
         archive_tasks_default=archive_tasks_default,
+        manifest_runs_dir=ctx_overrides.pop("manifest_runs_dir", "/tmp/enge_test_runs"),
+        manifest_latest=ctx_overrides.pop("manifest_latest", "/tmp/enge_test_latest"),
         **ctx_overrides,
     )

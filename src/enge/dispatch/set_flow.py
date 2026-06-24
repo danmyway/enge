@@ -178,12 +178,6 @@ def _configure_submit_test(spec, ctx, shared_archive_filename):
         submit_test.skip_guest_setup = True
         LOGGER.info("RHUI source detected — setting skip_guest_setup=true")
 
-    submit_test.set_auto_tags(
-        set_name=spec.set_name,
-        architecture=spec.arch,
-        tier=spec.tier,
-        upgrade_path_tag=spec.upgrade_path_detailed,
-    )
     return submit_test
 
 
@@ -431,7 +425,7 @@ def _build_request_context(
     )
 
 
-def _send_and_collect(submit_test, ctx, spec):
+def _send_and_collect(submit_test, ctx, spec, manifest_writer=None):
     """Send the TF request and assemble the result dict."""
     output_format = getattr(ctx.cli_args, "output_format", "terminal")
     submit_test.compact_output = output_format != "json"
@@ -442,6 +436,21 @@ def _send_and_collect(submit_test, ctx, spec):
     task_id = None
     if submit_test.log_artifact_url:
         task_id = submit_test.log_artifact_url.rsplit("/", 1)[-1]
+
+    if task_id and manifest_writer and not getattr(ctx.cli_args, "dryrun", False):
+        from pathlib import Path
+
+        manifest_writer.add_request(
+            task_id,
+            set_name=spec.set_name,
+            tier=spec.tier,
+            arch=spec.arch,
+            plan=spec.plan,
+            source_compose=submit_test.compose,
+            target_compose=submit_test.target_compose,
+            artifacts_url=submit_test.log_artifact_url,
+        )
+        manifest_writer.flush(Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest))
 
     result = {
         "status": "submitted",
@@ -472,11 +481,12 @@ def process_request_spec(
     idx: int,
     total_expected_requests: int,
     spec: RequestSpec,
-    shared_archive_filename: str,
+    shared_archive_filename: Optional[str],
     artifact_type: str,
     artifact_resolver: Optional[ArtifactResolver] = None,
     *,
     ctx,
+    manifest_writer=None,
 ) -> Optional[Dict[str, Any]]:
     """Prepare SubmitTest, optionally create RP launch, and send the request."""
     per_set_event = spec.effective_values.get("event") or getattr(
@@ -513,4 +523,4 @@ def process_request_spec(
     if launch_failure:
         return launch_failure
 
-    return _send_and_collect(submit_test, ctx, spec)
+    return _send_and_collect(submit_test, ctx, spec, manifest_writer=manifest_writer)
