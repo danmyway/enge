@@ -171,6 +171,10 @@ def main():
             from enge.reportportal.__main__ import main as reportportal_main
 
             return reportportal_main(ctx)
+        elif action == "migrate-archive":
+            from enge.migrate.__main__ import main as migrate_main
+
+            return migrate_main(ctx)
         else:
             logging.error("No valid action specified")
             return EXIT_GENERAL_ERROR
