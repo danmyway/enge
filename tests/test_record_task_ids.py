@@ -1,118 +1,114 @@
-"""Regression tests for the latest-jobs file clear-once-per-run fix.
+"""Tests for the manifest-based dispatch state recording.
 
-Before the fix, SubmitTest.record_task_ids() called os.unlink() on the latest
-file on every invocation, so in a multi-request dispatch only the last task ID
-survived.  After the fix, clear_latest_jobs_file() is called once before the
-dispatch loop and record_task_ids() only appends.  Dry-run invocations must
-never clear the file.
+Replaces the legacy record_task_ids tests that tested the /tmp/enge_latest_jobs
+and filename-tagged archive writing. The new system writes JSON manifests
+via ManifestWriter — one per invocation, flushed after each dispatch.
 """
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
-from enge.dispatch.tf_send_request import SubmitTest, clear_latest_jobs_file
-
-
-def _make_ctx(archive_dir, latest_path, dryrun=False):
-    return SimpleNamespace(
-        archive_tasks_latest=latest_path,
-        archive_tasks_default=archive_dir,
-        testing_farm_endpoint=SimpleNamespace(
-            log_artifact_baseurl="http://logs.example.com",
-            api_endpoint_url="http://api.example.com",
-        ),
-        cli_args=SimpleNamespace(
-            dryrun=dryrun,
-            action="test",
-            wait=False,
-            set_tag=None,
-            auto_tag=False,
-        ),
-    )
+from enge.utils.manifest import ManifestWriter, ManifestReader
+from enge.utils.ulid import generate_ulid
 
 
-class TestRecordTaskIds(unittest.TestCase):
+class TestManifestDispatchRecording(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmpdir.name)
-        self.archive_dir = self.tmp / "archive"
-        self.archive_dir.mkdir()
-        self.latest_path = str(self.tmp / "latest_jobs")
-        self.ctx = _make_ctx(str(self.archive_dir), self.latest_path)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
 
     def tearDown(self):
         self._tmpdir.cleanup()
 
-    def _submit(self, archive_filename="enge_jobs_archive_test"):
-        return SubmitTest(self.ctx, shared_archive_filename=archive_filename)
-
-    def test_all_task_ids_present_in_latest_file(self):
-        """Three record_task_ids calls across separate SubmitTest instances must
-        all appear in the latest file after one clear_latest_jobs_file() call."""
-        clear_latest_jobs_file(self.ctx)
+    def test_all_task_ids_present_in_manifest(self):
+        """Three add_request calls produce one manifest with 3 entries."""
+        w = ManifestWriter(
+            run_id=generate_ulid(), command="test", argv=["enge", "test"]
+        )
         ids = ["task-aaa", "task-bbb", "task-ccc"]
         for task_id in ids:
-            self._submit().record_task_ids(task_id)
-        latest = Path(self.latest_path).read_text().splitlines()
-        self.assertEqual(latest, ids)
+            w.add_request(task_id, tier="tier0", arch="x86_64")
+        w.flush(self.runs_dir, self.latest)
 
-    def test_archive_file_also_contains_all_task_ids(self):
-        """Archive file must contain all IDs (unchanged append semantics)."""
-        clear_latest_jobs_file(self.ctx)
-        ids = ["task-111", "task-222", "task-333"]
-        for task_id in ids:
-            self._submit().record_task_ids(task_id)
-        archive_files = list(self.archive_dir.iterdir())
-        self.assertEqual(len(archive_files), 1)
-        archive_lines = archive_files[0].read_text().splitlines()
-        self.assertEqual(archive_lines, ids)
+        manifest = ManifestReader.load_latest(self.latest)
+        self.assertIsNotNone(manifest)
+        recorded = ManifestReader.get_task_ids(manifest)
+        self.assertEqual(recorded, ids)
 
-    def test_second_run_does_not_contain_first_run_ids(self):
-        """Two separate runs (two clear calls) must produce independent latest files."""
-        # First run: two requests
-        clear_latest_jobs_file(self.ctx)
-        for task_id in ["run1-aaa", "run1-bbb"]:
-            self._submit("enge_jobs_archive_run1").record_task_ids(task_id)
+    def test_second_run_produces_separate_manifest(self):
+        """Two runs write separate manifests; latest points to the second."""
+        w1 = ManifestWriter(
+            run_id=generate_ulid(), command="test", argv=["enge", "test"]
+        )
+        w1.add_request("run1-aaa")
+        w1.add_request("run1-bbb")
+        w1.flush(self.runs_dir, self.latest)
 
-        # Second run: one request
-        clear_latest_jobs_file(self.ctx)
-        self._submit("enge_jobs_archive_run2").record_task_ids("run2-zzz")
+        time.sleep(0.002)
+        w2 = ManifestWriter(
+            run_id=generate_ulid(), command="test", argv=["enge", "test"]
+        )
+        w2.add_request("run2-zzz")
+        w2.flush(self.runs_dir, self.latest)
 
-        latest = Path(self.latest_path).read_text().splitlines()
-        self.assertEqual(latest, ["run2-zzz"])
-        self.assertNotIn("run1-aaa", latest)
-        self.assertNotIn("run1-bbb", latest)
+        latest = ManifestReader.load_latest(self.latest)
+        self.assertEqual(ManifestReader.get_task_ids(latest), ["run2-zzz"])
 
-    def test_clear_is_noop_when_file_absent(self):
-        """clear_latest_jobs_file() must not raise when the file does not exist."""
-        self.assertFalse(Path(self.latest_path).exists())
-        clear_latest_jobs_file(self.ctx)  # must not raise
+        manifests = list(self.runs_dir.glob("*.json"))
+        self.assertEqual(len(manifests), 2)
 
-    def test_dryrun_does_not_clear_latest_file(self):
-        """When dryrun=True the helper must not clear the file."""
-        from enge.dispatch.tf_send_request import maybe_clear_latest_jobs_file
+    def test_dryrun_writes_nothing(self):
+        """When flush() is never called (dry-run), no files are created."""
+        w = ManifestWriter(
+            run_id=generate_ulid(), command="test", argv=["enge", "test", "-n"]
+        )
+        w.add_request("uuid-dryrun")
+        self.assertFalse(self.runs_dir.exists())
+        self.assertFalse(self.latest.exists())
 
-        sentinel = "previous-run-id"
-        Path(self.latest_path).write_text(f"{sentinel}\n")
+    def test_manifest_contains_per_request_metadata(self):
+        """Each request entry carries set/tier/arch/plan/compose fields."""
+        w = ManifestWriter(
+            run_id=generate_ulid(),
+            command="test",
+            argv=["enge", "test"],
+            tags=["smoke"],
+            context={"set": "base-8to9"},
+        )
+        w.add_request(
+            "uuid-1",
+            set_name="base-8to9",
+            tier="tier0",
+            arch="x86_64",
+            plan="/plans/upgrade",
+            source_compose="RHEL-8.10",
+            target_compose="RHEL-9.4",
+            artifacts_url="https://artifacts.example.com/uuid-1/",
+        )
+        w.flush(self.runs_dir, self.latest)
+        data = ManifestReader.load_latest(self.latest)
+        req = data["requests"][0]
+        self.assertEqual(req["set"], "base-8to9")
+        self.assertEqual(req["tier"], "tier0")
+        self.assertEqual(req["arch"], "x86_64")
+        self.assertEqual(req["plan"], "/plans/upgrade")
+        self.assertEqual(req["source_compose"], "RHEL-8.10")
+        self.assertEqual(req["target_compose"], "RHEL-9.4")
 
-        ctx_dryrun = _make_ctx(str(self.archive_dir), self.latest_path, dryrun=True)
-        maybe_clear_latest_jobs_file(ctx_dryrun)
-
-        self.assertTrue(Path(self.latest_path).exists())
-        self.assertIn(sentinel, Path(self.latest_path).read_text())
-
-    def test_non_dryrun_clears_latest_file(self):
-        """When dryrun=False the helper must remove the file."""
-        from enge.dispatch.tf_send_request import maybe_clear_latest_jobs_file
-
-        Path(self.latest_path).write_text("old-run-id\n")
-
-        ctx_normal = _make_ctx(str(self.archive_dir), self.latest_path, dryrun=False)
-        maybe_clear_latest_jobs_file(ctx_normal)
-
-        self.assertFalse(Path(self.latest_path).exists())
+    def test_incremental_flush_preserves_all_requests(self):
+        """Flushing after each add_request accumulates all entries."""
+        w = ManifestWriter(
+            run_id=generate_ulid(), command="test", argv=["enge", "test"]
+        )
+        for i in range(5):
+            w.add_request(f"uuid-{i}")
+            w.flush(self.runs_dir, self.latest)
+        data = ManifestReader.load_latest(self.latest)
+        self.assertEqual(len(data["requests"]), 5)
 
 
 if __name__ == "__main__":

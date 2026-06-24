@@ -287,11 +287,10 @@ class TestBuildRerunPayloads(unittest.TestCase):
 
 class TestRerunMain(unittest.TestCase):
     @patch("enge.rerun.__main__.SubmitTest")
-    @patch("enge.rerun.__main__.maybe_clear_latest_jobs_file")
     @patch("enge.rerun.__main__.parse_request_xunit")
     @patch("enge.rerun.__main__.parse_tasks_with_map")
     def test_main_threads_ctx_to_rerun_jobs(
-        self, mock_parse, mock_xunit, mock_clear, mock_submit_cls
+        self, mock_parse, mock_xunit, mock_submit_cls
     ):
         mock_parse.return_value = ([], None, {})
         mock_xunit.return_value = {}
@@ -310,12 +309,9 @@ class TestRerunMain(unittest.TestCase):
         mock_parse.assert_called_once_with(ctx)
 
     @patch("enge.rerun.__main__.SubmitTest")
-    @patch("enge.rerun.__main__.maybe_clear_latest_jobs_file")
     @patch("enge.rerun.__main__.parse_request_xunit")
     @patch("enge.rerun.__main__.parse_tasks_with_map")
-    def test_main_uses_ctx_api_key(
-        self, mock_parse, mock_xunit, mock_clear, mock_submit_cls
-    ):
+    def test_main_uses_ctx_api_key(self, mock_parse, mock_xunit, mock_submit_cls):
         mock_parse.return_value = ([], None, {})
         mock_xunit.return_value = {}
         mock_submit = MagicMock()

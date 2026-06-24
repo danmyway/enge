@@ -11,7 +11,7 @@ from rich.markup import escape
 from rich import box
 
 from enge.dispatch.pin_compose import repin_compose
-from enge.dispatch.tf_send_request import SubmitTest, maybe_clear_latest_jobs_file
+from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_tasks_with_map, parse_request_xunit
 from enge.utils.app_context import AppContext
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
@@ -731,20 +731,27 @@ def main(ctx: AppContext):
 
     is_dryrun = getattr(ctx.cli_args, "dryrun", False)
 
-    maybe_clear_latest_jobs_file(ctx)
-    # Send each rerun request using the filtered original payload
+    from enge.utils.manifest import ManifestWriter
+    from enge.utils.ulid import generate_ulid
+    import sys
+
+    manifest_writer = ManifestWriter(
+        run_id=generate_ulid(),
+        command="rerun",
+        argv=sys.argv,
+        tags=_unique_preserve([*base_tags, "rerun"]),
+        parent_run_id=None,
+    )
+
     for i, payload in enumerate(jobs.rerun_payloads):
-        # Add rerun_of to tmt.context
         original_uuid = payload.pop("_original_uuid", None)
         if original_uuid:
             jobs._set_nested_key(
                 payload, "environments.0.tmt.context.rerun_of", original_uuid
             )
 
-        # Create launch per request
         launch_uuid = _create_rerun_launch_for_payload(payload, is_dryrun)
 
-        # Set uniq_id if launch exists (or dryrun placeholder)
         if launch_uuid:
             if launch_uuid == "dryrun_placeholder":
                 uniq_id_value = "00000000-0000-0000-0000-000000000000"
@@ -755,68 +762,42 @@ def main(ctx: AppContext):
                 payload, "environments.0.tmt.context.uniq_id", uniq_id_value
             )
 
-            # Add ReportPortal env vars
             from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
             from enge.utils.source_target_parser import (
                 generate_reportportal_environment_variables,
             )
 
-            # Get base ReportPortal config vars
             rp_config_vars = generate_reportportal_environment_variables(
                 ctx.config,
                 cli_args=ctx.cli_args,
             )
 
-            # Filter out LAUNCH and LAUNCH_DESCRIPTION, keep only base vars
             rp_base_vars = {
                 k: v
                 for k, v in rp_config_vars.items()
                 if not (k.endswith("LAUNCH") or k.endswith("LAUNCH_DESCRIPTION"))
             }
 
-            # Add UPLOAD_TO_LAUNCH
             upload_key = f"{TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX}UPLOAD_TO_LAUNCH"
             if launch_uuid == "dryrun_placeholder":
                 rp_base_vars[upload_key] = "00000000-0000-0000-0000-000000000000"
             else:
                 rp_base_vars[upload_key] = launch_uuid
 
-            # Add to payload
             if payload.get("environments") and len(payload["environments"]) > 0:
                 env = payload["environments"][0]
                 if "tmt" not in env:
                     env["tmt"] = {}
                 env["tmt"]["environment"] = rp_base_vars
 
-        # Determine tags for this request based on its source file
-        source_path = payload.pop("_enge_source_path", None)
-        current_tags = []
-        if source_path:
-            extracted = _extract_tags_from_filename(Path(source_path))
-            next_tag = _get_next_rerun_tag(extracted)
-            current_tags = extracted + [next_tag]
-        else:
-            current_tags = ["rerun"]
+        payload.pop("_enge_source_path", None)
 
-        combined_tags = _unique_preserve([*base_tags, *current_tags])
-        submit.set_tag = combined_tags
-
-        logger.info(
-            "Archiving rerun task %d/%d with tags: %s",
-            i + 1,
-            len(jobs.rerun_payloads),
-            ", ".join(combined_tags),
-        )
-        # Extract data from payload to populate SubmitTest for proper summary display
         request_data = {}
 
-        # Extract test/fmf data
         test_fmf = payload.get("test", {}).get("fmf", {})
         if test_fmf:
-            # Plan name: remove $ suffix and join multiple plans with ', '
             plan_name = test_fmf.get("name", "")
             if plan_name:
-                # Split by |, remove $ suffix from each, and join with ', '
                 plan_parts = [
                     p.rstrip("$") for p in plan_name.split("|") if p.rstrip("$")
                 ]
@@ -824,10 +805,8 @@ def main(ctx: AppContext):
                     ", ".join(plan_parts) if plan_parts else plan_name.rstrip("$")
                 )
 
-            # Test name: remove $ suffix and join multiple tests with ', '
             test_name = test_fmf.get("test_name", "")
             if test_name:
-                # Split by |, remove $ suffix from each, and join with ', '
                 test_parts = [
                     t.rstrip("$") for t in test_name.split("|") if t.rstrip("$")
                 ]
@@ -840,36 +819,52 @@ def main(ctx: AppContext):
             request_data["tests_git_url"] = test_fmf.get("url")
             request_data["tests_git_ref"] = test_fmf.get("ref")
 
-        # Extract environment data (assuming single environment)
         if payload.get("environments") and len(payload["environments"]) > 0:
             env = payload["environments"][0]
 
-            # Source compose
             compose = env.get("os", {}).get("compose")
             if compose:
                 request_data["compose"] = compose
 
-            # Artifacts
             artifacts = env.get("artifacts", [])
             if artifacts:
                 request_data["artifacts"] = artifacts
 
-            # Architecture
             arch = env.get("arch")
             if arch:
                 request_data["architectures"] = [arch]
 
-            # TMT context and environment variables
             tmt = env.get("tmt", {})
             if tmt:
                 request_data["tmt_context"] = tmt.get("context", {})
                 request_data["environment_variables"] = env.get("variables", {})
 
-        # Populate SubmitTest instance with extracted data
         submit.populate_from_request_data(request_data)
 
-        # Send the request
         submit.send_request(payload, req_header)
+
+        task_id = None
+        if submit.log_artifact_url:
+            task_id = submit.log_artifact_url.rsplit("/", 1)[-1]
+        if task_id and not is_dryrun:
+            manifest_writer.add_request(
+                task_id,
+                set_name=None,
+                tier=None,
+                arch=(
+                    request_data.get("architectures", [None])[0]
+                    if request_data.get("architectures")
+                    else None
+                ),
+                plan=request_data.get("plan"),
+                source_compose=request_data.get("compose"),
+                target_compose=None,
+                artifacts_url=submit.log_artifact_url,
+            )
+            manifest_writer.flush(
+                Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest)
+            )
+
         submit.print_header = False
 
 

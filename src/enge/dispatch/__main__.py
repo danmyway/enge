@@ -24,14 +24,13 @@ Errors are surfaced as exceptions and mapped to exit codes in the top-level CLI.
 import json
 import logging
 import sys
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from enge.utils.globals import ARTIFACT_MAPPING
 from enge.utils.console import console
 from enge.utils.errors import ConfigurationError, ValidationError
 from enge.utils.tf_artifact import CoprRef, BrewRef
-from enge.utils import get_datetime
-from .tf_send_request import SubmitTest, maybe_clear_latest_jobs_file
+from .tf_send_request import SubmitTest
 from .set_flow import expand_set_requests, process_request_spec
 from .artifacts import ArtifactResolver
 from enge.utils.validators import (
@@ -88,10 +87,10 @@ def validate_plan_filters(plans_list: List[str], ctx) -> None:
     )
 
 
-def setup_submit_test(ctx, shared_archive_filename: Optional[str] = None) -> SubmitTest:
+def setup_submit_test(ctx) -> SubmitTest:
     """Initialize and configure the SubmitTest instance."""
     try:
-        submit_test = SubmitTest(ctx, shared_archive_filename=shared_archive_filename)
+        submit_test = SubmitTest(ctx)
 
         submit_test.api_key = ctx.testing_farm.get("api_key")
         submit_test.tests_git_url = (
@@ -326,13 +325,49 @@ def _print_dispatch_summaries(
                     print(summary)
 
 
+def _build_manifest_writer(ctx):
+    from enge.utils.manifest import ManifestWriter
+    from enge.utils.ulid import generate_ulid
+
+    first_set = None
+    if hasattr(ctx, "individual_test_sets") and ctx.individual_test_sets:
+        first_set = ctx.individual_test_sets[0]
+    eff = first_set["effective_values"] if first_set else {}
+
+    context = {}
+    set_names = getattr(ctx.cli_args, "set", None)
+    if set_names:
+        context["set"] = set_names[0] if len(set_names) == 1 else set_names[0]
+    context["event"] = eff.get("event") or getattr(ctx.cli_args, "event", None)
+    if hasattr(ctx, "source_spec") and ctx.source_spec:
+        src = ctx.source_spec
+        context["source"] = f"{src.get('major', '')}.{src.get('minor', '')}"
+    if hasattr(ctx, "target_spec") and ctx.target_spec:
+        tgt = ctx.target_spec
+        context["target"] = f"{tgt.get('major', '')}.{tgt.get('minor', '')}"
+    tiers = getattr(ctx.cli_args, "tier", None) or (
+        [t for t in (getattr(ctx, "effective_tiers", None) or [])]
+    )
+    if tiers:
+        context["tiers"] = tiers
+    if hasattr(ctx, "architectures") and ctx.architectures:
+        context["architectures"] = ctx.architectures
+
+    return ManifestWriter(
+        run_id=generate_ulid(),
+        command="test",
+        argv=sys.argv,
+        tags=getattr(ctx.cli_args, "set_tag", None) or [],
+        context=context,
+    )
+
+
 def main(ctx) -> int:
     global artifact_type
     try:
         output_format = getattr(ctx.cli_args, "output_format", "terminal")
 
         if getattr(ctx.cli_args, "copr", None):
-            # Resolve repo URL lazily
             repo_url = ctx.tests.get("git_url") or ctx.project.get("repo_url")
             if repo_url:
                 validate_git_repository(repo_url)
@@ -340,7 +375,6 @@ def main(ctx) -> int:
         total_requests = 0
         successful_requests = 0
 
-        # Add event/set name for launch naming (used only when creating RP launch)
         event_name = getattr(ctx.cli_args, "event", None)
         if (
             not event_name
@@ -350,17 +384,19 @@ def main(ctx) -> int:
             first_set = ctx.individual_test_sets[0]
             event_name = first_set["effective_values"].get("event")
 
-        # Generate a single shared archive filename for all requests from this command
-        shared_archive_filename = f"enge_jobs_archive_{get_datetime()}"
+        if getattr(ctx.cli_args, "auto_tag", False):
+            LOGGER.warning(
+                "--auto-tag is deprecated; context is now always recorded "
+                "in the manifest. This flag is a no-op."
+            )
 
-        # Determine tiers/plans and artifact type now (deferred to runtime)
         tiers, plans = _compute_tiers_and_plans(ctx)
         artifact_type = _determine_artifact_type(ctx)
 
-        dispatch_results: List[Dict[str, Any]] = []
-        maybe_clear_latest_jobs_file(ctx)
+        manifest_writer = _build_manifest_writer(ctx)
 
-        # Check if we have individual test sets (new approach)
+        dispatch_results: List[Dict[str, Any]] = []
+
         if hasattr(ctx, "individual_test_sets") and ctx.individual_test_sets:
             all_set_requests = expand_set_requests(ctx=ctx)
             total_expected_requests = len(all_set_requests)
@@ -371,10 +407,11 @@ def main(ctx) -> int:
                     idx,
                     total_expected_requests,
                     spec,
-                    shared_archive_filename,
+                    None,
                     artifact_type,
                     resolver,
                     ctx=ctx,
+                    manifest_writer=manifest_writer,
                 )
                 if result:
                     dispatch_results.append({**result, "idx": idx})
@@ -383,7 +420,7 @@ def main(ctx) -> int:
                 total_requests += 1
 
         else:
-            setup_submit_test(ctx, shared_archive_filename=shared_archive_filename)
+            setup_submit_test(ctx)
 
             resolver = ArtifactResolver()
             validate_plan_filters(plans, ctx)
@@ -400,10 +437,11 @@ def main(ctx) -> int:
                     i,
                     total_expected_requests,
                     spec,
-                    shared_archive_filename,
+                    None,
                     artifact_type,
                     resolver,
                     ctx=ctx,
+                    manifest_writer=manifest_writer,
                 )
                 if result:
                     dispatch_results.append({**result, "idx": i})

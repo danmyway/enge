@@ -30,6 +30,8 @@ class AppContext:
     individual_test_sets: Optional[List[Dict[str, Any]]] = None
     environment_variables: Dict[str, str] = field(default_factory=dict)
     pool: Optional[str] = None
+    manifest_runs_dir: str = ""
+    manifest_latest: str = ""
 
     @classmethod
     def from_parsed_opts(cls, po) -> "AppContext":
@@ -38,12 +40,17 @@ class AppContext:
             from enge.utils.test_attribute_builder import build_test_attributes
 
             derived = build_test_attributes(po.cli_args, po.config)
+
+        from enge.utils.state_paths import resolve_latest_pointer, resolve_runs_dir
+
         return cls(
             cli_args=po.cli_args,
             config=po.config,
             testing_farm_endpoint=po.testing_farm_endpoint,
             archive_tasks_latest=po.archive_tasks_latest,
             archive_tasks_default=po.archive_tasks_default,
+            manifest_runs_dir=str(resolve_runs_dir(po.config)),
+            manifest_latest=str(resolve_latest_pointer(po.config)),
             **derived,
         )
 

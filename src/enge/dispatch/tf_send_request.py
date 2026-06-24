@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 import json
 import logging
-import os
 import time
 from typing import Optional, Dict, Any, List
 
 from enge.utils.http_client import http_get, http_post
 
-from enge.utils import get_datetime, redact_sensitive
+from enge.utils import redact_sensitive
 from rich.markup import escape
 from enge.utils.console import console
 from enge.utils.source_target_parser import (
@@ -22,27 +21,6 @@ from enge.utils.globals import (
 )
 
 LOGGER = logging.getLogger(__name__)
-
-
-def clear_latest_jobs_file(ctx):
-    """Remove the latest-jobs file at the start of a dispatch run.
-
-    Called once per enge invocation before any record_task_ids() calls so that
-    a fresh run always starts with an empty file rather than appending to
-    leftovers from a previous run.
-    """
-    path = ctx.archive_tasks_latest
-    if path:
-        try:
-            os.unlink(path)
-        except FileNotFoundError:
-            pass
-
-
-def maybe_clear_latest_jobs_file(ctx) -> None:
-    """Clear the latest-jobs file unless this is a dry-run."""
-    if not getattr(ctx.cli_args, "dryrun", False):
-        clear_latest_jobs_file(ctx)
 
 
 class SubmitTest:
@@ -64,24 +42,13 @@ class SubmitTest:
         self.test_name: Optional[str] = None
 
         self.compose: Optional[str] = None
-        self.artifacts: List[Dict[str, str]] = []  # List of artifact dictionaries
+        self.artifacts: List[Dict[str, str]] = []
         self.business_unit_tag: Optional[str] = None
         self.tmt_distro: Optional[str] = None
         self.parallel_limit: Optional[int] = None
         self.skip_guest_setup: bool = False
         self.authorization_header: Dict[str, str] = {}
         self.payload_raw: Dict[str, Any] = {}
-        self.latest_tasks_file: Optional[str] = None
-        self.archive_tasks_default_path: Optional[str] = None
-        self.archive_tasks_file: Optional[str] = None
-
-        # Use shared archive filename if provided, otherwise generate one
-        if shared_archive_filename:
-            self.archive_tasks_filename = shared_archive_filename
-            self.datetime_stamp = "shared"  # Not needed for shared filename
-        else:
-            self.datetime_stamp = get_datetime()
-            self.archive_tasks_filename = f"enge_jobs_archive_{self.datetime_stamp}"
 
         self.task_id: Optional[str] = None
         self.log_artifact_base_url: str = str(
@@ -90,7 +57,6 @@ class SubmitTest:
         self.testing_farm_endpoint: str = str(
             ctx.testing_farm_endpoint.api_endpoint_url
         )
-        # Set-specific data (will be overridden by set_specific_data if provided)
         self.set_architectures: Optional[List[str]] = None
         self.set_pool: Optional[str] = None
         self.set_environment_variables: Optional[Dict[str, str]] = None
@@ -99,8 +65,6 @@ class SubmitTest:
         self.log_artifact_url: Optional[str] = None
         self.dispatch_summary: Optional[str] = None
         self.set_tag: Optional[List[str]] = getattr(ctx.cli_args, "set_tag", None)
-        self.auto_tag_enabled: bool = getattr(ctx.cli_args, "auto_tag", False)
-        self.auto_generated_tags: List[str] = []
         self.compact_output: bool = False
         self.silent_output: bool = False
 
@@ -175,49 +139,6 @@ class SubmitTest:
 
         self.artifacts.append(artifact_dict)
 
-    def set_auto_tags(
-        self,
-        set_name: Optional[str] = None,
-        architecture: Optional[str] = None,
-        tier: Optional[str] = None,
-        upgrade_path_tag: Optional[str] = None,
-    ):
-        """
-        Set auto-generated tags based on set name, architecture, tier, and detailed upgrade path.
-
-        Args:
-            set_name: Name of the test set (optional)
-            architecture: Target architecture (optional)
-            tier: Test tier (optional)
-            upgrade_path_tag: Detailed upgrade path alias (e.g., "98to102")
-        """
-        if not self.auto_tag_enabled:
-            return
-
-        auto_tags = []
-
-        # Generate the most specific combined tag possible, avoiding duplicates
-        if set_name and architecture and tier:
-            # All three components - use combined tag only
-            auto_tags.append(f"{set_name}.{tier}.{architecture}")
-        elif architecture and tier:
-            # Two components - use combined tag only
-            auto_tags.append(f"{architecture}.{tier}")
-        else:
-            # Individual components when we don't have enough for a meaningful combination
-            if set_name:
-                auto_tags.append(set_name)
-            if architecture:
-                auto_tags.append(architecture)
-            if tier:
-                auto_tags.append(tier)
-
-        if upgrade_path_tag:
-            auto_tags.append(upgrade_path_tag)
-
-        self.auto_generated_tags = auto_tags
-        LOGGER.debug(f"Generated auto tags: {auto_tags}")
-
     def set_specific_data(
         self,
         architectures: List[str],
@@ -273,46 +194,6 @@ class SubmitTest:
             self.set_tmt_context = tmt_context
             self.set_environment_variables = env_vars
             self.set_pool = pool
-
-    def record_task_ids(self, task_id):
-        self.latest_tasks_file = self.ctx.archive_tasks_latest
-        self.archive_tasks_default_path = self.ctx.archive_tasks_default
-
-        # Ensure we have a valid path for archive files
-        if not self.archive_tasks_default_path:
-            LOGGER.warning("Archive default path not configured, skipping archive")
-            return
-
-        self.archive_tasks_file = os.path.join(
-            self.archive_tasks_default_path, self.archive_tasks_filename
-        )
-
-        # Combine manual and auto-generated tags, eliminating duplicates
-        all_tags = set()
-        if self.set_tag:
-            all_tags.update(self.set_tag)
-        if self.auto_generated_tags:
-            all_tags.update(self.auto_generated_tags)
-
-        # Add tags to filename if any exist
-        if all_tags:
-            sorted_tags = sorted(list(all_tags))  # Sort for consistent ordering
-            self.archive_tasks_file = ".".join([self.archive_tasks_file] + sorted_tags)
-
-        def _handle_archive_files():
-            if self.archive_tasks_default_path and not os.path.exists(
-                self.archive_tasks_default_path
-            ):
-                os.makedirs(self.archive_tasks_default_path)
-
-        _handle_archive_files()
-
-        if self.latest_tasks_file and self.archive_tasks_file:
-            with open(self.latest_tasks_file, "a") as latest_jobs_file:
-                latest_jobs_file.write(f"{task_id}\n")
-
-            with open(self.archive_tasks_file, "a") as latest_jobs_archive:
-                latest_jobs_archive.write(f"{task_id}\n")
 
     def build_payload(self):
         # Payload documentation > https://testing-farm.gitlab.io/api/#operation/requestsPost
@@ -619,6 +500,5 @@ class SubmitTest:
             else:
                 print(self.dispatch_summary)
 
-            self.record_task_ids(task_id)
         except KeyError:
             LOGGER.error(json.dumps(response.json(), indent=2, sort_keys=True))
