@@ -23,7 +23,7 @@
           5. [Report](#report)
           6. [Rerun](#rerun)
    3. [Troubleshooting configuration and validation](#troubleshooting-configuration-and-validation)
-          7. [Task Archiving and Tagging](#task-archiving-and-tagging)
+          7. [Manifest Store and Run History](#manifest-store-and-run-history)
 
 
 ENGE
@@ -113,8 +113,9 @@ If both are present, enge compares their `version` fields (semantic-like `X.Y.Z`
 
 Key default paths from the bundled defaults (can be overridden in your `enge.toml`):
 
-- **Latest job IDs file**: `/tmp/enge_latest_jobs`
-- **Archive directory**: `~/.enge/jobs_archive/`
+- **Manifest store**: `~/.local/share/enge/runs/` (XDG_DATA_HOME respected)
+- **Latest pointer**: `~/.local/state/enge/latest`
+- **Legacy archive** (read-only bridge): `~/.enge/jobs_archive/`
 - **Logs directory**: `/var/tmp/enge/logs/`
 
 ##### System-wide configuration (RPM installs)
@@ -209,8 +210,7 @@ When using `--plan-filter` or `--test-filter` to specify a singular test, it is 
 Use `--wait` if waiting for a successful response from the endpoint is required.
 If for any reason you would need to verify the validity of the raw payload, use `--dry-run` to get it pretty-printed to the command line.
 
-Use `--set-tag` to tag archived task files with custom tags for later retrieval (can be used multiple times).
-Use `--auto-tag` to automatically tag archived task files with contextual information (set name, architecture, tier) and create separate, organized archive files for each unique combination.
+Use `--set-tag` to attach custom tags to the dispatch manifest (can be used multiple times). Tags are stored in the manifest's `tags` array and queryable via `enge report --list --tag <tag>`.
 The `--source` argument is required unless using `--set` (which defines source in the configuration).
 
 ```
@@ -241,14 +241,8 @@ enge test --set-regex '^pre-release-.*'
 # Combine exact and regex selection (deduplicated, order preserved)
 enge test --set pre-release-smoke --set-regex 'regression-[0-9]+'
 
-# Test with custom tags for archiving
+# Test with custom tags (stored in manifest)
 enge test --copr lp:pr123 --source 9.7 --tier tier0 --set-tag regression --set-tag pr123
-
-# Test with automatic tagging based on context
-enge test --set pre-release-smoke --auto-tag
-
-# Combine automatic and manual tagging
-enge test --set pre-release-smoke --auto-tag --set-tag custom-run
 
 # Use Task ID - automatically resolved to NVR in payload
 enge test --brew 12345678 --tier tier0
@@ -605,7 +599,7 @@ enge test --set smoke-tests --event "release-candidate" --rp
 enge test --source 9.7 --tier tier0 --event "nightly-build" --rp
 
 # Rerun with ReportPortal integration
-enge rerun --get-tag regression --rp
+enge rerun --run <run_id> --rp
 ```
 
 **How It Works:**
@@ -784,7 +778,7 @@ enge reportportal check
 All task-based operations (`finish`, `enrich`, `delete-logs` without `--all`) accept the same input sources as the report module:
 - `-i/--input <uuid>` — Testing Farm task UUID(s)
 - `-f/--file <path>` — file containing task UUIDs
-- `--get-tag <pattern>` — query archived task files by regex
+- Default: reads the latest manifest from the manifest store
 
 **Subcommand Reference:**
 
@@ -803,17 +797,23 @@ With the report command you are able to get the results of the requested jobs st
 It works by parsing the xunit field in the request response.<br>
 Results can be reported back in two levels - the default plan overview and `--show-tests` for a detailed tests overview.<br>
 You can chain the report command with test command and use the `-w/--wait` argument to get the results back whenever the requests state is complete (or error in which case the job results cannot be and won't be reported due to the non-existent xunit field).<br>
-`enge test` automatically stores the request IDs from the latest dispatched job - the primary location to store and read the data from is `/tmp/enge_latest_jobs` file. The file is also saved with a timestamp to the working directory just for a good measure.
-Default invocation `enge report` parses the tasks stored in the latest file at `/tmp/enge_latest_jobs`.<br>
-You can specify a different path to the file with `-f/--file` or pass the jobs to get report for straight to the commandline with `-i/--input`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
-You can also use `--get-tag` to query archived task files by regex patterns (supports both simple tags and complex patterns - see [Task Archiving and Tagging](#task-archiving-and-tagging) section for details).<br>
+`enge test` writes a JSON manifest to `~/.local/share/enge/runs/` for each dispatch invocation. The latest pointer at `~/.local/state/enge/latest` tracks the newest run.
+Default invocation `enge report` reads tasks from the latest manifest. Use `enge report --list` to browse all runs, then `enge report --run <run_id>` to report a specific one.<br>
+You can specify a different path to a file with `-f/--file` or pass task IDs with `-i/--input`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
+Use structured filters `--set`, `--tier`, `--arch`, `--tag` to match against manifest metadata. Legacy `--get-tag` still works for pre-migration archive files but is deprecated.<br>
 The tool is able to parse and report for multiple variants of values as long as they are separated by a new-line (in the files) or a `-i/--input` argument (on the commandline). Raw request_ids, artifact URLs (Testing Farm result page URLs) or request URLs are allowed.
 Use `--show-ids` to display only a list of UUIDs queried from the requested inputs, which is useful for extracting task IDs for further processing or scripting.<br>
 In case you want to get the log files stored locally, use `--download`. Log files for pytest runs will be stored in `/var/tmp/enge/logs/{request_id}_log/`. In case there are multiple plans in one pipeline, the logs should get divided in their respective plan directories.
 
 ```
-# Get results for the requests in the latest file /tmp/enge_latest_jobs
+# Get results for the latest run (reads manifest store)
 enge report
+
+# Browse all runs in the manifest store
+enge report --list
+
+# Report a specific run by ID
+enge report --run <run_id>
 
 # Report from custom file on the test level
 enge report --show-tests --file ~/my_jobs_file
@@ -830,17 +830,17 @@ enge report --show-ids --file ~/my_jobs_file
 
 **Date Filters (`--since` / `--until`):**
 
-When used with `--get-tag`, `--since` and `--until` filter archived task files by the timestamp embedded in their filename (`enge_jobs_archive_YYYYMMDDHHMMSS`). Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y`). Files provided via `-f` or `-i` are not filtered.
+`--since` and `--until` filter manifests by `created_at` timestamp. Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y`). Combinable with structured filters (`--set`, `--tier`, `--arch`, `--tag`). Files provided via `-f` or `-i` are not filtered.
 
 ```bash
-# Report only archives from the last week
-enge report --get-tag regression --since 1w
+# Report runs from the last week for a specific set
+enge report --set base-8to9 --since 1w
 
-# Report archives within a date range
-enge report --get-tag tier0 --since 2025-01-01 --until 2025-06-30
+# List runs within a date range
+enge report --list --since 2026-01-01 --until 2026-06-30
 
-# Report archives from the last 12 hours
-enge report --get-tag smoke --since 12h
+# Report runs from the last 12 hours
+enge report --since 12h
 ```
 
 ## Troubleshooting configuration and validation
@@ -881,124 +881,96 @@ By default each run's results are shown as a separate table. Use `--compare` to 
 ##### Rerun
 Rerun tasks which report as FAILED or ERROR.<br>
 Only works for whole plans.<br>
-Reads the same input as the report module - `--file`, `--input` or `--get-tag` (with regex pattern support), which can be combined.<br>
+Reads the same input as the report module — default is the latest manifest; use `--run <id>`, `--file`, or `--input` to select specific runs.<br>
 Use `--error` or `--fail` if you want to further specify which type of non-zero result you want to re-run, default is both results. If the whole task reports state error, the original plan filtering will be used, otherwise each of the failing/erroring plans will be passed to the plan name field connected by a pipe `|`, meaning all qualified plans from a single original request will be sent as one request for a re-run.<br>
 Use `--dry-run` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
-Use `--set-tag` to label the archived jobs file.
-When rerun pulls UUIDs from an archived file (direct path or `--get-tag`), the newly archived rerun file inherits all original tags and appends a `.rerun` suffix automatically so follow-up runs stay linked to their source.
+Use `--set-tag` to attach custom tags to the rerun manifest.
 
-For detailed information about task archiving and tagging functionality, see the [Task Archiving and Tagging](#task-archiving-and-tagging) section.
+Rerun manifests carry `parent_run_id` linking to the original run, and inherit the parent's tags plus `"rerun"`. See the [Manifest Store and Run History](#manifest-store-and-run-history) section for details.
 
 ```
-# Rerun qualified jobs from a file
-enge rerun -f my_archive_file
+# Rerun from the latest run
+enge rerun
 
-# Disregard errors for a rerun qualification
-enge rerun -f my_archive_file --fail
+# Rerun a specific run by manifest ID
+enge rerun --run <run_id>
 
-# Rerun qualified job from a commandline
+# Rerun from a file or direct UUID
+enge rerun -f my_jobs_file
 enge rerun -i 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b
 
-# Query the archive files by tag (simple match)
-enge rerun --get-tag rc --set-tag secondrun --set-tag rc
-# or
-enge rerun --get-tag rc --set-tag secondrun.rc
+# Rerun only failures (exclude errors)
+enge rerun --run <run_id> --fail
 
-# Query using regex patterns
-enge rerun --get-tag "rc.*" --set-tag rerun         # matches rc, rc.x86_64, rc.tier0, etc.
-enge rerun --get-tag "tier[01]" --set-tag tier01    # matches tier0 or tier1
+# Rerun with custom tags
+enge rerun --run <run_id> --set-tag rc-revalidation
+
+# Legacy: query pre-migration archive files (deprecated, use --run instead)
+enge rerun --get-tag "rc.*" --set-tag rerun
 ```
 
-##### Task Archiving and Tagging
+##### Manifest Store and Run History
 
-The `--set-tag`, `--auto-tag`, and `--get-tag` options provide a powerful way to organize and retrieve test results:
+Each `enge test` or `enge rerun` invocation writes a JSON manifest to `~/.local/share/enge/runs/`. Manifests record structured per-request metadata (task ID, set, tier, architecture, plan, composes, artifacts URL) and are identified by a time-sortable ULID. A latest pointer at `~/.local/state/enge/latest` tracks the newest run.
 
-**Setting Tags (`--set-tag`):**
+> **MIGRATION NOTE**: The old `/tmp/enge_latest_jobs` file and `~/.enge/jobs_archive/` filename-tagged files are no longer written. External scripts that read these files must migrate to `enge report --list`/`--run` or read the manifest JSON directly. The read-only legacy bridge inside enge still reads old files so `enge report` and `enge rerun` work against pre-migration runs.
+
+**Browsing and filtering runs:**
+
+```bash
+# List all runs (newest first)
+enge report --list
+
+# Filter by set, tier, architecture, or tag
+enge report --list --set base-8to9
+enge report --list --tier tier0 --arch x86_64
+enge report --list --tag nightly --since 3d
+
+# Report a specific run by ID (copy from --list output)
+enge report --run <run_id>
+
+# Rerun from a specific run
+enge rerun --run <run_id>
+```
+
+**Tagging (`--set-tag`):**
 - Available in `test` and `rerun` commands
-- Tags archived task files with custom labels for later retrieval
+- Tags are stored in the manifest's `tags` array
 - Can be used multiple times: `--set-tag tag1 --set-tag tag2`
-- Tagged files are stored as `filename.tag1.tag2` in the archive directory
+- Query with `--tag` in report/rerun: `enge report --list --tag regression`
 
-**Automatic Tagging (`--auto-tag`):**
-- Available in `test` and `rerun` commands
-- Automatically generates tags based on contextual information:
-  - **Sets**: Creates combined tags like `setname.architecture.tier` for precise identification
-  - **Tiers**: Creates combined tags like `architecture.tier` when no set is specified
-  - **Plans**: Creates tags for architecture (when single architecture is configured)
-  - **Detailed Upgrade Path**: Adds a detailed source→target shorthand (e.g., `98to102` for 9.8→10.2) so inherited rerun archives can be traced back to their exact release pair.
-- Can be combined with `--set-tag` for additional custom tags
-- **Generates separate archive files** - each unique tag combination creates its own file
-- Particularly useful for test sets with multiple tier/architecture combinations as it creates granular, organized files
+**`--auto-tag` (deprecated):**
+Context (set name, architecture, tier) is now always recorded in the manifest. `--auto-tag` is a no-op and will be removed in a future release.
 
-**Getting Tagged Results (`--get-tag`):**
-- Available in `report` and `rerun` commands
-- Query archived task files by regex patterns (supports both simple strings and complex patterns)
-- **Regex Pattern Support**: Each tag argument is treated as a regex pattern for flexible matching
-- **Backward Compatible**: Simple strings work as literal matches (e.g., `--get-tag xml` matches "xml")
-- **Pattern Matching**: Supports wildcards and complex patterns:
-  - `--get-tag "rhel.*"` matches rhel8, rhel9, rhel8.x86_64, etc.
-  - `--get-tag ".*\.xml$"` matches any XML files
-  - `--get-tag "test-\d+"` matches test-1, test-23, etc.
-  - `--get-tag "(rhel8|rhel9)"` matches either rhel8 or rhel9
-- **Dual Matching**: Patterns match against both file extensions and full filenames
-- **OR Logic**: `--get-tag pattern1 --get-tag pattern2` finds files matching either pattern
-- **Error Handling**: Invalid regex patterns are caught with clear error messages
-- Can be combined with `--file` and `--input` options
+**`--get-tag` (deprecated):**
+Use `--tag` for native manifests. `--get-tag` still works for pre-migration archive files via the legacy bridge.
 
-**Archive Locations:**
-- Latest job IDs: `/tmp/enge_latest_jobs`
-- Archived jobs: `~/.enge/jobs_archive/` (configurable)
-- Tagged files: `~/.enge/jobs_archive/filename.tag1.tag2`
-- **With `--auto-tag`**: Multiple separate files like `filename.setname.arch.tier`
+**Rerun lineage:**
+Rerun manifests carry `parent_run_id` linking to the original run, replacing the old `.rerun` filename suffix. Inherited tags are copied from parent to child.
 
-**File Organization Example:**
-When running `enge test --set pre-release --auto-tag` with tiers [tier0, tier1] and architectures [x86_64, aarch64], you get:
+**Migrating legacy archives:**
+
+```bash
+# Convert ~/.enge/jobs_archive/ files to manifests (non-destructive, idempotent)
+enge migrate-archive
 ```
-~/.enge/jobs_archive/
-├── enge_jobs_archive_20250121_143022.pre-release.x86_64.tier0
-├── enge_jobs_archive_20250121_143022.pre-release.x86_64.tier1
-├── enge_jobs_archive_20250121_143022.pre-release.aarch64.tier0
-└── enge_jobs_archive_20250121_143022.pre-release.aarch64.tier1
-```
-Each file contains exactly one task ID for its specific combination, enabling precise organization and querying.
+
+This creates synthetic manifests with `origin="migrated"`. Task IDs and artifacts URLs are populated; compose/event/plan fields are null (not recoverable offline). Original archive files are not deleted.
+
+**Manifest store locations (XDG-compliant, config-overridable):**
+- Manifests: `~/.local/share/enge/runs/<run_id>.json`
+- Latest pointer: `~/.local/state/enge/latest`
+- Logs: `~/.local/state/enge/logs/`
 
 **Examples:**
 ```bash
-# Test with custom tags (creates one shared file)
+# Test with custom tags
 enge test --copr lp:pr123 --source 9.7 --tier tier0 --set-tag regression --set-tag pr123
 
-# Test with automatic tagging (creates separate file: enge_jobs_archive_timestamp.x86_64.tier0)
-enge test --copr lp:pr123 --source 9.7 --tier tier0 --auto-tag
+# Browse and pick
+enge report --list --tag regression
+enge report --run 01J5KXYZ...
 
-# Test set with automatic tagging (creates separate files for each tier/arch combination)
-# Example files: enge_jobs_archive_timestamp.pre-release-smoke.x86_64.tier0
-#                enge_jobs_archive_timestamp.pre-release-smoke.aarch64.tier0
-enge test --set pre-release-smoke --auto-tag
-
-# Combine automatic and manual tagging (separate files with both auto and manual tags)
-enge test --set pre-release-smoke --auto-tag --set-tag custom-run
-
-# Get results by tag (works across all files)
-enge report --get-tag regression
-
-# Get results by auto-generated tag (finds specific combination)
-enge report --get-tag x86_64
-
-# Get results for specific set and tier combination (exact match)
-enge report --get-tag pre-release-smoke.x86_64.tier0
-
-# Get results using regex patterns
-enge report --get-tag "rhel.*"           # matches rhel8, rhel9, rhel8.x86_64, etc.
-enge report --get-tag ".*\.xml$"         # matches any XML files
-enge report --get-tag "test-\d+"         # matches test-1, test-23, etc.
-enge report --get-tag "(tier0|tier1)"    # matches either tier0 or tier1
-
-# Report results for multiple patterns (OR logic)
-enge report --get-tag "regression.*" --get-tag "pr\d+"
-
-# Rerun failed jobs with pattern matching
-enge rerun --get-tag "tier[01]" --fail --auto-tag
-
-# Combine tag search with other inputs
-enge report --get-tag regression --file ~/my_jobs --input 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b
+# Filter by structured fields
+enge report --list --set pre-release-smoke --tier tier0 --since 1w
 ```

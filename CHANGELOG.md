@@ -8,7 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Set-level `plan_filter` and `test_filter` config keys: define FMF filters per test set instead of passing `--plan-filter`/`--test-filter` on every invocation. Priority: CLI > set > tier-generated.
-- Automatic `skip_guest_setup` pipeline setting for RHUI source composes (`RHEL-<major>-rhui`, `RHEL-<major>-sap-hana-rhui`, `RHEL-<major>-sap-netweaver-rhui`)
+- JSON manifest store: dispatch state moved from `/tmp/enge_latest_jobs` + filename-tagged archive files to XDG-compliant JSON manifests under `~/.local/share/enge/runs/`. Each invocation writes a single versioned manifest with structured per-request metadata (task_id, set, tier, arch, plan, composes, artifacts URL)
+- `enge report --list`: run browser that replaces visual filename scanning — displays a rich table of all manifests in the store, filterable by `--set/--tier/--arch/--tag/--since/--until`
+- `--run <run_id>` flag on `report` and `rerun`: select a specific manifest by ID (pair with `--list` to browse → pick → act)
+- Structured manifest filters: `--set`, `--tier`, `--arch`, `--tag` match against manifest context and per-request fields (no regex needed)
+- `enge migrate-archive`: one-time subcommand converting legacy `~/.enge/jobs_archive/` files into synthetic manifests with `origin="migrated"`. Non-destructive, idempotent
+- Rerun lineage: rerun manifests carry `parent_run_id` linking to the original run, replacing the `.rerun` filename suffix
+- Automatic `skip_guest_setup` pipeline setting for RHUI source composes (`RHEL-*-rhui`, `RHEL-*-sap-rhui`, `RHEL-*-sap-ha-rhui`)
 - Short flags: `-s` (source), `-t` (target), `-T` (tier), `-p` (plan), `-S` (set), `-n` (dryrun)
 - Verbosity control: `-v` for VERBOSE level, `-vv` / `--debug` for DEBUG level
 - Output format selection: `-o` / `--format` with `terminal`, `json`, `gitlab` modes
@@ -20,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `finish --enrich` combined flow: enrich artifact logs then finish the launch in one command
 
 ### Changed
+- **State store moved**: dispatch write path no longer touches `/tmp/enge_latest_jobs`, the CWD timestamped copy, or filename-tagged archive files. All state writes go to XDG JSON manifests. External scripts reading `/tmp/enge_latest_jobs` must migrate to the manifest store or `enge report --list --run`
 - Report exit-code precedence is now severity-ranked error-dominates (3 > 2 > 4): a result set mixing test errors, failures, and missing results returns the most severe code (3, error) where it previously returned whichever was numerically highest (4, missing). Exit codes are now defined once as the `ExitCode` enum in `utils/globals.py`; missing results are rerun candidates and no longer mask a real error.
 - Migrated terminal output from prettytable/ANSI to rich library (tables, panels, styled text)
 - Logging now renders to stderr via dedicated console, keeping stdout clean for data output
@@ -29,6 +36,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Ruff lint gate added: `ruff check src tests` enforced in CI via pre-commit hook
 
 ### Deprecated
+- `--get-tag` — use `--tag` for native manifests (legacy archive fallback still works for pre-migration runs)
+- `--auto-tag` — context is now always recorded in the manifest; the flag is a no-op
 - `--jira` flag in `report` — use `-o gitlab` for merge-request-friendly output
 - Old flag-verb spellings (`--finish`, `--enrich-logs`, `--delete-logs`, `--delete-stale`, `--test`, `--all-launches`) — use subcommands instead; old spellings emit a deprecation warning and will be removed in a future release
 

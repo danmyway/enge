@@ -5,16 +5,20 @@
 # - User configuration files (enge.toml) override these defaults.
 # - Use this file as a reference for available keys and default values.
 # ============================================================================
-version = '2025.11.18'
+version = '2026.06.24'
 
 # ============================================================================
 # COMMON (Global paths and storage locations - defaults)
-# - Controls where enge stores job IDs, archives, and downloaded logs
+# - Controls where enge stores manifests, archives, and downloaded logs
+# - Manifest store uses XDG paths by default; override with explicit paths
+# - Legacy archive paths kept for backward-compatible reading of old runs
 # - INFO: These values act as defaults and can be overridden in user enge.toml
 # ============================================================================
 [common]
 archive_tasks_latest = '/tmp/enge_latest_jobs'
 archive_tasks_default = '~/.enge/jobs_archive/'
+manifest_runs_dir = ''
+manifest_latest = ''
 logs_directory = '/var/tmp/enge/logs/'
 post_install_script = '#!/bin/sh\\nsudo sed -i s/.*ssh-rsa/ssh-rsa/ /root/.ssh/authorized_keys'
 
