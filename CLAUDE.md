@@ -34,9 +34,12 @@ src/enge/
   cancel/            cancel TF tasks
   reportportal/      launch finish/enrich/delete operations (subcommands; unified pipeline
                      via resolvers.py + operations.py)
+  migrate/           migrate-archive subcommand (legacy → manifest conversion)
   utils/             opt_manager (config+CLI god object), arg_parser, console,
                      source_target_parser, tf_artifact (COPR/Brew), config_parser,
-                     http_client (use this, never raw requests), errors, globals
+                     http_client (use this, never raw requests), errors, globals,
+                     manifest (JSON manifest writer/reader), state_paths (XDG resolution),
+                     ulid (ULID generator), legacy_archive (read-only bridge, deprecated)
 tests/               unittest.TestCase style ONLY (see Conventions)
 ```
 
@@ -82,12 +85,16 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   one requiring severity precedence (3 > 2 > 4 > 0, error-dominates —
   missing results are rerun candidates and must not mask a real error),
   because it is the only command that grades multi-plan result sets.
-- **State files**: `/tmp/enge_latest_jobs` (task IDs of the current run;
-  cleared once per invocation via the guard in dispatch/rerun mains —
-  **never on --dry-run**), archive files in `~/.enge/jobs_archive/` with
-  tags encoded in filenames (queried by regex via `--get-tag`). This
-  filename-as-database design is slated for replacement by a JSON manifest
-  store; don't build new features on filename tags.
+- **State files**: JSON manifests under `~/.local/share/enge/runs/<run_id>.json`
+  (XDG_DATA_HOME respected; config-overridable). Each dispatch/rerun writes
+  one versioned manifest (schema_version=1) with structured per-request
+  metadata. A latest pointer at `~/.local/state/enge/latest` tracks the
+  newest run. The old `/tmp/enge_latest_jobs` + `~/.enge/jobs_archive/`
+  filename-tagged model is retired; a read-only legacy bridge
+  (`utils/legacy_archive.py`) provides backward-compatible reading for
+  pre-migration runs. `enge migrate-archive` converts old files to synthetic
+  manifests with `origin="migrated"`. Manifests carry dispatch facts only
+  (no result fields) — a results cache is a separate future PR.
 - **Short flags are case-paired**: `-s/--source` and `-t/--target` (compose
   pair), `-S/--set` and `-T/--tier` (selection pair). `-t tier0` is a
   silently-accepted wrong compose name — keep help text and README examples
@@ -148,7 +155,7 @@ Sequenced roadmap (do not start these as side effects of other work):
 ~~`RequestContext` dataclass~~ ✓ →
 ~~singleton → AppContext DI, module by module~~ ✓ →
 ~~unify reportportal task/all-launches pipelines under subcommands~~ ✓ →
-manifest-based state store (XDG paths, retires filename tags) →
+~~manifest-based state store (XDG paths, retires filename tags)~~ ✓ →
 config-as-data (RHSM flag presets, source→target mapping table replacing the
 `minor - 6` formula, RP event list).
 
