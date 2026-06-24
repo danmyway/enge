@@ -1,8 +1,10 @@
+import json
 import logging
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
 from rich import box
 from rich.console import Console
@@ -14,6 +16,7 @@ from enge.utils.app_context import AppContext
 from enge.utils.errors import ValidationError
 from enge.utils.console import console
 from enge.utils.globals import ExitCode
+from enge.utils.manifest import ManifestReader
 
 LOGGER = logging.getLogger(__name__)
 
@@ -76,7 +79,18 @@ def _parse_tasks_impl(ctx):
         has_tags = bool(cli_args.get_tag)
         has_date_filter = bool(since_str or until_str)
 
-        if has_tags or has_date_filter:
+        has_manifest_filters = any(
+            getattr(cli_args, attr, None)
+            for attr in (
+                "filter_set",
+                "filter_tier",
+                "filter_arch",
+                "filter_tag",
+                "run",
+            )
+        )
+
+        if (has_tags or has_date_filter) and not has_manifest_filters:
             default_path = ctx.archive_tasks_default
             if not os.path.exists(default_path):
                 LOGGER.critical(f"The given path {default_path} does not exist!")
@@ -133,20 +147,38 @@ def _parse_tasks_impl(ctx):
                 getattr(cli_args, "input", None),
                 has_tags,
                 has_date_filter,
+                has_manifest_filters,
             )
         ):
-            latest = _latest_tasks_file(ctx)
-            if not os.path.exists(latest):
-                LOGGER.critical(f"The latest job file {latest} does not exist!")
-                LOGGER.critical(
-                    "Use the --file option with path to a file containing the job IDs. "
-                    "Or pass the job IDs through the --input argument."
-                )
+            manifest_latest = Path(ctx.manifest_latest)
+            manifest_data = ManifestReader.load_latest(manifest_latest)
+            if manifest_data:
+                task_ids = ManifestReader.get_task_ids(manifest_data)
+                source = f"manifest:{manifest_data.get('run_id', 'latest')}"
+                source_data = [(tid, None) for tid in task_ids]
+            else:
+                latest = _latest_tasks_file(ctx)
+                if os.path.exists(latest):
+                    LOGGER.debug("Falling back to legacy latest file: %s", latest)
+                    source = latest
+                    with open(source) as fh:
+                        source_data = [(line, source) for line in fh.readlines()]
+                else:
+                    LOGGER.critical(
+                        "No manifest store or legacy latest file found. "
+                        "Use --file, --input, or --run to specify tasks."
+                    )
+                    raise ValidationError("No task source available")
 
-                raise ValidationError("Latest jobs file missing")
-            source = latest
-            with open(source) as fh:
-                source_data = [(line, source) for line in fh.readlines()]
+        use_manifest_resolve = has_manifest_filters or (
+            has_date_filter and not has_tags
+        )
+        if use_manifest_resolve and not source_data:
+            manifest_result = _resolve_manifest_tasks(ctx)
+            if manifest_result:
+                task_ids, manifest_source = manifest_result
+                source = manifest_source
+                source_data = [(tid, None) for tid in task_ids]
 
         return source, source_data
 
@@ -472,7 +504,152 @@ def colorize(result, label=None):
     return escape(str(label))
 
 
+def _handle_list(ctx: AppContext) -> int:
+    runs_dir = Path(ctx.manifest_runs_dir)
+    cli_args = ctx.cli_args
+    output_fmt = getattr(cli_args, "output_format", "terminal")
+
+    filter_kwargs = {}
+    if getattr(cli_args, "filter_set", None):
+        filter_kwargs["set_name"] = cli_args.filter_set
+    if getattr(cli_args, "filter_tier", None):
+        filter_kwargs["tier"] = cli_args.filter_tier
+    if getattr(cli_args, "filter_arch", None):
+        filter_kwargs["arch"] = cli_args.filter_arch
+    if getattr(cli_args, "filter_tag", None):
+        filter_kwargs["tag"] = cli_args.filter_tag
+    since_str = getattr(cli_args, "since", None)
+    until_str = getattr(cli_args, "until", None)
+    if since_str:
+        dt = parse_date_arg(since_str)
+        filter_kwargs["since"] = (
+            dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        )
+    if until_str:
+        dt = parse_date_arg(until_str)
+        dt = dt.replace(hour=23, minute=59, second=59)
+        filter_kwargs["until"] = (
+            dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        )
+
+    if filter_kwargs:
+        runs = ManifestReader.find_runs(runs_dir, **filter_kwargs)
+    else:
+        runs = ManifestReader.list_runs(runs_dir)
+
+    if output_fmt == "json":
+        print(json.dumps(runs, indent=2))
+        return ExitCode.SUCCESS
+
+    if not runs:
+        LOGGER.info("No runs found in the manifest store.")
+        return ExitCode.SUCCESS
+
+    if output_fmt == "gitlab":
+        print(
+            "| Run ID | Created | Command | Set | Tier(s) | Arch(es) | Tags | Requests | Origin |"
+        )
+        print("|---|---|---|---|---|---|---|---|---|")
+        for r in runs:
+            ctx_data = r.get("context", {})
+            print(
+                f"| {r['run_id']} "
+                f"| {r.get('created_at', '')} "
+                f"| {r.get('command', '')} "
+                f"| {ctx_data.get('set', '')} "
+                f"| {', '.join(ctx_data.get('tiers', []))} "
+                f"| {', '.join(ctx_data.get('architectures', []))} "
+                f"| {', '.join(r.get('tags', []))} "
+                f"| {r.get('request_count', 0)} "
+                f"| {r.get('origin', 'native')} |"
+            )
+    else:
+        table = Table(box=box.ROUNDED, title="Manifest Store")
+        table.add_column("Run ID", style="bold")
+        table.add_column("Created")
+        table.add_column("Cmd")
+        table.add_column("Set")
+        table.add_column("Tier(s)")
+        table.add_column("Arch(es)")
+        table.add_column("Tags")
+        table.add_column("Reqs", justify="right")
+        table.add_column("Origin")
+
+        for r in runs:
+            ctx_data = r.get("context", {})
+            created = r.get("created_at", "")
+            tiers = ctx_data.get("tiers", [])
+            archs = ctx_data.get("architectures", [])
+            table.add_row(
+                r["run_id"],
+                created[:19].replace("T", " ") if created else "",
+                r.get("command", ""),
+                ctx_data.get("set", ""),
+                ", ".join(tiers) if isinstance(tiers, list) else str(tiers),
+                ", ".join(archs) if isinstance(archs, list) else str(archs),
+                ", ".join(r.get("tags", [])),
+                str(r.get("request_count", 0)),
+                r.get("origin", "native"),
+            )
+        console.print(table)
+
+    return ExitCode.SUCCESS
+
+
+def _resolve_manifest_tasks(ctx):
+    """Try to resolve task IDs from manifest store. Returns (task_ids, source) or None."""
+    cli_args = ctx.cli_args
+    runs_dir = Path(ctx.manifest_runs_dir)
+
+    run_id = getattr(cli_args, "run", None)
+    if run_id:
+        manifest = ManifestReader.get_run(runs_dir, run_id)
+        return ManifestReader.get_task_ids(manifest), f"manifest:{run_id}"
+
+    has_filters = any(
+        getattr(cli_args, attr, None)
+        for attr in ("filter_set", "filter_tier", "filter_arch", "filter_tag")
+    )
+    since_str = getattr(cli_args, "since", None)
+    until_str = getattr(cli_args, "until", None)
+
+    if has_filters or since_str or until_str:
+        kwargs = {}
+        if getattr(cli_args, "filter_set", None):
+            kwargs["set_name"] = cli_args.filter_set
+        if getattr(cli_args, "filter_tier", None):
+            kwargs["tier"] = cli_args.filter_tier
+        if getattr(cli_args, "filter_arch", None):
+            kwargs["arch"] = cli_args.filter_arch
+        if getattr(cli_args, "filter_tag", None):
+            kwargs["tag"] = cli_args.filter_tag
+        if since_str:
+            dt = parse_date_arg(since_str)
+            kwargs["since"] = (
+                dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+            )
+        if until_str:
+            dt = parse_date_arg(until_str)
+            dt = dt.replace(hour=23, minute=59, second=59)
+            kwargs["until"] = (
+                dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+            )
+        matching = ManifestReader.find_runs(runs_dir, **kwargs)
+        if matching:
+            all_ids = []
+            for summary in matching:
+                full = ManifestReader.load(Path(summary["path"]))
+                all_ids.extend(ManifestReader.get_task_ids(full))
+            return all_ids, "manifest:filter"
+        return None
+
+    return None
+
+
 def main(ctx: AppContext, result_table=None):
+    if getattr(ctx.cli_args, "list", False):
+        return _handle_list(ctx)
+
     if getattr(ctx.cli_args, "show_ids", False):
         request_url_list, _ = parse_tasks(ctx)
         if request_url_list:
