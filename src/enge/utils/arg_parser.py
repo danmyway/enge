@@ -131,9 +131,8 @@ def _add_tagging_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--auto-tag",
         action="store_true",
-        help="Automatically tag archived task files with set name, architecture, and tier information. "
-        "Tags will be in the format: setname.arch.tier (e.g., pre-release.x86_64.tier0). "
-        "Can be combined with --set-tag for additional custom tags.",
+        help="Deprecated: context is now always recorded in manifests. "
+        "This flag is a no-op and will be removed in a future release.",
     )
 
 
@@ -433,10 +432,12 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
             "examples:\n"
             "  enge report                                          # report latest run\n"
             "  enge report -i <uuid>                                # report specific task\n"
-            "  enge report --get-tag pr123 --show-tests             # detailed test view by tag\n"
-            "  enge report --get-tag pr123 -o                       # gitlab/markdown output\n"
+            "  enge report --list                                   # browse all runs\n"
+            "  enge report --list --set smoke --since 3d            # filter runs\n"
+            "  enge report --run <run_id>                           # report specific run\n"
+            "  enge report --tag regression --show-tests            # detailed test view\n"
             "  enge report -f tasks.txt -w                          # wait for completion\n"
-            "  enge report --get-tag v1 --get-tag v2 --compare      # compare runs\n"
+            "  enge report --get-tag v1 --get-tag v2 --compare      # compare runs (legacy)\n"
         ),
     )
 
@@ -507,10 +508,51 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         help=argparse.SUPPRESS,
     )
 
-    _add_format_arg(report, choices=["terminal", "gitlab"])
+    _add_format_arg(report, choices=["terminal", "gitlab", "json"])
 
-    # Date filters (effective with --get-tag, filters by archive filename timestamp)
     _add_date_filter_args(report)
+
+    report.add_argument(
+        "--list",
+        action="store_true",
+        help="List all runs in the manifest store as a table. "
+        "Combinable with --set/--tier/--arch/--tag/--since/--until to narrow results.",
+    )
+
+    report.add_argument(
+        "--run",
+        metavar="RUN_ID",
+        help="Select a specific run by manifest ID. "
+        "Use 'enge report --list' to browse available runs.",
+    )
+
+    report.add_argument(
+        "--set",
+        dest="filter_set",
+        metavar="SET",
+        help="Filter runs by test set name.",
+    )
+
+    report.add_argument(
+        "--tier",
+        dest="filter_tier",
+        metavar="TIER",
+        help="Filter runs by tier.",
+    )
+
+    report.add_argument(
+        "--arch",
+        dest="filter_arch",
+        metavar="ARCH",
+        help="Filter runs by architecture.",
+    )
+
+    report.add_argument(
+        "--tag",
+        dest="filter_tag",
+        metavar="TAG",
+        help="Filter runs by tag.",
+    )
 
     # ==================== RERUN SUBCOMMAND ====================
     rerun = subparsers.add_parser(
@@ -538,6 +580,12 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "--fail",
         action="store_true",
         help="Rerun only jobs that reported FAILED state.",
+    )
+
+    rerun.add_argument(
+        "--run",
+        metavar="RUN_ID",
+        help="Select a specific run by manifest ID for rerun.",
     )
 
     # ==================== REPORTPORTAL SUBCOMMAND ====================
@@ -681,6 +729,15 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     _add_dryrun_arg(
         cancel,
         help_text="Show which tasks would be cancelled without actually cancelling them.",
+    )
+
+    # ==================== MIGRATE-ARCHIVE SUBCOMMAND ====================
+    subparsers.add_parser(
+        "migrate-archive",
+        help="Convert legacy archive files to JSON manifests.",
+        description="One-time migration of ~/.enge/jobs_archive/ files into "
+        "the manifest store. Non-destructive and idempotent.",
+        parents=[common],
     )
 
     if argcomplete:
