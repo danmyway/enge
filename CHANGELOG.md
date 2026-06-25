@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Automatic `skip_guest_setup` pipeline setting for RHUI source composes (`RHEL-*-rhui`, `RHEL-*-sap-rhui`, `RHEL-*-sap-ha-rhui`)
+- Automatic `skip_guest_setup` pipeline setting for RHUI source composes (`RHEL-<major>-rhui`, `RHEL-<major>-sap-hana-rhui`, `RHEL-<major>-sap-netweaver-rhui`)
 - Short flags: `-s` (source), `-t` (target), `-T` (tier), `-p` (plan), `-S` (set), `-n` (dryrun)
 - Verbosity control: `-v` for VERBOSE level, `-vv` / `--debug` for DEBUG level
 - Output format selection: `-o` / `--format` with `terminal`, `json`, `gitlab` modes
