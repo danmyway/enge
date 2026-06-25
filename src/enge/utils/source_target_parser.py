@@ -30,9 +30,10 @@ AMI_ARCH_SEPARATORS = {"alma": " ", "rocky": "."}
 # Only these architectures are available for AMI sources on AWS EC2
 VALID_AMI_ARCHITECTURES = {"x86_64", "aarch64"}
 
-# Symbolic RHEL composes (pass-through to Testing Farm, no repinning)
+# Symbolic RHEL composes (pass-through to Testing Farm, no repinning).
+# RHEL-<major>[-<dash-separated-middle>]-rhui (e.g. RHEL-8-rhui, RHEL-8-sap-hana-rhui).
 SYMBOLIC_RHEL_COMPOSE_PATTERN = re.compile(
-    r"^RHEL-(\d+)-(rhui|sap-rhui|sap-ha-rhui)$",
+    r"^RHEL-(\d+)(?:-(.+))?-rhui$",
     re.IGNORECASE,
 )
 
@@ -268,8 +269,11 @@ def parse_compose_spec(
     rhui_match = SYMBOLIC_RHEL_COMPOSE_PATTERN.match(spec_stripped)
     if rhui_match:
         major = int(rhui_match.group(1))
-        suffix = rhui_match.group(2).lower()
-        compose_name = f"RHEL-{major}-{suffix}"
+        middle = rhui_match.group(2)
+        if middle:
+            compose_name = f"RHEL-{major}-{middle.lower()}-rhui"
+        else:
+            compose_name = f"RHEL-{major}-rhui"
         LOGGER.debug(f"Parsed symbolic RHUI spec '{spec_stripped}' as: {compose_name}")
         return {
             "major": major,

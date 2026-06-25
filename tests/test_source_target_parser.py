@@ -143,9 +143,9 @@ class TestSourceTargetParser(unittest.TestCase):
     def test_symbolic_rhui_compose_specs(self):
         cases = [
             ("RHEL-8-rhui", "RHEL-8-rhui"),
-            ("RHEL-9-sap-rhui", "RHEL-9-sap-rhui"),
-            ("RHEL-8-sap-ha-rhui", "RHEL-8-sap-ha-rhui"),
-            ("rhel-8-rhui", "RHEL-8-rhui"),
+            ("RHEL-8-sap-hana-rhui", "RHEL-8-sap-hana-rhui"),
+            ("RHEL-8-sap-netweaver-rhui", "RHEL-8-sap-netweaver-rhui"),
+            ("rhel-8-sap-hana-rhui", "RHEL-8-sap-hana-rhui"),
         ]
         for spec, expected_compose in cases:
             with self.subTest(spec=spec):
@@ -156,6 +156,17 @@ class TestSourceTargetParser(unittest.TestCase):
                 self.assertTrue(parsed["is_major_only"])
                 self.assertFalse(parsed["is_centos_stream"])
                 self.assertFalse(parsed["is_ami_source"])
+
+    def test_non_rhui_compose_specs_rejected(self):
+        invalid_specs = [
+            "RHEL-8",
+            "RHEL-8-sap-hana",
+            "RHEL-8-sap-netweaver",
+        ]
+        for spec in invalid_specs:
+            with self.subTest(spec=spec):
+                with self.assertRaises(ValueError):
+                    parse_compose_spec(spec, self.minimal_config)
 
     def test_symbolic_rhui_source_target_config(self):
         source_spec, target_spec = parse_source_target_config(

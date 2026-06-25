@@ -214,8 +214,8 @@ class TestSetFlow(unittest.TestCase):
 
         rhui_cases = [
             ("RHEL-8-rhui", True),
-            ("RHEL-9-sap-rhui", True),
-            ("RHEL-8-sap-ha-rhui", True),
+            ("RHEL-8-sap-hana-rhui", True),
+            ("RHEL-8-sap-netweaver-rhui", True),
             ("RHEL-9.2.0", False),
             ("CentOS-Stream-9", False),
         ]
