@@ -763,7 +763,7 @@ def main(ctx: AppContext):
 
             # Get base ReportPortal config vars
             rp_config_vars = generate_reportportal_environment_variables(
-                config=ctx.config,
+                ctx.config,
                 cli_args=ctx.cli_args,
             )
 

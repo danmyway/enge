@@ -22,7 +22,7 @@ LOGGER = logging.getLogger(__name__)
 def _resolve_launch_name(context: Optional[Dict[str, Any]], ctx) -> str:
     """Derive a ReportPortal launch name using config + context rules."""
     rp_env_vars = generate_reportportal_environment_variables(
-        config=ctx.config,
+        ctx.config,
         cli_args=ctx.cli_args,
         set_name=context.get("set_name") if context else None,
         architecture=context.get("architecture") if context else None,
