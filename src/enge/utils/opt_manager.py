@@ -735,6 +735,8 @@ class ParsedOpts:
             "environment",
             "reportportal",
             "context",
+            "plan_filter",
+            "test_filter",
         }
 
         # Check for unknown keys

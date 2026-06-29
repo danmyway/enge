@@ -930,6 +930,10 @@ def resolve_effective_values(
     resolved["environment"] = set_config.get("environment", {})
     resolved["reportportal"] = set_config.get("reportportal", {})
 
+    # Resolve FMF filters (Set only — CLI filters are consumed directly downstream)
+    resolved["plan_filter"] = set_config.get("plan_filter")
+    resolved["test_filter"] = set_config.get("test_filter")
+
     # Resolve context (Config defaults > Set overrides)
     # CLI overrides are handled later via --context in opt_manager
     tests_section = config.get("tests", {}) if isinstance(config, dict) else {}

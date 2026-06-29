@@ -132,6 +132,11 @@ rhui-azure-tier0 = 'tag:rhui-azure-tier0'
 # - Define source/target/tiers/architectures/artifacts per set
 # - Specific CLI arguments override set configuration when provided
 # - Launch naming format: (EVENT_NAME|SET_NAME)~UPGRADE_PATH~YYYY-MM-DD~ARCH
+# - Optional per-set FMF filters (override tier-generated filters):
+#   plan_filter = 'tag:custom & enabled:true'  # overrides auto-generated plan filter from tiers
+#   test_filter = 'tag:fast'                   # FMF test filter passed to Testing Farm
+#   Priority: CLI --plan-filter > set plan_filter > tier-generated
+#   Priority: CLI --test-filter > set test_filter
 # - REQUIRED: The whole section is pre-defined batch of various lifecycle event sets
 # ---------------------------------------------------------------------------
 [tests.set]

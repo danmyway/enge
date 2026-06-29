@@ -162,7 +162,9 @@ def _configure_submit_test(spec, ctx, shared_archive_filename):
         or spec.effective_values.get("git_ref")
         or ctx.tests.get("git_ref")
     )
-    submit_test.testfilter = getattr(ctx.cli_args, "testfilter", None)
+    submit_test.testfilter = getattr(
+        ctx.cli_args, "testfilter", None
+    ) or spec.effective_values.get("test_filter")
     submit_test.test_name = getattr(ctx.cli_args, "test", None)
     submit_test.plan = spec.plan.rstrip("/") if spec.plan else None
     submit_test.business_unit_tag = ctx.testing_farm.get("cloud_resources_tag")
@@ -223,7 +225,10 @@ def _build_plan_filter(spec, ctx):
                 VERBOSE, f"Generated base non-tier plan filter: {base_plan_filter}"
             )
         cli_planfilter = getattr(ctx.cli_args, "planfilter", None)
-        planfilter = cli_planfilter or tier_plan_filter or base_plan_filter
+        set_planfilter = spec.effective_values.get("plan_filter")
+        planfilter = (
+            cli_planfilter or set_planfilter or tier_plan_filter or base_plan_filter
+        )
         if spec.plan:
             LOGGER.log(VERBOSE, f"Using specific plan: {spec.plan}")
         return planfilter

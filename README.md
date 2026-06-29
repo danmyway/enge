@@ -399,6 +399,23 @@ TARGET_RELEASE_URL = "https://some.url/to-the-target"
 EXPERIMENTAL = "true"
 ```
 
+**FMF Filters:**
+
+Test sets can define `plan_filter` and `test_filter` to bake FMF filter expressions into the set, avoiding repeated CLI `--plan-filter`/`--test-filter` usage:
+
+```toml
+[tests.set.custom-scope]
+source = "9.7"
+tiers = ["tier0"]
+architectures = ["x86_64"]
+git_ref = "main"
+plan_filter = "tag:custom & enabled:true"  # overrides tier-generated plan filter
+test_filter = "tag:fast"                   # passed to Testing Farm as test filter
+```
+
+Priority: `CLI --plan-filter` > set `plan_filter` > tier-generated filter.
+Priority: `CLI --test-filter` > set `test_filter`.
+
 When a test set defines multiple tiers and architectures, a separate payload is generated for every combination of tier and architecture. If the test set also includes specific plans, each (tier, architecture, plan) combination generates a separate request.
 
 **Usage:**

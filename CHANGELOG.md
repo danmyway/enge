@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Set-level `plan_filter` and `test_filter` config keys: define FMF filters per test set instead of passing `--plan-filter`/`--test-filter` on every invocation. Priority: CLI > set > tier-generated.
 - Automatic `skip_guest_setup` pipeline setting for RHUI source composes (`RHEL-<major>-rhui`, `RHEL-<major>-sap-hana-rhui`, `RHEL-<major>-sap-netweaver-rhui`)
 - Short flags: `-s` (source), `-t` (target), `-T` (tier), `-p` (plan), `-S` (set), `-n` (dryrun)
 - Verbosity control: `-v` for VERBOSE level, `-vv` / `--debug` for DEBUG level
