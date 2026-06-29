@@ -49,7 +49,7 @@ class CancelJobs:
         LOGGER.info(f"Found {len(self.req_url_list)} task(s) to cancel")
 
         # Get authorization header using the same method as rerun
-        submit = SubmitTest()
+        submit = SubmitTest(self.ctx)
         submit.api_key = self.ctx.testing_farm.get("api_key")
         req_header, _ = submit.build_payload()
 
