@@ -46,7 +46,8 @@ def setup_logging():
     configure_console(output_format)
 
     handler = EngeLogHandler()
-    logging.basicConfig(level=log_level, handlers=[handler], format="%(message)s")
+    logging.basicConfig(level=logging.WARNING, handlers=[handler], format="%(message)s")
+    logging.getLogger("enge").setLevel(log_level)
 
 
 def _handle_list_sets():
