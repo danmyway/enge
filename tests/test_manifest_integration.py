@@ -12,11 +12,8 @@ from unittest.mock import patch
 
 from enge.utils.manifest import ManifestWriter
 from enge.utils.ulid import generate_ulid
-from enge.report.__main__ import (
-    _handle_list,
-    _parse_tasks_impl,
-    _resolve_manifest_tasks,
-)
+from enge.report.__main__ import _handle_list
+from enge.utils.task_resolver import _parse_tasks_impl, _resolve_manifest_tasks
 
 
 def _make_ctx(runs_dir, latest, **cli_overrides):

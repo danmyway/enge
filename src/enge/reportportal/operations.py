@@ -22,7 +22,7 @@ from enge.utils import parse_date_arg
 from enge.utils.globals import ExitCode
 from enge.utils.http_client import http_get
 from enge.report.concurrent_parser import ConcurrentRequestParser
-from enge.report.__main__ import parse_tasks
+from enge.utils.task_resolver import parse_tasks
 
 from enge.reportportal.utils import (
     parse_size_string,

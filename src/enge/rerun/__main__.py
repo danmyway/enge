@@ -12,7 +12,8 @@ from rich import box
 
 from enge.dispatch.pin_compose import repin_compose
 from enge.dispatch.tf_send_request import SubmitTest
-from enge.report.__main__ import parse_tasks_with_map, parse_request_xunit
+from enge.report.__main__ import parse_request_xunit
+from enge.utils.task_resolver import parse_tasks_with_map
 from enge.utils.app_context import AppContext
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
 from enge.utils.console import console

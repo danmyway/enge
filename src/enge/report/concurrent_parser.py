@@ -804,7 +804,7 @@ def parse_request_xunit_concurrent(
         Tuple of (parsed_dict, retval) where retval is the worst exit code.
     """
     if request_url_list is None or tasks_source is None:
-        from enge.report.__main__ import parse_tasks
+        from enge.utils.task_resolver import parse_tasks
 
         parsed_result = parse_tasks(ctx)
         request_url_list = parsed_result[0] or []

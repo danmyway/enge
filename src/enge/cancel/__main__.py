@@ -10,7 +10,7 @@ from rich.table import Table
 from enge.utils.http_client import http_delete
 
 from enge.dispatch.tf_send_request import SubmitTest
-from enge.report.__main__ import parse_tasks
+from enge.utils.task_resolver import parse_tasks
 from enge.utils.console import console
 from enge.utils.app_context import AppContext
 from enge.utils.errors import ValidationError, UserAbort, EngeError

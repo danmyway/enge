@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Set-level `plan_filter` and `test_filter` config keys: define FMF filters per test set instead of passing `--plan-filter`/`--test-filter` on every invocation. Priority: CLI > set > tier-generated.
 - JSON manifest store: dispatch state moved from `/tmp/enge_latest_jobs` + filename-tagged archive files to XDG-compliant JSON manifests under `~/.local/share/enge/runs/`. Each invocation writes a single versioned manifest with structured per-request metadata (task_id, set, tier, arch, plan, composes, artifacts URL)
 - `enge report --list`: run browser that replaces visual filename scanning — displays a rich table of all manifests in the store, filterable by `--set/--tier/--arch/--tag/--since/--until`
-- `--run <run_id>` flag on `report` and `rerun`: select a specific manifest by ID (pair with `--list` to browse → pick → act)
+- `--run <run_id>` flag on `report`, `rerun`, and `cancel`: select a specific manifest by ID (pair with `--list` to browse → pick → act)
 - Structured manifest filters: `--set`, `--tier`, `--arch`, `--tag` match against manifest context and per-request fields (no regex needed)
 - `enge migrate-archive`: one-time subcommand converting legacy `~/.enge/jobs_archive/` files into synthetic manifests with `origin="migrated"`. Non-destructive, idempotent
 - Rerun lineage: rerun manifests carry `parent_run_id` linking to the original run, replacing the `.rerun` filename suffix
@@ -26,6 +26,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `finish --enrich` combined flow: enrich artifact logs then finish the launch in one command
 
 ### Changed
+- **Cancel reads manifest store**: `enge cancel` defaults to the latest manifest, and `--run <id>` selects a specific run. Legacy fallback still works for pre-migration files
+- Task-ID resolution logic lifted from `report/__main__` to `utils/task_resolver` — all consumers (report, rerun, cancel, reportportal) import from the shared module
 - **State store moved**: dispatch write path no longer touches `/tmp/enge_latest_jobs`, the CWD timestamped copy, or filename-tagged archive files. All state writes go to XDG JSON manifests. External scripts reading `/tmp/enge_latest_jobs` must migrate to the manifest store or `enge report --list --run`
 - Report exit-code precedence is now severity-ranked error-dominates (3 > 2 > 4): a result set mixing test errors, failures, and missing results returns the most severe code (3, error) where it previously returned whichever was numerically highest (4, missing). Exit codes are now defined once as the `ExitCode` enum in `utils/globals.py`; missing results are rerun candidates and no longer mask a real error.
 - Migrated terminal output from prettytable/ANSI to rich library (tables, panels, styled text)

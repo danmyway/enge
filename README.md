@@ -131,7 +131,7 @@ Enge provides several commands for comprehensive test workflow management:<br>
 `test` feeds the request payload with provided config options or arguments and dispatches a test job to the Testing Farm.<br>
 `report` outputs the test results back to the command line.<br>
 `rerun` re-dispatches failed or errored test jobs.<br>
-`cancel` cancels running or queued Testing Farm tasks.
+`cancel` cancels running or queued Testing Farm tasks. Reads the same input as the report module — default is the latest manifest; use `--run <id>`, `--file`, or `--input` to select specific runs.
 
 #### Common Options
 
@@ -909,11 +909,31 @@ enge rerun --run <run_id> --set-tag rc-revalidation
 enge rerun --get-tag "rc.*" --set-tag rerun
 ```
 
+##### Cancel
+Cancel running or queued Testing Farm tasks.
+Reads the same input as report and rerun — default is the latest manifest; use `--run <id>`, `--file`, or `--input` to select specific runs.
+Use `--dry-run` to preview which tasks would be cancelled without sending DELETE requests.
+
+```
+# Cancel tasks from the latest run
+enge cancel
+
+# Cancel a specific run by manifest ID
+enge cancel --run <run_id>
+
+# Cancel from a file or direct UUID
+enge cancel -f my_jobs_file
+enge cancel -i 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b
+
+# Preview what would be cancelled
+enge cancel --run <run_id> --dry-run
+```
+
 ##### Manifest Store and Run History
 
 Each `enge test` or `enge rerun` invocation writes a JSON manifest to `~/.local/share/enge/runs/`. Manifests record structured per-request metadata (task ID, set, tier, architecture, plan, composes, artifacts URL) and are identified by a time-sortable ULID. A latest pointer at `~/.local/state/enge/latest` tracks the newest run.
 
-> **MIGRATION NOTE**: The old `/tmp/enge_latest_jobs` file and `~/.enge/jobs_archive/` filename-tagged files are no longer written. External scripts that read these files must migrate to `enge report --list`/`--run` or read the manifest JSON directly. The read-only legacy bridge inside enge still reads old files so `enge report` and `enge rerun` work against pre-migration runs.
+> **MIGRATION NOTE**: The old `/tmp/enge_latest_jobs` file and `~/.enge/jobs_archive/` filename-tagged files are no longer written. External scripts that read these files must migrate to `enge report --list`/`--run` or read the manifest JSON directly. The read-only legacy bridge inside enge still reads old files so `enge report`, `enge rerun`, and `enge cancel` work against pre-migration runs.
 
 **Browsing and filtering runs:**
 
