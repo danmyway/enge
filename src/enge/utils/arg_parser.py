@@ -725,6 +725,12 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
     # Input sources
     _add_input_source_args(cancel)
 
+    cancel.add_argument(
+        "--run",
+        metavar="RUN_ID",
+        help="Select a specific run by manifest ID to cancel.",
+    )
+
     # Cancel control
     _add_dryrun_arg(
         cancel,
