@@ -215,7 +215,3 @@ def main(ctx: AppContext):
         LOGGER.error(f"Unexpected error in cancel operation: {e}")
 
         raise EngeError("Unexpected error in cancel operation") from e
-
-
-if __name__ == "__main__":
-    main()
