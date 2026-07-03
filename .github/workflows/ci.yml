@@ -16,9 +16,20 @@ jobs:
         with:
           python-version: "3.11"
       - uses: pre-commit/action@v3.0.1
+      - name: Install project for type checking
+        run: |
+          sudo apt-get install -y libxml2-dev libxslt-dev libkrb5-dev
+          pip install -e . mypy
+      - name: Type check (mypy)
+        run: mypy src/enge
 
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tz: [UTC, America/Los_Angeles]
+    env:
+      TZ: ${{ matrix.tz }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -28,4 +39,7 @@ jobs:
           cache-dependency-path: setup.cfg
       - run: sudo apt-get install -y libxml2-dev libxslt-dev libkrb5-dev
       - run: pip install -e . pytest
-      - run: python -m pytest tests/ -q
+      - name: Run tests (TZ=${{ matrix.tz }})
+        run: python -m pytest tests/ -q
+      - name: Collector parity guard
+        run: python scripts/check_collector_parity.py
