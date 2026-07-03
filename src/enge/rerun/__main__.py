@@ -664,7 +664,7 @@ def _create_rerun_launch_for_payload(
 
     if is_dryrun:
         try:
-            rp_launch = ReportPortalLaunch()
+            rp_launch = ReportPortalLaunch()  # type: ignore[call-arg]  # baseline — see MYPY_TRIAGE.md
             payload_data = rp_launch.generate_launch_payload(
                 name=launch_name,
                 context=rerun_context,
@@ -683,7 +683,7 @@ def _create_rerun_launch_for_payload(
             return None
     else:
         try:
-            rp_launch = ReportPortalLaunch()
+            rp_launch = ReportPortalLaunch()  # type: ignore[call-arg]  # baseline — see MYPY_TRIAGE.md
             launch_uuid = rp_launch.create_launch(
                 name=launch_name,
                 context=rerun_context,
@@ -867,7 +867,3 @@ def main(ctx: AppContext):
             )
 
         submit.print_header = False
-
-
-if __name__ == "__main__":
-    main()

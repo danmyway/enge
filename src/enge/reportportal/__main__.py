@@ -13,7 +13,6 @@ live in :mod:`enge.reportportal.utils`.  High-level orchestration
 
 import logging
 import json
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
@@ -1080,7 +1079,3 @@ def main(ctx) -> int:
     except EngeError as e:
         LOGGER.error(f"Unexpected error: {e}")
         return ExitCode.EXCEPTION
-
-
-if __name__ == "__main__":
-    sys.exit(main())
