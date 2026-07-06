@@ -49,7 +49,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `src/__init__.py` (src directory must not be a Python package)
 
 ### Fixed
-- ReportPortal artifact log levels were wrong for four artifact types: `test_debug.log`, `leapp-preupgrade.log`, and `leapp.out` were uploaded at INFO instead of ERROR; `tmt-log` was uploaded at INFO instead of WARN. Caused by missing commas between adjacent string literals (Python concatenation) and a bare-string value instead of a 1-tuple in the `ARTIFACT_LOG_LEVELS` mapping (bug present since initial RP log handling, ca53cfb)
+- ReportPortal enrichment now uploads all artifact logs at INFO level uniformly. The previous per-artifact level mapping (ERROR for leapp/test logs, WARN for tmt-log) was both buggy (missing commas caused four names to fall through to INFO anyway) and premature — a curated level mapping will be designed separately
 - Empty-string config values (`""`) are now treated as absent at every layer; the next
   precedence layer (default config) is inherited instead of being masked. A WARNING is
   logged per key where this substitution occurs. Previously `""` was treated as an

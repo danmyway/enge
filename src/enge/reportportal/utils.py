@@ -83,18 +83,9 @@ class ArtifactFile:
 
 # Maps RP log level → artifact names uploaded at that level.
 # Anything not listed uses DEFAULT_ARTIFACT_LOG_LEVEL.
-ARTIFACT_LOG_LEVELS: Dict[str, tuple] = {
-    "ERROR": (
-        "tmt-verbose-log",
-        "testout.log",
-        "test_debug.log",
-        "leapp-preupgrade.log",
-        "leapp.out",
-        "leapp-report.txt",
-        "leapp-report.json",
-    ),
-    "WARN": ("tmt-log",),
-}
+# Currently empty: all artifacts upload at INFO until a curated
+# per-artifact level mapping is designed.
+ARTIFACT_LOG_LEVELS: Dict[str, tuple] = {}
 
 DEFAULT_ARTIFACT_LOG_LEVEL = "INFO"
 
