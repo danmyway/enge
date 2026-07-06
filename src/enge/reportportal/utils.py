@@ -87,11 +87,13 @@ ARTIFACT_LOG_LEVELS: Dict[str, tuple] = {
     "ERROR": (
         "tmt-verbose-log",
         "testout.log",
-        "test_debug.log" "leapp-preupgrade.log" "leapp.out",
+        "test_debug.log",
+        "leapp-preupgrade.log",
+        "leapp.out",
         "leapp-report.txt",
         "leapp-report.json",
     ),
-    "WARN": ("tmt-log"),
+    "WARN": ("tmt-log",),
 }
 
 DEFAULT_ARTIFACT_LOG_LEVEL = "INFO"
