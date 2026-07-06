@@ -49,7 +49,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `src/__init__.py` (src directory must not be a Python package)
 
 ### Fixed
-- Multi-set dispatch (`-S setA -S setB`) previously resolved build artifacts from the first set's configuration for ALL sets; each set now resolves its own `copr_api`/`brew_api` `build_references` (precedence: CLI `--copr`/`--brew` > set-level config > run-level config)
+- Multi-set dispatch (`-S setA -S setB`) previously resolved build artifacts from the first set's configuration for ALL sets; each set now resolves its own `copr_api`/`brew_api` `build_references` (per-family precedence, evaluated independently: CLI `--copr`/`--brew` > set-level config > run-level config)
 - ReportPortal timestamps (launch end-times, log upload times) were sent in local time mislabeled as UTC; now genuinely UTC
 - Rerun RP launch creation crashed with `TypeError` — `ReportPortalLaunch()` was called without the required `ctx` argument on both the dry-run and real launch paths
 - ReportPortal enrichment now uploads all artifact logs at INFO level uniformly. The previous per-artifact level mapping (ERROR for leapp/test logs, WARN for tmt-log) was both buggy (missing commas caused four names to fall through to INFO anyway) and premature — a curated level mapping will be designed separately
