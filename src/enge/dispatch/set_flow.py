@@ -282,7 +282,15 @@ def _build_tmt_context_and_env(spec, per_set_event, ctx, req_ctx):
 
 
 def _resolve_spec_artifact_refs(spec, ctx):
-    """Derive per-spec artifact references with CLI > set-level > run-level precedence."""
+    """Derive per-spec artifact references with CLI > set-level > run-level precedence.
+
+    Each artifact family (copr, brew) is resolved independently — a CLI
+    override in one family must not suppress set-level resolution in the
+    other.  Within a family, refs and the api dict travel together: when
+    refs come from the set level, the api dict comes from the same
+    set-level section; when refs fall back to run-level, the api dict
+    falls back with them.
+    """
     cli_copr = getattr(ctx.cli_args, "copr", None)
     cli_brew = getattr(ctx.cli_args, "brew", None)
 
@@ -291,32 +299,29 @@ def _resolve_spec_artifact_refs(spec, ctx):
     set_copr_refs = set_copr_api.get("build_references")
     set_brew_refs = set_brew_api.get("build_references")
 
-    if cli_copr or cli_brew:
+    if cli_copr:
         copr_refs = ctx.copr_references
-        brew_refs = ctx.brew_references
         copr_api = ctx.copr_api
-        brew_api = ctx.brew_api
+    elif set_copr_refs:
+        copr_refs = (
+            list(set_copr_refs) if isinstance(set_copr_refs, list) else [set_copr_refs]
+        )
+        copr_api = set_copr_api
     else:
-        if set_copr_refs:
-            copr_refs = (
-                list(set_copr_refs)
-                if isinstance(set_copr_refs, list)
-                else [set_copr_refs]
-            )
-        else:
-            copr_refs = ctx.copr_references
+        copr_refs = ctx.copr_references
+        copr_api = ctx.copr_api
 
-        if set_brew_refs:
-            brew_refs = (
-                list(set_brew_refs)
-                if isinstance(set_brew_refs, list)
-                else [set_brew_refs]
-            )
-        else:
-            brew_refs = ctx.brew_references
-
-        copr_api = set_copr_api or ctx.copr_api
-        brew_api = set_brew_api or ctx.brew_api
+    if cli_brew:
+        brew_refs = ctx.brew_references
+        brew_api = ctx.brew_api
+    elif set_brew_refs:
+        brew_refs = (
+            list(set_brew_refs) if isinstance(set_brew_refs, list) else [set_brew_refs]
+        )
+        brew_api = set_brew_api
+    else:
+        brew_refs = ctx.brew_references
+        brew_api = ctx.brew_api
 
     return {
         "copr_references": copr_refs,

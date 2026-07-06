@@ -467,6 +467,81 @@ class TestPerSetArtifactReferences(unittest.TestCase):
             "CLI --brew must override set-level build_references",
         )
 
+    def test_cli_brew_does_not_suppress_per_set_copr_references(self):
+        """CLI --brew must win the brew family only; copr must still resolve per-set."""
+        from enge.dispatch.set_flow import _resolve_artifacts
+
+        ctx = MagicMock()
+        ctx.cli_args = MagicMock()
+        ctx.cli_args.copr = None
+        ctx.cli_args.brew = "cli-brew-override"
+        ctx.copr_reference = "pkg-alpha-copr"
+        ctx.copr_references = ["pkg-alpha-copr"]
+        ctx.copr_api = {"package": "leapp", "repository": "oamg/leapp"}
+        ctx.brew_reference = "cli-brew-override"
+        ctx.brew_references = ["cli-brew-override"]
+        ctx.brew_api = {"package": "leapp"}
+        ctx.project = {"name": "leapp"}
+
+        source_spec = {"major": 8, "minor": 10, "compose_name": "RHEL-8.10.0"}
+        target_spec = {"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"}
+
+        spec = RequestSpec(
+            set_name="beta",
+            tier="tier0",
+            plan=None,
+            arch="x86_64",
+            source_spec=source_spec,
+            target_spec=target_spec,
+            upgrade_path="rhel-8.10-to-9.4",
+            effective_values={
+                "copr_api": {
+                    "package": "leapp",
+                    "repository": "oamg/leapp",
+                    "build_references": ["pkg-beta-copr"],
+                },
+                "brew_api": {},
+            },
+        )
+
+        captured_ctxs = []
+
+        class SpyResolver:
+            def resolve_builds(self, compose_name, ctx):
+                captured_ctxs.append(ctx)
+                return [
+                    {"compose": compose_name, "distro": "rhel-8.10", "build_id": None}
+                ]
+
+        tmt_context = {"distro": "rhel-8.10"}
+        submit = MagicMock()
+        submit.artifacts = []
+        resolver = SpyResolver()
+
+        _resolve_artifacts(spec, submit, tmt_context, ctx, "compose", resolver)
+
+        self.assertEqual(len(captured_ctxs), 1)
+        beta_ctx = captured_ctxs[0]
+        self.assertEqual(
+            beta_ctx.brew_references,
+            ["cli-brew-override"],
+            "CLI --brew must win the brew family",
+        )
+        self.assertEqual(
+            beta_ctx.copr_references,
+            ["pkg-beta-copr"],
+            "copr must resolve from set-level, not be suppressed by CLI --brew",
+        )
+        self.assertEqual(
+            beta_ctx.copr_api,
+            {
+                "package": "leapp",
+                "repository": "oamg/leapp",
+                "build_references": ["pkg-beta-copr"],
+            },
+            "copr_api dict must travel with set-level copr refs",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
