@@ -629,7 +629,7 @@ def _get_next_rerun_tag(tags: List[str]) -> str:
 
 
 def _create_rerun_launch_for_payload(
-    payload: Dict[str, Any], is_dryrun: bool
+    payload: Dict[str, Any], is_dryrun: bool, ctx: AppContext
 ) -> Optional[str]:
     """
     Create a ReportPortal launch for a single rerun payload.
@@ -664,7 +664,7 @@ def _create_rerun_launch_for_payload(
 
     if is_dryrun:
         try:
-            rp_launch = ReportPortalLaunch()  # type: ignore[call-arg]  # baseline — see MYPY_TRIAGE.md
+            rp_launch = ReportPortalLaunch(ctx)
             payload_data = rp_launch.generate_launch_payload(
                 name=launch_name,
                 context=rerun_context,
@@ -683,7 +683,7 @@ def _create_rerun_launch_for_payload(
             return None
     else:
         try:
-            rp_launch = ReportPortalLaunch()  # type: ignore[call-arg]  # baseline — see MYPY_TRIAGE.md
+            rp_launch = ReportPortalLaunch(ctx)
             launch_uuid = rp_launch.create_launch(
                 name=launch_name,
                 context=rerun_context,
@@ -750,7 +750,7 @@ def main(ctx: AppContext):
                 payload, "environments.0.tmt.context.rerun_of", original_uuid
             )
 
-        launch_uuid = _create_rerun_launch_for_payload(payload, is_dryrun)
+        launch_uuid = _create_rerun_launch_for_payload(payload, is_dryrun, ctx)
 
         if launch_uuid:
             if launch_uuid == "dryrun_placeholder":
