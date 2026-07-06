@@ -1,16 +1,19 @@
 """Tests for rerun tag inheritance and manifest lineage."""
 
+import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from tests._helpers import make_app_context
 
 from enge.rerun.__main__ import (
     _extract_tags_from_filename,
     _get_next_rerun_tag,
     _unique_preserve,
 )
-from enge.utils.manifest import ManifestReader, ManifestWriter
+from enge.utils.manifest import ManifestWriter
 from enge.utils.ulid import generate_ulid
 
 
@@ -31,7 +34,43 @@ class TestLegacyRerunTagInheritance(unittest.TestCase):
         self.assertEqual(result, ["enge", "automated", "rerun", "tier0"])
 
 
-class TestManifestRerunLineage(unittest.TestCase):
+TASK_UUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+def _mock_tf_response():
+    resp = MagicMock()
+    resp.json.return_value = {
+        "id": TASK_UUID,
+        "environments_requested": [{"os": {"compose": "RHEL-9.0"}, "arch": "x86_64"}],
+        "test": {"fmf": {"name": "/plan/tier0"}},
+    }
+    return resp
+
+
+def _parsed_dict():
+    return {
+        TASK_UUID: {
+            "source_compose": "RHEL-9.0",
+            "testsuites": [
+                {
+                    "testsuite_name": "/plan/tier0",
+                    "testsuite_result": "FAILED",
+                    "testsuite_arch": "x86_64",
+                    "testcases": [
+                        {
+                            "testcase_name": "test::failing",
+                            "testcase_result": "FAILED",
+                        },
+                    ],
+                }
+            ],
+        },
+    }
+
+
+class TestRerunManifestLineageWiring(unittest.TestCase):
+    """Wiring-level tests: exercise rerun main() and verify child manifest lineage."""
+
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmpdir.name)
@@ -41,72 +80,102 @@ class TestManifestRerunLineage(unittest.TestCase):
     def tearDown(self):
         self._tmpdir.cleanup()
 
-    def test_rerun_carries_parent_run_id(self):
+    def _find_child_manifest(self, exclude_id=None):
+        manifests = list(self.runs_dir.glob("*.json"))
+        if exclude_id:
+            manifests = [m for m in manifests if m.stem != exclude_id]
+        self.assertEqual(
+            len(manifests), 1, f"Expected 1 child manifest, got {len(manifests)}"
+        )
+        return json.loads(manifests[0].read_text())
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_manifest_source_wires_parent_run_id_and_inherited_tags(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _mock_repin, _mock_rp
+    ):
         parent_id = generate_ulid()
         parent = ManifestWriter(
             run_id=parent_id,
             command="test",
             argv=["enge", "test"],
-            tags=["nightly"],
+            tags=["nightly", "milestone-x"],
         )
-        parent.add_request("uuid-orig", tier="tier0", arch="x86_64")
+        parent.add_request(TASK_UUID, tier="tier0", arch="x86_64")
         parent.flush(self.runs_dir, self.latest)
 
-        time.sleep(0.002)
-        child = ManifestWriter(
-            run_id=generate_ulid(),
-            command="rerun",
-            argv=["enge", "rerun"],
-            tags=["nightly", "rerun"],
-            parent_run_id=parent_id,
+        api_url = f"https://tf.example.com/api/{TASK_UUID}"
+        mock_parse.return_value = (
+            [api_url],
+            f"manifest:{parent_id}",
+            {TASK_UUID: None, api_url: None},
         )
-        child.add_request("uuid-rerun", tier="tier0", arch="x86_64")
-        child.flush(self.runs_dir, self.latest)
+        mock_xunit.return_value = _parsed_dict()
+        mock_http.return_value = _mock_tf_response()
 
-        latest = ManifestReader.load_latest(self.latest)
-        self.assertEqual(latest["command"], "rerun")
-        self.assertEqual(latest["parent_run_id"], parent_id)
-        self.assertIn("nightly", latest["tags"])
-        self.assertIn("rerun", latest["tags"])
+        mock_submit = MagicMock()
+        mock_submit.set_tag = ["cli-tag"]
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+        mock_submit_cls.return_value = mock_submit
 
-    def test_rerun_child_has_own_composes(self):
-        """Child requests may carry different composes than parent."""
-        parent = ManifestWriter(
-            run_id=generate_ulid(),
-            command="test",
-            argv=["enge", "test"],
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
         )
-        parent.add_request(
-            "uuid-orig",
-            source_compose="RHEL-9.7-Nightly-20260620",
-            target_compose="RHEL-10.0-Nightly-20260620",
-        )
-        parent.flush(self.runs_dir, self.latest)
 
-        time.sleep(0.002)
-        child = ManifestWriter(
-            run_id=generate_ulid(),
-            command="rerun",
-            argv=["enge", "rerun"],
-            parent_run_id=parent.run_id,
-        )
-        child.add_request(
-            "uuid-rerun",
-            source_compose="RHEL-9.7-Nightly-20260622",
-            target_compose="RHEL-10.0-Nightly-20260622",
-        )
-        child.flush(self.runs_dir, self.latest)
+        from enge.rerun.__main__ import main
 
-        child_data = ManifestReader.load_latest(self.latest)
-        self.assertEqual(
-            child_data["requests"][0]["source_compose"],
-            "RHEL-9.7-Nightly-20260622",
+        main(ctx)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+
+        self.assertEqual(child["parent_run_id"], parent_id)
+        self.assertEqual(child["tags"], ["nightly", "milestone-x", "cli-tag", "rerun"])
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_raw_input_has_no_parent_and_cli_tags_only(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _mock_repin, _mock_rp
+    ):
+        api_url = f"https://tf.example.com/api/{TASK_UUID}"
+        mock_parse.return_value = (
+            [api_url],
+            None,
+            {TASK_UUID: None, api_url: None},
         )
-        parent_data = ManifestReader.get_run(self.runs_dir, parent.run_id)
-        self.assertEqual(
-            parent_data["requests"][0]["source_compose"],
-            "RHEL-9.7-Nightly-20260620",
+        mock_xunit.return_value = _parsed_dict()
+        mock_http.return_value = _mock_tf_response()
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = ["cli-tag"]
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
         )
+
+        from enge.rerun.__main__ import main
+
+        main(ctx)
+
+        child = self._find_child_manifest()
+
+        self.assertIsNone(child["parent_run_id"])
+        self.assertEqual(child["tags"], ["cli-tag", "rerun"])
 
 
 if __name__ == "__main__":
