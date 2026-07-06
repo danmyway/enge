@@ -49,6 +49,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `src/__init__.py` (src directory must not be a Python package)
 
 ### Fixed
+- Rerun RP launch creation crashed with `TypeError` — `ReportPortalLaunch()` was called without the required `ctx` argument on both the dry-run and real launch paths
 - ReportPortal enrichment now uploads all artifact logs at INFO level uniformly. The previous per-artifact level mapping (ERROR for leapp/test logs, WARN for tmt-log) was both buggy (missing commas caused four names to fall through to INFO anyway) and premature — a curated level mapping will be designed separately
 - Empty-string config values (`""`) are now treated as absent at every layer; the next
   precedence layer (default config) is inherited instead of being masked. A WARNING is
