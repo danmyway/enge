@@ -724,7 +724,6 @@ def main(ctx: AppContext):
     submit = SubmitTest(ctx)
     base_tags = submit.set_tag or []
 
-    submit.print_header = True
     submit.api_key = ctx.testing_farm.get("api_key")
 
     # Build authorization header
@@ -865,5 +864,3 @@ def main(ctx: AppContext):
             manifest_writer.flush(
                 Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest)
             )
-
-        submit.print_header = False
