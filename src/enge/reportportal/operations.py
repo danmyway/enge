@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from enge.utils import parse_date_arg
@@ -336,7 +336,10 @@ def resolve_from_tasks(
                 LOGGER.warning(
                     "No timestamp found in XML, " "using current time as fallback"
                 )
-                end_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+                end_time = (
+                    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+                    + "Z"
+                )
 
             artifacts_url = (
                 task_result.results_xml_url.rsplit("/results.xml", 1)[0]
@@ -724,7 +727,9 @@ def normalize_for_finish(
     and end time.  Skips launches with in-progress items or active TF
     tasks.
     """
-    fallback_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    fallback_time = (
+        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    )
     normalized: List[Dict[str, Any]] = []
 
     for launch in raw_launches:
