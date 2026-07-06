@@ -15,7 +15,7 @@ import logging
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Dict, Any, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from enge.utils.http_client import http_get, http_post, http_put, http_delete
 from requests.exceptions import RequestException
@@ -119,9 +119,9 @@ class ReportPortalLaunch:
         launch_data: Dict[str, Any] = {
             "name": name,
             "description": description
-            or f"Launch created by enge on {datetime.now().isoformat()}",
+            or f"Launch created by enge on {datetime.now(timezone.utc).isoformat()}",
             "mode": "DEFAULT",
-            "startTime": int(datetime.now().timestamp() * 1000),
+            "startTime": int(datetime.now(timezone.utc).timestamp() * 1000),
             "tags": ["enge", "automated"],
         }
 
@@ -670,7 +670,7 @@ class ReportPortalLaunch:
             f"Downloaded {len(download_results)} artifact(s), " f"preparing log entries"
         )
 
-        now_ms = str(int(datetime.now().timestamp() * 1000))
+        now_ms = str(int(datetime.now(timezone.utc).timestamp() * 1000))
 
         skipped_names: List[str] = []
         for artifact, content, item_uuid in download_results:

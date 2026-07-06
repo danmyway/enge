@@ -11,7 +11,7 @@ import logging
 import os
 import re
 from typing import Optional, Dict, Any, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 
 import lxml.etree
@@ -181,7 +181,7 @@ def convert_to_iso_format(timestamp_str: str) -> str:
         LOGGER.warning(
             f"Could not parse timestamp '{timestamp_str}', using current time"
         )
-        return datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def extract_latest_timestamp_from_xml(xml_content: str) -> Optional[str]:
