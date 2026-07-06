@@ -14,6 +14,7 @@ from enge.dispatch.pin_compose import repin_compose
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_request_xunit
 from enge.utils.task_resolver import parse_tasks_with_map
+from enge.utils.manifest import ManifestReader
 from enge.utils.app_context import AppContext
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
 from enge.utils.console import console
@@ -80,6 +81,29 @@ def _extract_tags_from_filename(path: Path) -> List[str]:
         return []
     _, *tag_parts = name.split(".")
     return [part for part in tag_parts if part]
+
+
+def _resolve_parent_lineage(
+    task_source: Optional[Any], runs_dir: str
+) -> "tuple[Optional[str], List[str]]":
+    """Derive parent_run_id and inherited tags from the task resolution source.
+
+    When tasks were resolved from a single manifest (default latest or --run),
+    returns (parent_run_id, parent_tags).  Otherwise returns (None, []).
+    """
+    if not isinstance(task_source, str) or not task_source.startswith("manifest:"):
+        return None, []
+
+    source_id = task_source[len("manifest:") :]
+    if source_id in ("filter", "latest"):
+        return None, []
+
+    try:
+        manifest = ManifestReader.get_run(Path(runs_dir), source_id)
+    except Exception:
+        return None, []
+
+    return manifest.get("run_id", source_id), manifest.get("tags", [])
 
 
 class RerunJobs:
@@ -735,12 +759,16 @@ def main(ctx: AppContext):
     from enge.utils.ulid import generate_ulid
     import sys
 
+    parent_run_id, inherited_tags = _resolve_parent_lineage(
+        jobs.task_source, ctx.manifest_runs_dir
+    )
+
     manifest_writer = ManifestWriter(
         run_id=generate_ulid(),
         command="rerun",
         argv=sys.argv,
-        tags=_unique_preserve([*base_tags, "rerun"]),
-        parent_run_id=None,
+        tags=_unique_preserve([*inherited_tags, *base_tags, "rerun"]),
+        parent_run_id=parent_run_id,
     )
 
     for i, payload in enumerate(jobs.rerun_payloads):
