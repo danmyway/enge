@@ -28,18 +28,20 @@ src/enge/
   dispatch/          test dispatch: __main__ (flow + output), set_flow (per-spec pipeline),
                      tf_send_request (SubmitTest, payload build/POST, task recording),
                      pin_compose (compose resolution)
-  report/            __main__ (tables, -o formats), concurrent_parser (parallel xunit fetch;
-                     ExitCode threaded via TaskResult.retval, severity-precedence aggregation)
+  report/            __main__ (tables, -o formats), concurrent_parser (parallel xunit fetch,
+                     ExitCode via TaskResult.retval, severity-precedence aggregation)
   rerun/             requalify FAILED/ERROR plans and re-dispatch
   cancel/            cancel TF tasks
-  reportportal/      launch finish/enrich/delete operations (subcommands; unified pipeline
-                     via resolvers.py + operations.py)
+  reportportal/      launch finish/enrich/delete subcommands (unified pipeline
+                     via operations.py + utils.py)
   migrate/           migrate-archive subcommand (legacy → manifest conversion)
-  utils/             opt_manager (config+CLI god object), arg_parser, console,
-                     source_target_parser, tf_artifact (COPR/Brew), config_parser,
-                     http_client (use this, never raw requests), errors, globals,
-                     manifest (JSON manifest writer/reader), state_paths (XDG resolution),
-                     ulid (ULID generator), legacy_archive (read-only bridge, deprecated)
+  utils/             opt_manager (config loading + validation: ParsedOpts), app_context
+                     (runtime DI container), globals (ExitCode + worst_exit_code),
+                     task_resolver (shared task-ID resolution: manifest, legacy, -i/-f),
+                     test_attribute_builder (computed test attrs for AppContext),
+                     manifest/state_paths/ulid/legacy_archive (manifest store + XDG paths),
+                     arg_parser, console, source_target_parser, tf_artifact (COPR/Brew),
+                     config_parser, http_client (use this, never raw requests), errors
 tests/               unittest.TestCase style ONLY (see Conventions)
 ```
 
@@ -55,12 +57,14 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   `ParsedOpts` (`utils/opt_manager.py`) handles config loading, env-var
   fallbacks, and validation — it no longer holds computed test attributes
   and no singleton wrapper exists.
-- **~30 deferred in-function imports remain** as circular-import workarounds
-  between dispatch/report/rerun/reportportal modules. Do not "clean them up"
-  casually; most are genuine cross-module cycles (e.g.
+- **39 deferred in-function imports remain** as circular-import workarounds.
+  Do not "clean them up" casually; the surviving genuine cycles are:
   `source_target_parser ↔ dispatch.pin_compose`,
+  `source_target_parser ↔ dispatch.context`,
   `report.__main__ ↔ report.concurrent_parser`,
-  `rerun ↔ reportportal.__main__`).
+  `rerun ↔ reportportal.__main__`,
+  `reportportal_helper ↔ reportportal.__main__`,
+  `reportportal.operations ↔ reportportal.__main__`.
 - **`utils/console.py` exposes `console` as a proxy** delegating to a
   module-private `_current`; `configure_console(output_format)` swaps
   `_current`. Never rebind `console` itself; never construct ad-hoc Consoles
@@ -99,10 +103,12 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   pair), `-S/--set` and `-T/--tier` (selection pair). `-t tier0` is a
   silently-accepted wrong compose name — keep help text and README examples
   exactly consistent with these semantics.
-- **Enrich requires TF task completion** (not NEW/QUEUED/RUNNING/CANCELED) —
-  incomplete runs yield incomplete log sets. The TF-state guard
-  (`_is_tf_task_incomplete`) is the correctness boundary; RP launch status
-  is downstream bookkeeping.
+- **RP operations gate on TF job completeness** via the unified
+  `_is_tf_task_incomplete` predicate in `reportportal/operations.py`
+  (NEW/QUEUED/RUNNING/CANCELED are all incomplete; CANCELED is skipped).
+  RP launch status is downstream bookkeeping, never a correctness gate.
+  Finish/enrich are order-independent once the TF job is terminal;
+  incomplete runs yield incomplete log sets.
 
 ## Conventions
 
@@ -112,13 +118,8 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   behavior gets a test that **fails when the behavior is removed**; when a
   test guards a guard/branch, mutation-check it (break the code, watch the
   test fail, restore). Tests must not require network.
-  - **`parsed_opts` import trap**: never `from enge.utils.opt_manager import
-    parsed_opts` at module level in a test file — pytest's `safe_getattr`
-    inspects all module-level names during collection, which triggers
-    `_LazyParsedOpts.__getattr__` → `_ensure()` → `ParsedOpts()` → `sys.argv`
-    (pytest's own argv), causing an `ArgumentError`. Import the module instead:
-    `import enge.utils.opt_manager as _opt_manager` and access the singleton
-    as `_opt_manager.parsed_opts` only from inside test methods.
+  - Tests construct contexts via `tests/_helpers.make_app_context`; there is
+    no module-level runtime state to patch.
   - **Bypassing `ParsedOpts.__init__`** for isolated method tests: use
     `object.__new__(ParsedOpts)` then set `_validation_hooks = {}`,
     `config = <dict>`, `cli_args = get_arguments(args=[...])`, and
@@ -134,6 +135,10 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   locations) MUST get an entry in the same PR.
 - **Docs drift is a bug**: changing a flag means updating argparse help,
   the epilog examples in `arg_parser.py`, and the README in the same commit.
+- **Timestamps**: every persisted or API-emitted timestamp is UTC
+  (`datetime.now(timezone.utc)`); comparisons (`--since`/`--until`) are UTC;
+  localization is display-only and currently not done. Never store or send
+  naive local time — two shipped bugs came from this.
 - **Secrets**: anything printed or logged that could contain a payload goes
   through `redact_sensitive()` (utils). Real credentials only in the actual
   API request. No partial-token prints (`token[:10]` is still a leak).
@@ -144,6 +149,14 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   `requests.get/post` in new code.
 - **Lint**: ruff config carries a per-file-ignores "ratchet list" for legacy
   monoliths — never ADD entries; remove them as files are refactored.
+- **mypy gate**: `mypy.ini` carries a per-module `disable_error_code`
+  baseline — the same ratchet rule as ruff: never add entries, never widen a
+  module's code list. `call-arg` is NEVER disabled at module level —
+  pre-existing call-arg baseline lines use inline `# type: ignore[call-arg]`
+  with a reason; new call-arg errors must be fixed, not suppressed. CI runs
+  tests under a TZ matrix (UTC + America/Los_Angeles) and a pytest/unittest
+  collector-parity guard; invoke tests as `python -m pytest` from the repo
+  root.
 - For external review, bundle with both refs:
   `git bundle create <name>.bundle devel <branch>` (the `devel..branch`
   range form creates a thin, uncloneable bundle).
