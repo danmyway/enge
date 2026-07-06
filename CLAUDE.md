@@ -57,6 +57,12 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   `ParsedOpts` (`utils/opt_manager.py`) handles config loading, env-var
   fallbacks, and validation — it no longer holds computed test attributes
   and no singleton wrapper exists.
+- **Per-set artifact references** are resolved in
+  `dispatch/set_flow._resolve_spec_artifact_refs()` with precedence:
+  CLI `--copr`/`--brew` > set-level `copr_api`/`brew_api` from
+  `spec.effective_values` > run-level ctx values. The run-level collapse
+  in `build_test_attributes` (`effective_values = individual_test_sets[0]`)
+  remains as the fallback source; single-set and no-set flows are unchanged.
 - **39 deferred in-function imports remain** as circular-import workarounds.
   Do not "clean them up" casually; the surviving genuine cycles are:
   `source_target_parser ↔ dispatch.pin_compose`,
