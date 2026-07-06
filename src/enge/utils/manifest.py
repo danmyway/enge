@@ -165,7 +165,7 @@ class ManifestReader:
         return results
 
     @staticmethod
-    def get_run(runs_dir: Path, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_run(runs_dir: Path, run_id: str) -> Dict[str, Any]:
         from enge.utils.errors import ValidationError
 
         path = runs_dir / f"{run_id}.json"
