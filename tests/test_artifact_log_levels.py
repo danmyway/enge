@@ -1,7 +1,9 @@
 """Tests for artifact log-level mapping in reportportal/utils.py.
 
-Regression tests for missing-comma string concatenation in the ERROR
-tuple and the bare-string (not 1-tuple) WARN value.
+All artifacts currently upload at INFO (the default level). The
+per-artifact level machinery is retained for a future curated mapping;
+these tests lock the current all-INFO behaviour and the structural
+invariant that any future entries must be tuples.
 """
 
 import unittest
@@ -13,49 +15,46 @@ from enge.reportportal.utils import (
 )
 
 
-class TestArtifactLogLevelMapping(unittest.TestCase):
-    """get_artifact_log_level must return the correct level for every
-    artifact name listed in ARTIFACT_LOG_LEVELS."""
+class TestAllArtifactsUploadAtInfo(unittest.TestCase):
+    """Every artifact name must resolve to INFO while the mapping is
+    intentionally empty."""
 
-    # -- Bug #1: three adjacent strings missing commas in the ERROR tuple
-    #    Python concatenates them into one key that no real filename matches.
+    def test_tmt_verbose_log(self):
+        self.assertEqual(get_artifact_log_level("tmt-verbose-log"), "INFO")
 
-    def test_test_debug_log_is_error(self):
-        self.assertEqual(get_artifact_log_level("test_debug.log"), "ERROR")
+    def test_testout_log(self):
+        self.assertEqual(get_artifact_log_level("testout.log"), "INFO")
 
-    def test_leapp_preupgrade_log_is_error(self):
-        self.assertEqual(get_artifact_log_level("leapp-preupgrade.log"), "ERROR")
+    def test_test_debug_log(self):
+        self.assertEqual(get_artifact_log_level("test_debug.log"), "INFO")
 
-    def test_leapp_out_is_error(self):
-        self.assertEqual(get_artifact_log_level("leapp.out"), "ERROR")
+    def test_leapp_preupgrade_log(self):
+        self.assertEqual(get_artifact_log_level("leapp-preupgrade.log"), "INFO")
 
-    # -- Bug #2: ("tmt-log") is a str, not a 1-tuple; iteration yields chars.
+    def test_leapp_out(self):
+        self.assertEqual(get_artifact_log_level("leapp.out"), "INFO")
 
-    def test_tmt_log_is_warn(self):
-        self.assertEqual(get_artifact_log_level("tmt-log"), "WARN")
+    def test_leapp_report_txt(self):
+        self.assertEqual(get_artifact_log_level("leapp-report.txt"), "INFO")
 
-    # -- Unaffected entries that must stay correct after the fix.
+    def test_leapp_report_json(self):
+        self.assertEqual(get_artifact_log_level("leapp-report.json"), "INFO")
 
-    def test_tmt_verbose_log_is_error(self):
-        self.assertEqual(get_artifact_log_level("tmt-verbose-log"), "ERROR")
+    def test_tmt_log(self):
+        self.assertEqual(get_artifact_log_level("tmt-log"), "INFO")
 
-    def test_testout_log_is_error(self):
-        self.assertEqual(get_artifact_log_level("testout.log"), "ERROR")
-
-    def test_leapp_report_txt_is_error(self):
-        self.assertEqual(get_artifact_log_level("leapp-report.txt"), "ERROR")
-
-    def test_leapp_report_json_is_error(self):
-        self.assertEqual(get_artifact_log_level("leapp-report.json"), "ERROR")
-
-    # -- Default level for unlisted names.
-
-    def test_unknown_artifact_gets_default(self):
+    def test_unknown_artifact(self):
         self.assertEqual(get_artifact_log_level("random-file.txt"), "INFO")
 
 
 class TestArtifactLogLevelStructure(unittest.TestCase):
     """Structural invariants on the mapping constants."""
+
+    def test_mapping_is_currently_empty(self):
+        self.assertEqual(len(ARTIFACT_LOG_LEVELS), 0)
+
+    def test_lookup_is_currently_empty(self):
+        self.assertEqual(len(_ARTIFACT_LEVEL_LOOKUP), 0)
 
     def test_all_values_are_tuples(self):
         for level, names in ARTIFACT_LOG_LEVELS.items():
@@ -66,19 +65,6 @@ class TestArtifactLogLevelStructure(unittest.TestCase):
                     f"ARTIFACT_LOG_LEVELS[{level!r}] must be a tuple, "
                     f"got {type(names).__name__}",
                 )
-
-    def test_lookup_contains_all_intended_filenames(self):
-        expected = {
-            "tmt-verbose-log",
-            "testout.log",
-            "test_debug.log",
-            "leapp-preupgrade.log",
-            "leapp.out",
-            "leapp-report.txt",
-            "leapp-report.json",
-            "tmt-log",
-        }
-        self.assertEqual(set(_ARTIFACT_LEVEL_LOOKUP.keys()), expected)
 
 
 if __name__ == "__main__":
