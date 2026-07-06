@@ -247,5 +247,226 @@ class TestSetFlow(unittest.TestCase):
                 )
 
 
+class TestPerSetArtifactReferences(unittest.TestCase):
+    """Regression: multi-set dispatch must resolve each set's own artifact refs."""
+
+    def test_resolve_artifacts_uses_per_set_brew_references(self):
+        """Two sets with different brew_api.build_references must each see their own."""
+        from enge.dispatch.set_flow import _resolve_artifacts
+
+        # --- ctx simulates run-level state collapsed from set 0 (alpha) ---
+        ctx = MagicMock()
+        ctx.cli_args = MagicMock()
+        ctx.cli_args.copr = None
+        ctx.cli_args.brew = None
+        ctx.copr_reference = None
+        ctx.copr_references = []
+        ctx.copr_api = {}
+        ctx.brew_reference = "pkg-alpha-1.0"
+        ctx.brew_references = ["pkg-alpha-1.0"]
+        ctx.brew_api = {"package": "leapp", "build_references": ["pkg-alpha-1.0"]}
+        ctx.project = {"name": "leapp"}
+
+        source_spec = {"major": 8, "minor": 10, "compose_name": "RHEL-8.10.0"}
+        target_spec = {"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"}
+
+        spec_alpha = RequestSpec(
+            set_name="alpha",
+            tier="tier0",
+            plan=None,
+            arch="x86_64",
+            source_spec=source_spec,
+            target_spec=target_spec,
+            upgrade_path="rhel-8.10-to-9.4",
+            effective_values={
+                "brew_api": {"package": "leapp", "build_references": ["pkg-alpha-1.0"]},
+                "copr_api": {},
+            },
+        )
+        spec_beta = RequestSpec(
+            set_name="beta",
+            tier="tier0",
+            plan=None,
+            arch="x86_64",
+            source_spec=source_spec,
+            target_spec=target_spec,
+            upgrade_path="rhel-8.10-to-9.4",
+            effective_values={
+                "brew_api": {"package": "leapp", "build_references": ["pkg-beta-2.0"]},
+                "copr_api": {},
+            },
+        )
+
+        captured_ctxs = []
+
+        class SpyResolver:
+            def resolve_builds(self, compose_name, ctx):
+                captured_ctxs.append(ctx)
+                return [
+                    {"compose": compose_name, "distro": "rhel-8.10", "build_id": None}
+                ]
+
+        tmt_context = {"distro": "rhel-8.10"}
+        submit_alpha = MagicMock()
+        submit_alpha.artifacts = []
+        submit_beta = MagicMock()
+        submit_beta.artifacts = []
+        resolver = SpyResolver()
+
+        _resolve_artifacts(
+            spec_alpha, submit_alpha, tmt_context, ctx, "compose", resolver
+        )
+        _resolve_artifacts(
+            spec_beta, submit_beta, tmt_context, ctx, "compose", resolver
+        )
+
+        self.assertEqual(len(captured_ctxs), 2)
+        alpha_ctx = captured_ctxs[0]
+        beta_ctx = captured_ctxs[1]
+
+        self.assertEqual(
+            alpha_ctx.brew_references,
+            ["pkg-alpha-1.0"],
+            "alpha spec should see alpha's brew references",
+        )
+        self.assertEqual(
+            beta_ctx.brew_references,
+            ["pkg-beta-2.0"],
+            "beta spec should see beta's brew references, not alpha's",
+        )
+        self.assertEqual(
+            beta_ctx.brew_reference,
+            "pkg-beta-2.0",
+            "beta spec should see beta's singular brew reference",
+        )
+
+    def test_resolve_artifacts_uses_per_set_copr_references(self):
+        """Same test for copr_api.build_references."""
+        from enge.dispatch.set_flow import _resolve_artifacts
+
+        ctx = MagicMock()
+        ctx.cli_args = MagicMock()
+        ctx.cli_args.copr = None
+        ctx.cli_args.brew = None
+        ctx.copr_reference = "pkg-alpha-copr"
+        ctx.copr_references = ["pkg-alpha-copr"]
+        ctx.copr_api = {
+            "package": "leapp",
+            "repository": "oamg/leapp",
+            "build_references": ["pkg-alpha-copr"],
+        }
+        ctx.brew_reference = None
+        ctx.brew_references = []
+        ctx.brew_api = {}
+        ctx.project = {"name": "leapp"}
+
+        source_spec = {"major": 8, "minor": 10, "compose_name": "RHEL-8.10.0"}
+        target_spec = {"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"}
+
+        spec_beta = RequestSpec(
+            set_name="beta",
+            tier="tier0",
+            plan=None,
+            arch="x86_64",
+            source_spec=source_spec,
+            target_spec=target_spec,
+            upgrade_path="rhel-8.10-to-9.4",
+            effective_values={
+                "copr_api": {
+                    "package": "leapp",
+                    "repository": "oamg/leapp",
+                    "build_references": ["pkg-beta-copr"],
+                },
+                "brew_api": {},
+            },
+        )
+
+        captured_ctxs = []
+
+        class SpyResolver:
+            def resolve_builds(self, compose_name, ctx):
+                captured_ctxs.append(ctx)
+                return [
+                    {"compose": compose_name, "distro": "rhel-8.10", "build_id": None}
+                ]
+
+        tmt_context = {"distro": "rhel-8.10"}
+        submit = MagicMock()
+        submit.artifacts = []
+        resolver = SpyResolver()
+
+        _resolve_artifacts(spec_beta, submit, tmt_context, ctx, "compose", resolver)
+
+        self.assertEqual(len(captured_ctxs), 1)
+        beta_ctx = captured_ctxs[0]
+        self.assertEqual(
+            beta_ctx.copr_references,
+            ["pkg-beta-copr"],
+            "beta spec should see beta's copr references, not alpha's",
+        )
+        self.assertEqual(
+            beta_ctx.copr_reference,
+            "pkg-beta-copr",
+            "beta spec should see beta's singular copr reference",
+        )
+
+    def test_cli_artifacts_override_per_set_references(self):
+        """CLI --brew/--copr always wins over set-level build_references."""
+        from enge.dispatch.set_flow import _resolve_artifacts
+
+        ctx = MagicMock()
+        ctx.cli_args = MagicMock()
+        ctx.cli_args.copr = None
+        ctx.cli_args.brew = "cli-brew-override"
+        ctx.copr_reference = None
+        ctx.copr_references = []
+        ctx.copr_api = {}
+        ctx.brew_reference = "cli-brew-override"
+        ctx.brew_references = ["cli-brew-override"]
+        ctx.brew_api = {"package": "leapp"}
+        ctx.project = {"name": "leapp"}
+
+        source_spec = {"major": 8, "minor": 10, "compose_name": "RHEL-8.10.0"}
+        target_spec = {"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"}
+
+        spec = RequestSpec(
+            set_name="beta",
+            tier="tier0",
+            plan=None,
+            arch="x86_64",
+            source_spec=source_spec,
+            target_spec=target_spec,
+            upgrade_path="rhel-8.10-to-9.4",
+            effective_values={
+                "brew_api": {"package": "leapp", "build_references": ["pkg-beta-2.0"]},
+                "copr_api": {},
+            },
+        )
+
+        captured_ctxs = []
+
+        class SpyResolver:
+            def resolve_builds(self, compose_name, ctx):
+                captured_ctxs.append(ctx)
+                return [
+                    {"compose": compose_name, "distro": "rhel-8.10", "build_id": None}
+                ]
+
+        tmt_context = {"distro": "rhel-8.10"}
+        submit = MagicMock()
+        submit.artifacts = []
+        resolver = SpyResolver()
+
+        _resolve_artifacts(spec, submit, tmt_context, ctx, "compose", resolver)
+
+        self.assertEqual(len(captured_ctxs), 1)
+        beta_ctx = captured_ctxs[0]
+        self.assertEqual(
+            beta_ctx.brew_references,
+            ["cli-brew-override"],
+            "CLI --brew must override set-level build_references",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
