@@ -61,11 +61,12 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   `dispatch/set_flow._resolve_spec_artifact_refs()` with each artifact
   family (copr, brew) evaluated independently — a CLI override in one
   family does not suppress set-level resolution in the other.  Per-family
-  precedence: CLI `--copr`/`--brew` > set-level `copr_api`/`brew_api`
-  from `spec.effective_values` > run-level ctx values.  Within a family,
-  refs and the api dict travel together (set-level refs pair with the
-  set-level api dict; run-level fallback pairs with the run-level dict).
-  The run-level collapse in `build_test_attributes`
+  effective api dict: per-key merge of run-level ctx dict (base) with
+  set-level `copr_api`/`brew_api` from `spec.effective_values` layered
+  over it; set-level keys win per-key, empty-string values inherit the
+  run-level value.  References precedence: CLI `--copr`/`--brew` >
+  merged dict's `build_references` > run-level references.  The
+  run-level collapse in `build_test_attributes`
   (`effective_values = individual_test_sets[0]`) remains as the fallback
   source; single-set and no-set flows are unchanged.
 - **39 deferred in-function imports remain** as circular-import workarounds.
