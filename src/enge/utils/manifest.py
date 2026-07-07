@@ -39,6 +39,7 @@ class ManifestWriter:
         target_compose: Optional[str] = None,
         artifacts_url: Optional[str] = None,
         dispatched_at: Optional[str] = None,
+        launch_uuid: Optional[str] = None,
     ) -> None:
         self._requests.append(
             {
@@ -52,6 +53,7 @@ class ManifestWriter:
                 "artifacts_url": artifacts_url,
                 "dispatched_at": dispatched_at
                 or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "launch_uuid": launch_uuid,
             }
         )
 

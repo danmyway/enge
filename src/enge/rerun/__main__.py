@@ -888,6 +888,7 @@ def main(ctx: AppContext):
                 source_compose=request_data.get("compose"),
                 target_compose=None,
                 artifacts_url=submit.log_artifact_url,
+                launch_uuid=launch_uuid,
             )
             manifest_writer.flush(
                 Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest)
