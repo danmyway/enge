@@ -391,11 +391,12 @@ def _resolve_artifacts(
     return None
 
 
-def _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx):
+def _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx, run_id=None):
     """Create RP launch if applicable; returns the launch UUID, a failure dict, or None."""
     per_set_event = rp_context["event"] if rp_context else None
     if not (rp_context and per_set_event in RP_COMPATIBLE_EVENT):
         return None
+    is_dryrun = getattr(ctx.cli_args, "dryrun", False)
     try:
         complete_tmt_context = submit_test.get_complete_tmt_context()
         complete_tmt_context.update(submit_test.set_tmt_context or {})
@@ -406,10 +407,11 @@ def _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx):
             ctx=ctx,
             context=rp_context,
             tmt_context=complete_tmt_context,
-            dryrun=getattr(ctx.cli_args, "dryrun", False),
+            dryrun=is_dryrun,
+            run_id=None if is_dryrun else run_id,
         )
-        if launch_uuid or getattr(ctx.cli_args, "dryrun", False):
-            if getattr(ctx.cli_args, "dryrun", False):
+        if launch_uuid or is_dryrun:
+            if is_dryrun:
                 placeholder_uuid = "00000000-0000-0000-0000-000000000000"
                 complete_tmt_context["uniq_id"] = placeholder_uuid
             else:
@@ -573,7 +575,10 @@ def process_request_spec(
         return failure
 
     rp_context = _build_rp_context(spec, per_set_event)
-    launch_result = _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx)
+    run_id = manifest_writer.run_id if manifest_writer else None
+    launch_result = _create_launch(
+        spec, submit_test, rp_context, merged_env_vars, ctx, run_id=run_id
+    )
     if isinstance(launch_result, dict):
         return launch_result
 

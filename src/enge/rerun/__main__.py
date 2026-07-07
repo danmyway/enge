@@ -653,7 +653,11 @@ def _get_next_rerun_tag(tags: List[str]) -> str:
 
 
 def _create_rerun_launch_for_payload(
-    payload: Dict[str, Any], is_dryrun: bool, ctx: AppContext
+    payload: Dict[str, Any],
+    is_dryrun: bool,
+    ctx: AppContext,
+    run_id: Optional[str] = None,
+    parent_run_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     Create a ReportPortal launch for a single rerun payload.
@@ -672,13 +676,11 @@ def _create_rerun_launch_for_payload(
     tier = tmt_context.get("tier")
     arch = env.get("arch")
 
-    # Build context for launch creation (reuse existing helper pattern)
     rerun_context = {
         "tier": tier,
         "architecture": arch,
     }
 
-    # Generate launch name with RERUN prefix: RERUN~EVENT_NAME~timestamp~tier~arch
     timestamp = datetime.now().strftime("%Y-%m-%d")
     tier_str = tier or "unknown"
     arch_str = arch or "unknown"
@@ -713,6 +715,8 @@ def _create_rerun_launch_for_payload(
                 context=rerun_context,
                 tmt_context=tmt_context,
                 extra_tags=["rerun"],
+                run_id=run_id,
+                parent_run_id=parent_run_id,
             )
             return launch_uuid
         except Exception as e:
@@ -778,7 +782,13 @@ def main(ctx: AppContext):
                 payload, "environments.0.tmt.context.rerun_of", original_uuid
             )
 
-        launch_uuid = _create_rerun_launch_for_payload(payload, is_dryrun, ctx)
+        launch_uuid = _create_rerun_launch_for_payload(
+            payload,
+            is_dryrun,
+            ctx,
+            run_id=None if is_dryrun else manifest_writer.run_id,
+            parent_run_id=parent_run_id,
+        )
 
         if launch_uuid:
             if launch_uuid == "dryrun_placeholder":

@@ -102,6 +102,8 @@ class ReportPortalLaunch:
         context: Optional[Dict[str, Any]] = None,
         tmt_context: Optional[Dict[str, Any]] = None,
         extra_tags: Optional[List[str]] = None,
+        run_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate the launch payload for the ReportPortal API.
@@ -112,6 +114,8 @@ class ReportPortalLaunch:
             context: Context for name generation (event, tier, arch, ...).
             tmt_context: TMT context dict — stored as launch attributes.
             extra_tags: Additional tags to append (duplicates silently skipped).
+            run_id: Manifest ULID for this run (omit on dry-run).
+            parent_run_id: Parent manifest ULID (rerun launches only).
         """
         if not name:
             name = self.generate_launch_name(context)
@@ -132,21 +136,55 @@ class ReportPortalLaunch:
                     launch_data["tags"].append(tag)
                     seen.add(tag)
 
+        attributes: List[Dict[str, str]] = []
+
         if tmt_context:
-            attributes = []
             for key, value in tmt_context.items():
                 if value is not None:
                     attributes.append({"key": key, "value": str(value)})
 
-            if (
-                context
-                and context.get("architecture")
-                and not any(a.get("key") == "arch" for a in attributes)
-            ):
-                attributes.append({"key": "arch", "value": context["architecture"]})
+        if (
+            context
+            and context.get("architecture")
+            and not any(a.get("key") == "arch" for a in attributes)
+        ):
+            attributes.append({"key": "arch", "value": context["architecture"]})
 
-            if attributes:
-                launch_data["attributes"] = attributes
+        ctx_get = (context or {}).get
+        tmt_get = (tmt_context or {}).get
+        enge_attrs: List[tuple] = []
+        if run_id:
+            enge_attrs.append(("run_id", run_id))
+        set_name = ctx_get("set_name")
+        if set_name:
+            enge_attrs.append(("set", set_name))
+        tier = ctx_get("tier") or tmt_get("tier")
+        if tier:
+            enge_attrs.append(("tier", tier))
+        arch = ctx_get("architecture") or tmt_get("arch")
+        if arch:
+            enge_attrs.append(("arch", arch))
+        event = ctx_get("event") or tmt_get("event")
+        if event:
+            enge_attrs.append(("event", event))
+        source = ctx_get("source_compose") or tmt_get("source_compose")
+        if source:
+            enge_attrs.append(("source", source))
+        target = tmt_get("target_distro") or ctx_get("target_release")
+        if target:
+            enge_attrs.append(("target", target))
+        enge_attrs.append(("tool", "enge"))
+        if parent_run_id:
+            enge_attrs.append(("parent_run_id", parent_run_id))
+
+        existing_keys = {a["key"] for a in attributes}
+        for key, value in enge_attrs:
+            if key not in existing_keys:
+                attributes.append({"key": key, "value": str(value)})
+                existing_keys.add(key)
+
+        if attributes:
+            launch_data["attributes"] = attributes
 
         return launch_data
 
@@ -157,6 +195,8 @@ class ReportPortalLaunch:
         context: Optional[Dict[str, Any]] = None,
         tmt_context: Optional[Dict[str, Any]] = None,
         extra_tags: Optional[List[str]] = None,
+        run_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
     ) -> str:
         """
         Create a new launch in ReportPortal.
@@ -170,6 +210,8 @@ class ReportPortalLaunch:
             context=context,
             tmt_context=tmt_context,
             extra_tags=extra_tags,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
         )
 
         try:
