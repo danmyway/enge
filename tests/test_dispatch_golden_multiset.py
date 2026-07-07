@@ -218,7 +218,6 @@ class TestDispatchGoldenMultiset(unittest.TestCase):
                 idx=idx,
                 total_expected_requests=2,
                 spec=spec,
-                shared_archive_filename="enge_multiset_golden_archive",
                 artifact_type="fedora-koji-build",
                 artifact_resolver=resolver,
                 ctx=resolved_opts,

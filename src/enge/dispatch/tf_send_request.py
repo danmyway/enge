@@ -27,7 +27,6 @@ class SubmitTest:
     def __init__(
         self,
         ctx,
-        shared_archive_filename: Optional[str] = None,
         launch_uuid: Optional[str] = None,
     ):
         self.ctx = ctx
