@@ -610,6 +610,22 @@ enge rerun --run <run_id> --rp
 4. **Result Upload**: TMT automatically uploads test results to the specific launch for that request
 5. **Maximum Isolation**: Each test scenario gets its own launch, providing complete isolation and detailed tracking
 
+**Structured Launch Attributes:**
+
+Every launch created by enge carries structured attributes mirroring the manifest context vocabulary. These attributes enable server-side filtering and cross-referencing between RP launches and enge manifests:
+
+- `run_id` — manifest ULID identifying the dispatch/rerun invocation
+- `set` — test set name (when using `--set`)
+- `tier` — test tier (e.g., `tier0`)
+- `arch` — target architecture (e.g., `x86_64`)
+- `event` — event name (from `--event` or test set config)
+- `source` — source compose name (e.g., `RHEL-9.7.0-Nightly`)
+- `target` — target distro identifier (e.g., `rhel-10.1`)
+- `tool` — always `enge`
+- `parent_run_id` — parent manifest ULID (rerun-created launches only)
+
+Attributes are deduplicated by key against pre-existing TMT context attributes. Unavailable values are omitted (never empty). `run_id` is omitted on dry-run (no manifest exists).
+
 **Testing Farm Payload Integration:**
 
 When `--rp` is used, enge automatically configures the Testing Farm payload with ReportPortal environment variables:

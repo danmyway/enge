@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- ReportPortal launches created by enge now carry structured attributes mirroring the manifest context vocabulary: `run_id`, `set`, `tier`, `arch`, `event`, `source`, `target`, `tool` (always `enge`), plus `parent_run_id` on rerun-created launches. `run_id` is present on all real (non-dry-run) launches. Attributes are deduplicated by key against pre-existing TMT context attributes; pre-existing entries are never overwritten
 - Manifest request entries now record the RP launch UUID (`launch_uuid`) when enge creates a ReportPortal launch during dispatch or rerun; `null` when no launch was created
 - Set-level `plan_filter` and `test_filter` config keys: define FMF filters per test set instead of passing `--plan-filter`/`--test-filter` on every invocation. Priority: CLI > set > tier-generated.
 - JSON manifest store: dispatch state moved from `/tmp/enge_latest_jobs` + filename-tagged archive files to XDG-compliant JSON manifests under `~/.local/share/enge/runs/`. Each invocation writes a single versioned manifest with structured per-request metadata (task_id, set, tier, arch, plan, composes, artifacts URL)

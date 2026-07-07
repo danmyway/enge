@@ -43,6 +43,7 @@ def create_launch(
     context: Optional[Dict[str, Any]] = None,
     tmt_context: Optional[Dict[str, Any]] = None,
     dryrun: bool = False,
+    run_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     Create (or dry-run) a ReportPortal launch.
@@ -57,7 +58,9 @@ def create_launch(
         try:
             rp_launch = ReportPortalLaunch(ctx)
             payload = rp_launch.generate_launch_payload(
-                name=launch_name, context=context, tmt_context=tmt_context
+                name=launch_name,
+                context=context,
+                tmt_context=tmt_context,
             )
 
             from enge.utils import redact_sensitive
@@ -71,7 +74,10 @@ def create_launch(
     try:
         rp_launch = ReportPortalLaunch(ctx)
         launch_uuid = rp_launch.create_launch(
-            name=launch_name, context=context, tmt_context=tmt_context
+            name=launch_name,
+            context=context,
+            tmt_context=tmt_context,
+            run_id=run_id,
         )
         return launch_uuid
     except Exception as e:
