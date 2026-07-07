@@ -139,8 +139,9 @@ class ManifestReader:
         all_runs = ManifestReader.list_runs(runs_dir)
         results = []
         for summary in all_runs:
-            if set_name and summary.get("context", {}).get("set") != set_name:
-                continue
+            ctx_set_matches = (
+                not set_name or summary.get("context", {}).get("set") == set_name
+            )
             if tag and tag not in summary.get("tags", []):
                 continue
             created = summary.get("created_at", "")
@@ -154,9 +155,13 @@ class ManifestReader:
                         continue
                     if until and dt > until:
                         continue
-            if tier or arch:
+            if not ctx_set_matches or tier or arch:
                 full = ManifestReader.load(Path(summary["path"]))
                 requests = full.get("requests", [])
+                if not ctx_set_matches and not any(
+                    r.get("set") == set_name for r in requests
+                ):
+                    continue
                 if tier and not any(r.get("tier") == tier for r in requests):
                     continue
                 if arch and not any(r.get("arch") == arch for r in requests):

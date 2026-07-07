@@ -382,5 +382,55 @@ class TestSinceUntilManifestRouting(unittest.TestCase):
         self.assertIn(task_uuid, resolved_uuids)
 
 
+class TestFindRunsMultiSetMatching(unittest.TestCase):
+    """find_runs must match per-request set fields, not only context.set."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _write_multiset_manifest(self):
+        rid = generate_ulid()
+        w = ManifestWriter(
+            run_id=rid,
+            command="test",
+            argv=["enge", "test", "-S", "alpha", "-S", "beta"],
+            context={"set": "alpha"},
+        )
+        w.add_request("uuid-alpha-1", set_name="alpha", tier="tier0", arch="x86_64")
+        w.add_request("uuid-beta-1", set_name="beta", tier="tier0", arch="x86_64")
+        w.flush(self.runs, self.latest)
+        return rid
+
+    def test_find_runs_matches_non_context_set_via_requests(self):
+        """A multi-set run with context.set='alpha' must be found by set_name='beta'."""
+        from enge.utils.manifest import ManifestReader
+
+        self._write_multiset_manifest()
+        results = ManifestReader.find_runs(self.runs, set_name="beta")
+        self.assertEqual(len(results), 1, "multi-set run not found by non-context set")
+
+    def test_find_runs_still_matches_context_set(self):
+        """context.set match must still work (single-set and migrated compat)."""
+        from enge.utils.manifest import ManifestReader
+
+        self._write_multiset_manifest()
+        results = ManifestReader.find_runs(self.runs, set_name="alpha")
+        self.assertEqual(len(results), 1)
+
+    def test_find_runs_no_match_for_absent_set(self):
+        """A set name present in neither context nor requests must not match."""
+        from enge.utils.manifest import ManifestReader
+
+        self._write_multiset_manifest()
+        results = ManifestReader.find_runs(self.runs, set_name="gamma")
+        self.assertEqual(len(results), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

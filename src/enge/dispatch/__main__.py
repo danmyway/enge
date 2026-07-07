@@ -337,7 +337,8 @@ def _build_manifest_writer(ctx):
     context = {}
     set_names = getattr(ctx.cli_args, "set", None)
     if set_names:
-        context["set"] = set_names[0] if len(set_names) == 1 else set_names[0]
+        # Per-request set fields are authoritative for multi-set runs.
+        context["set"] = set_names[0]
     context["event"] = eff.get("event") or getattr(ctx.cli_args, "event", None)
     if hasattr(ctx, "source_spec") and ctx.source_spec:
         src = ctx.source_spec
