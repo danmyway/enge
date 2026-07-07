@@ -389,3 +389,43 @@ class TestCallChainRunIdThreading(unittest.TestCase):
         self.assertEqual(
             call_kwargs.kwargs.get("parent_run_id"), "01JPARENT00000000000000000"
         )
+
+
+class TestTargetAttributeCompose(unittest.TestCase):
+    """target attribute must carry the target compose name, not distro."""
+
+    def test_dispatch_target_is_compose_name(self):
+        """Dispatch with target_compose in context → target = compose name."""
+        from enge.reportportal.__main__ import ReportPortalLaunch
+
+        ctx = _make_rp_ctx()
+        rp = ReportPortalLaunch(ctx)
+        context = {
+            **DISPATCH_CONTEXT,
+            "target_compose": "RHEL-10.1.0-Nightly",
+        }
+        p = rp.generate_launch_payload(
+            name="TEST~2026-01-01~tier0~x86_64",
+            context=context,
+            tmt_context=DISPATCH_TMT_CONTEXT,
+            run_id="01JTEST0000000000000000000",
+        )
+        attrs = _attrs_dict(p)
+        self.assertEqual(attrs["target"], "RHEL-10.1.0-Nightly")
+
+    def test_rerun_target_omitted(self):
+        """Rerun path has no target compose → no target attribute at all."""
+        from enge.reportportal.__main__ import ReportPortalLaunch
+
+        ctx = _make_rp_ctx()
+        rp = ReportPortalLaunch(ctx)
+        p = rp.generate_launch_payload(
+            name="RERUN~PRELIMINARY~2026-01-01~tier0~x86_64",
+            context=RERUN_CONTEXT,
+            tmt_context=RERUN_TMT_CONTEXT,
+            extra_tags=["rerun"],
+            run_id="01JRERUN000000000000000000",
+            parent_run_id="01JPARENT00000000000000000",
+        )
+        attrs = _attrs_dict(p)
+        self.assertNotIn("target", attrs)
