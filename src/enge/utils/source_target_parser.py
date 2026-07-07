@@ -1229,40 +1229,26 @@ def _generate_auto_launch_name(
     target_release: Optional[str] = None,
     source_compose: Optional[str] = None,
     event: Optional[str] = None,
+    upgrade_path: Optional[str] = None,
 ) -> Optional[str]:
+    """Generate automatic launch name: ``{upgrade_path}~{tier}~{arch}``.
+
+    *upgrade_path* is the baseline-path token from the TMT context
+    (e.g. ``9to10``).  When not passed directly, it is derived from
+    *source_release* and *target_release* major versions.  *set_name*
+    and *event* are intentionally excluded — they are carried by launch
+    attributes, not part of the stable name.
+
+    Empty segments are omitted, never rendered as blanks.  Returns
+    ``None`` when no components remain.
     """
-    Generate automatic launch name in format: (EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture
+    if not upgrade_path and source_release and target_release:
+        src_major = source_release.split(".")[0]
+        tgt_major = target_release.split(".")[0]
+        upgrade_path = f"{src_major}to{tgt_major}"
 
-    Args:
-        set_name: Name of the test set (optional)
-        architecture: Target architecture (optional)
-        tier: Test tier (optional)
-        source_release: Source release version (optional)
-        target_release: Target release version (optional)
-        source_compose: Source compose name (optional)
-        event: Event name (optional, takes priority over set_name)
-
-    Returns:
-        Generated launch name or None if no components available
-    """
-    from datetime import datetime
-
-    # Get timestamp in YYYY-MM-DD format
-    timestamp = datetime.now().strftime("%Y-%m-%d")
-
-    # Determine the event/set name component (event takes priority)
-    name_component = event or set_name
-    if not name_component:
-        return None
-
-    # Use architecture or 'unknown' if not provided
-    arch_component = architecture or "unknown"
-
-    # Use tier or 'unknown' if not provided
-    tier_component = tier or "unknown"
-
-    # Generate the name in the format: (EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture
-    return f"{name_component.upper()}~{timestamp}~{tier_component}~{arch_component}"
+    segments = [s for s in (upgrade_path, tier, architecture) if s]
+    return "~".join(segments) if segments else None
 
 
 def parse_target_compose_from_url(target_compose_url: Optional[str]) -> Optional[str]:

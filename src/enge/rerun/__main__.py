@@ -3,8 +3,6 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional, Dict, Any, Iterable, List
-from datetime import datetime
-
 from enge.utils.http_client import http_get
 from rich.table import Table
 from rich.markup import escape
@@ -652,16 +650,37 @@ def _get_next_rerun_tag(tags: List[str]) -> str:
     return "rerun"
 
 
+def _resolve_set_name_from_parent(
+    parent_run_id: Optional[str],
+    original_uuid: Optional[str],
+    runs_dir: str,
+) -> Optional[str]:
+    """Derive set_name for a rerun request from the parent manifest.
+
+    Used solely to stamp the ``set`` launch attribute — naming uses the
+    rerun payload's own tmt context, not the parent manifest.
+    """
+    if not parent_run_id or not original_uuid:
+        return None
+    try:
+        manifest = ManifestReader.get_run(Path(runs_dir), parent_run_id)
+    except Exception:
+        return None
+    for req in manifest.get("requests", []):
+        if req.get("task_id") == original_uuid:
+            return req.get("set")
+    return None
+
+
 def _create_rerun_launch_for_payload(
     payload: Dict[str, Any],
     is_dryrun: bool,
     ctx: AppContext,
     run_id: Optional[str] = None,
     parent_run_id: Optional[str] = None,
+    original_uuid: Optional[str] = None,
 ) -> Optional[str]:
-    """
-    Create a ReportPortal launch for a single rerun payload.
-    """
+    """Create a ReportPortal launch for a single rerun payload."""
     environments = payload.get("environments", [])
     if not environments:
         return None
@@ -675,16 +694,26 @@ def _create_rerun_launch_for_payload(
 
     tier = tmt_context.get("tier")
     arch = env.get("arch")
+    upgrade_path = tmt_context.get("upgrade_path")
+
+    from enge.utils.source_target_parser import _generate_auto_launch_name
+
+    launch_name = _generate_auto_launch_name(
+        architecture=arch,
+        tier=tier,
+        upgrade_path=upgrade_path,
+    )
+
+    set_name = _resolve_set_name_from_parent(
+        parent_run_id, original_uuid, ctx.manifest_runs_dir
+    )
 
     rerun_context = {
         "tier": tier,
         "architecture": arch,
+        "upgrade_path": upgrade_path,
+        "set_name": set_name,
     }
-
-    timestamp = datetime.now().strftime("%Y-%m-%d")
-    tier_str = tier or "unknown"
-    arch_str = arch or "unknown"
-    launch_name = f"RERUN~{event_name.upper()}~{timestamp}~{tier_str}~{arch_str}"
 
     from enge.reportportal.__main__ import ReportPortalLaunch
 
@@ -788,6 +817,7 @@ def main(ctx: AppContext):
             ctx,
             run_id=None if is_dryrun else manifest_writer.run_id,
             parent_run_id=parent_run_id,
+            original_uuid=original_uuid,
         )
 
         if launch_uuid:

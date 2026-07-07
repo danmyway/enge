@@ -80,20 +80,22 @@ class ReportPortalLaunch:
     # ===================================================================
 
     def generate_launch_name(self, context: Optional[Dict[str, Any]] = None) -> str:
-        """
-        Generate launch name in the format:
-        ``(EVENT_NAME|SET_NAME)~datetime_stamp~tier~architecture``
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d")
+        """Generate launch name: ``{upgrade_path}~{tier}~{arch}``."""
+        from enge.utils.source_target_parser import _generate_auto_launch_name
 
         if not context:
-            return f"ENGE_Launch~{timestamp}~unknown"
+            return "ENGE_Launch"
 
-        name_component = context.get("event") or context.get("set_name") or "unknown"
-        tier = context.get("tier") or "unknown"
-        architecture = context.get("architecture") or "unknown"
-
-        return f"{name_component.upper()}~{timestamp}~{tier}~{architecture}"
+        return (
+            _generate_auto_launch_name(
+                tier=context.get("tier"),
+                architecture=context.get("architecture"),
+                upgrade_path=context.get("upgrade_path"),
+                source_release=context.get("source_release"),
+                target_release=context.get("target_release"),
+            )
+            or "ENGE_Launch"
+        )
 
     def generate_launch_payload(
         self,

@@ -327,8 +327,7 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
 
     test.add_argument(
         "--event",
-        help="Event name for launch naming. "
-        "If specified, this will be used in the launch name instead of the set name. "
+        help="Event name for ReportPortal launch gating and attributes. "
         "Can also be configured in test set configuration.",
     )
 
