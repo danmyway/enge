@@ -140,6 +140,7 @@ def _build_rp_context(spec, per_set_event):
         "source_release": f"{spec.source_spec['major']}.{spec.source_spec['minor']}",
         "target_release": f"{spec.target_spec['major']}.{spec.target_spec['minor']}",
         "source_compose": spec.source_spec.get("compose_name"),
+        "target_compose": spec.target_spec.get("compose_name"),
     }
 
 

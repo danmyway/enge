@@ -123,11 +123,12 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   incomplete runs yield incomplete log sets.
 - **RP launch-attribute schema** is a contract mirroring the manifest
   context vocabulary: `run_id`, `set`, `tier`, `arch`, `event`,
-  `source`, `target`, `tool` (always `enge`), plus `parent_run_id` on
-  rerun launches. Keys are never added without maintainer sign-off.
-  Attributes are deduplicated by key against pre-existing TMT context
-  entries (pre-existing win). `run_id` is omitted on dry-run (no
-  manifest exists).
+  `source` (source compose name), `target` (target compose name;
+  omitted on rerun launches where unavailable), `tool` (always `enge`),
+  plus `parent_run_id` on rerun launches. Keys are never added without
+  maintainer sign-off. Attributes are deduplicated by key against
+  pre-existing TMT context entries (pre-existing win). `run_id` is
+  omitted on dry-run (no manifest exists).
 
 ## Conventions
 

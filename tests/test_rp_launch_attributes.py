@@ -39,6 +39,7 @@ DISPATCH_CONTEXT = {
     "source_release": "9.7",
     "target_release": "10.1",
     "source_compose": "RHEL-9.7.0-Nightly",
+    "target_compose": "RHEL-10.1.0-Nightly",
 }
 
 DISPATCH_TMT_CONTEXT = {
@@ -98,7 +99,7 @@ class TestDispatchLaunchAttributes(unittest.TestCase):
     def test_target_attribute(self):
         p = self._payload()
         attrs = _attrs_dict(p)
-        self.assertEqual(attrs["target"], "rhel-10.1")
+        self.assertEqual(attrs["target"], "RHEL-10.1.0-Nightly")
 
     def test_tier_from_tmt_context_not_duplicated(self):
         """tier already in tmt_context → dedup means one entry, not two."""
@@ -194,11 +195,11 @@ class TestRerunLaunchAttributes(unittest.TestCase):
         attrs = _attrs_dict(p)
         self.assertEqual(attrs["source"], "RHEL-9.7.0-Nightly")
 
-    def test_target_from_tmt_context_fallback(self):
-        """When context lacks target_release, falls back to tmt_context target_distro."""
+    def test_target_omitted_on_rerun(self):
+        """Rerun context has no target_compose → target attribute absent."""
         p = self._payload()
         attrs = _attrs_dict(p)
-        self.assertEqual(attrs["target"], "rhel-10.1")
+        self.assertNotIn("target", attrs)
 
     def test_tool_attribute(self):
         p = self._payload()

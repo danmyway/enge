@@ -170,7 +170,7 @@ class ReportPortalLaunch:
         source = ctx_get("source_compose") or tmt_get("source_compose")
         if source:
             enge_attrs.append(("source", source))
-        target = tmt_get("target_distro") or ctx_get("target_release")
+        target = ctx_get("target_compose")
         if target:
             enge_attrs.append(("target", target))
         enge_attrs.append(("tool", "enge"))

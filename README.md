@@ -620,7 +620,7 @@ Every launch created by enge carries structured attributes mirroring the manifes
 - `arch` — target architecture (e.g., `x86_64`)
 - `event` — event name (from `--event` or test set config)
 - `source` — source compose name (e.g., `RHEL-9.7.0-Nightly`)
-- `target` — target distro identifier (e.g., `rhel-10.1`)
+- `target` — target compose name (e.g., `RHEL-10.1.0-Nightly`; omitted on rerun launches)
 - `tool` — always `enge`
 - `parent_run_id` — parent manifest ULID (rerun-created launches only)
 
