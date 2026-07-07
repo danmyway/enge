@@ -537,7 +537,7 @@ class TestPerSetArtifactReferences(unittest.TestCase):
                 "repository": "oamg/leapp",
                 "build_references": ["pkg-beta-copr"],
             },
-            "copr_api dict must travel with set-level copr refs",
+            "set-level copr_api keys must merge over run-level dict",
         )
 
 
