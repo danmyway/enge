@@ -146,19 +146,19 @@ class TestSetTestFilter(unittest.TestCase):
     def test_set_test_filter_flows_to_submit(self):
         spec = _make_spec(effective_values={"test_filter": "tag:fast"})
         ctx = _make_ctx()
-        submit = _configure_submit_test(spec, ctx, "shared")
+        submit = _configure_submit_test(spec, ctx)
         self.assertEqual(submit.testfilter, "tag:fast")
 
     def test_cli_test_filter_overrides_set(self):
         spec = _make_spec(effective_values={"test_filter": "tag:fast"})
         ctx = _make_ctx(testfilter="tag:cli-filter")
-        submit = _configure_submit_test(spec, ctx, "shared")
+        submit = _configure_submit_test(spec, ctx)
         self.assertEqual(submit.testfilter, "tag:cli-filter")
 
     def test_no_test_filter_is_none(self):
         spec = _make_spec(effective_values={})
         ctx = _make_ctx()
-        submit = _configure_submit_test(spec, ctx, "shared")
+        submit = _configure_submit_test(spec, ctx)
         self.assertIsNone(submit.testfilter)
 
 

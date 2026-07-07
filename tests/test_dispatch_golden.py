@@ -224,7 +224,6 @@ class TestDispatchGolden(unittest.TestCase):
                     idx=idx,
                     total_expected_requests=4,
                     spec=spec,
-                    shared_archive_filename="enge_golden_test_archive",
                     artifact_type="compose",
                     ctx=resolved_opts,
                 )
