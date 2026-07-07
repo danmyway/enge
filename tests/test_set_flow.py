@@ -541,5 +541,124 @@ class TestPerSetArtifactReferences(unittest.TestCase):
         )
 
 
+class TestArtifactApiDictMerge(unittest.TestCase):
+    """Per-key merge semantics for set-level api dicts over run-level base."""
+
+    RUN_BREW_API = {
+        "session_url": "https://brew.example/hub",
+        "taskid_url": "https://brew.example/task",
+        "build_references": ["run-level-ref"],
+    }
+
+    def _make_ctx(self, **overrides):
+        ctx = MagicMock()
+        ctx.cli_args = MagicMock()
+        ctx.cli_args.copr = None
+        ctx.cli_args.brew = None
+        ctx.copr_reference = None
+        ctx.copr_references = []
+        ctx.copr_api = {}
+        ctx.brew_reference = "run-level-ref"
+        ctx.brew_references = ["run-level-ref"]
+        ctx.brew_api = dict(self.RUN_BREW_API)
+        ctx.project = {"name": "leapp"}
+        for k, v in overrides.items():
+            setattr(ctx, k, v)
+        return ctx
+
+    def _make_spec(self, set_brew_api, set_copr_api=None):
+        return RequestSpec(
+            set_name="merge-test",
+            tier="tier0",
+            plan=None,
+            arch="x86_64",
+            source_spec={"major": 8, "minor": 10, "compose_name": "RHEL-8.10.0"},
+            target_spec={"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"},
+            upgrade_path="rhel-8.10-to-9.4",
+            effective_values={
+                "brew_api": set_brew_api,
+                "copr_api": set_copr_api or {},
+            },
+        )
+
+    def _resolve(self, spec, ctx):
+        from enge.dispatch.set_flow import _resolve_artifacts
+
+        captured = []
+
+        class SpyResolver:
+            def resolve_builds(self, compose_name, ctx):
+                captured.append(ctx)
+                return [
+                    {"compose": compose_name, "distro": "rhel-8.10", "build_id": None}
+                ]
+
+        submit = MagicMock()
+        submit.artifacts = []
+        _resolve_artifacts(spec, submit, {}, ctx, "compose", SpyResolver())
+        return captured[0]
+
+    def test_set_refs_inherit_run_level_endpoints(self):
+        """Set defines only build_references; session_url/taskid_url must
+        come from the run-level dict via per-key merge."""
+        ctx = self._make_ctx()
+        spec = self._make_spec({"build_references": ["pkg-beta-2.0"]})
+        resolved = self._resolve(spec, ctx)
+
+        self.assertEqual(resolved.brew_references, ["pkg-beta-2.0"])
+        self.assertEqual(
+            resolved.brew_api["session_url"],
+            "https://brew.example/hub",
+            "session_url must inherit from run-level when set omits it",
+        )
+        self.assertEqual(
+            resolved.brew_api["taskid_url"],
+            "https://brew.example/task",
+            "taskid_url must inherit from run-level when set omits it",
+        )
+        self.assertEqual(
+            resolved.brew_api["build_references"],
+            ["pkg-beta-2.0"],
+            "build_references must come from set-level",
+        )
+
+    def test_endpoint_only_override_preserves_run_refs(self):
+        """Set overrides session_url but defines no build_references;
+        references must resolve from run-level, endpoint from the set."""
+        ctx = self._make_ctx()
+        spec = self._make_spec({"session_url": "https://other.example/hub"})
+        resolved = self._resolve(spec, ctx)
+
+        self.assertEqual(
+            resolved.brew_api["session_url"],
+            "https://other.example/hub",
+            "session_url must come from set-level override",
+        )
+        self.assertEqual(
+            resolved.brew_api["taskid_url"],
+            "https://brew.example/task",
+            "taskid_url must inherit from run-level",
+        )
+        self.assertEqual(
+            resolved.brew_references,
+            ["run-level-ref"],
+            "references must come from run-level when set has none",
+        )
+
+    def test_empty_string_unset_inherits_run_level(self):
+        """Set-level session_url="" must inherit the run-level value,
+        not mask it with an empty string."""
+        ctx = self._make_ctx()
+        spec = self._make_spec({"session_url": "", "build_references": ["pkg-x"]})
+        resolved = self._resolve(spec, ctx)
+
+        self.assertEqual(
+            resolved.brew_api["session_url"],
+            "https://brew.example/hub",
+            "empty-string session_url must inherit run-level value",
+        )
+        self.assertEqual(resolved.brew_references, ["pkg-x"])
+
+
 if __name__ == "__main__":
     unittest.main()
