@@ -392,7 +392,7 @@ def _resolve_artifacts(
 
 
 def _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx):
-    """Create RP launch if applicable; returns a failure dict or None on success."""
+    """Create RP launch if applicable; returns the launch UUID, a failure dict, or None."""
     per_set_event = rp_context["event"] if rp_context else None
     if not (rp_context and per_set_event in RP_COMPATIBLE_EVENT):
         return None
@@ -433,6 +433,7 @@ def _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx):
             submit_test.set_specific_data(
                 [spec.arch], rp_env, complete_tmt_context, pool=pool
             )
+            return launch_uuid
     except Exception as e:
         LOGGER.error(f"Failed to create ReportPortal launch: {e}")
         return {
@@ -480,7 +481,7 @@ def _build_request_context(spec, per_set_event, ctx, artifact_type):
     )
 
 
-def _send_and_collect(submit_test, ctx, spec, manifest_writer=None):
+def _send_and_collect(submit_test, ctx, spec, manifest_writer=None, launch_uuid=None):
     """Send the TF request and assemble the result dict."""
     output_format = getattr(ctx.cli_args, "output_format", "terminal")
     submit_test.compact_output = output_format != "json"
@@ -504,6 +505,7 @@ def _send_and_collect(submit_test, ctx, spec, manifest_writer=None):
             source_compose=submit_test.compose,
             target_compose=submit_test.target_compose,
             artifacts_url=submit_test.log_artifact_url,
+            launch_uuid=launch_uuid,
         )
         manifest_writer.flush(Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest))
 
@@ -571,8 +573,14 @@ def process_request_spec(
         return failure
 
     rp_context = _build_rp_context(spec, per_set_event)
-    launch_failure = _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx)
-    if launch_failure:
-        return launch_failure
+    launch_result = _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx)
+    if isinstance(launch_result, dict):
+        return launch_result
 
-    return _send_and_collect(submit_test, ctx, spec, manifest_writer=manifest_writer)
+    return _send_and_collect(
+        submit_test,
+        ctx,
+        spec,
+        manifest_writer=manifest_writer,
+        launch_uuid=launch_result,
+    )

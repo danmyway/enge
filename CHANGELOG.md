@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Manifest request entries now record the RP launch UUID (`launch_uuid`) when enge creates a ReportPortal launch during dispatch or rerun; `null` when no launch was created
 - Set-level `plan_filter` and `test_filter` config keys: define FMF filters per test set instead of passing `--plan-filter`/`--test-filter` on every invocation. Priority: CLI > set > tier-generated.
 - JSON manifest store: dispatch state moved from `/tmp/enge_latest_jobs` + filename-tagged archive files to XDG-compliant JSON manifests under `~/.local/share/enge/runs/`. Each invocation writes a single versioned manifest with structured per-request metadata (task_id, set, tier, arch, plan, composes, artifacts URL)
 - `enge report --list`: run browser that replaces visual filename scanning — displays a rich table of all manifests in the store, filterable by `--set/--tier/--arch/--tag/--since/--until`

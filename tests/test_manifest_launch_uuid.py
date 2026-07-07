@@ -71,6 +71,30 @@ class TestManifestLaunchUuidRecording(unittest.TestCase):
         self.assertIn("launch_uuid", d["requests"][0])
         self.assertIsNone(d["requests"][0]["launch_uuid"])
 
+    def test_mixed_launch_and_non_launch_entries(self):
+        """Multi-set dispatch: some entries have a UUID, others null."""
+        w = self._writer()
+        w.add_request(
+            "task-rp",
+            set_name="rp-set",
+            tier="tier0",
+            arch="x86_64",
+            launch_uuid="55555555-5555-5555-5555-555555555555",
+        )
+        w.add_request(
+            "task-no-rp",
+            set_name="plain-set",
+            tier="tier0",
+            arch="x86_64",
+            launch_uuid=None,
+        )
+        d = w.to_dict()
+        self.assertEqual(
+            d["requests"][0]["launch_uuid"],
+            "55555555-5555-5555-5555-555555555555",
+        )
+        self.assertIsNone(d["requests"][1]["launch_uuid"])
+
     def test_launch_uuid_survives_flush_roundtrip(self):
         """launch_uuid persists through flush → load."""
         w = self._writer()
