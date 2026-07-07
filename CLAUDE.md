@@ -129,6 +129,19 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   maintainer sign-off. Attributes are deduplicated by key against
   pre-existing TMT context entries (pre-existing win). `run_id` is
   omitted on dry-run (no manifest exists).
+- **RP launch naming** uses the grammar `{upgrade_path}~{tier}~{arch}`
+  (e.g. `9to10~tier0~x86_64`).  `upgrade_path` is the baseline-path
+  token already carried in the TMT context — durable across release
+  rotation, unlike set names (locally mutable config vocabulary).
+  Event, date, and set are excluded from the name — event is carried
+  by the `event` attribute, set by the `set` attribute, time filtering
+  uses RP-native `startTime`.  Empty segments are omitted; all-empty
+  returns None; `ENGE_Launch` no-context fallback unchanged.  Rerun
+  launches use the payload's own tmt context for naming (no parent
+  manifest dependency).  The canonical implementation is
+  `_generate_auto_launch_name` in `utils/source_target_parser.py`.
+  Precedence: CLI `--rp-launch` > config `[reportportal].launch` >
+  auto-generation.
 
 ## Conventions
 

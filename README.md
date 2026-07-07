@@ -532,20 +532,20 @@ Enge provides native ReportPortal integration that creates launches and manages 
 
 When `--rp` is used, enge creates one ReportPortal launch per individual test request. This provides maximum granularity and isolation for test results:
 
-- **Launch 1**: `RELEASE-CANDIDATE~2025-07-30~tier0~x86_64` → Contains tier0 results for x86_64
-- **Launch 2**: `RELEASE-CANDIDATE~2025-07-30~tier1~x86_64` → Contains tier1 results for x86_64
-- **Launch 3**: `RELEASE-CANDIDATE~2025-07-30~tier0~s390x` → Contains tier0 results for s390x
-- **Launch 4**: `RELEASE-CANDIDATE~2025-07-30~tier1~s390x` → Contains tier1 results for s390x
+- **Launch 1**: `9to10~tier0~x86_64` → Contains tier0 results for x86_64
+- **Launch 2**: `9to10~tier1~x86_64` → Contains tier1 results for x86_64
+- **Launch 3**: `9to10~tier0~s390x` → Contains tier0 results for s390x
+- **Launch 4**: `9to10~tier1~s390x` → Contains tier1 results for s390x
 
 **Launch Naming Convention:**
 
-Launch names follow the format: `(EVENT_NAME|SET_NAME)~YYYY-MM-DD~tier~architecture`
+Launch names follow the format: `{upgrade_path}~{tier}~{arch}`
 
-- **Event Priority**: If an `event` is defined (in test set config or CLI `--event`), it's used in uppercase
-- **Set Name Fallback**: If no event is specified, the test set name is used in uppercase
-- **Date Format**: Current date in YYYY-MM-DD format
-- **Tier**: Test tier (e.g., tier0, tier1, unknown if not specified)
+- **Upgrade path**: The baseline-path token from the TMT context (e.g., `9to10`, `8to9`)
+- **Tier**: Test tier (e.g., tier0, tier1)
 - **Architecture**: Target architecture (e.g., x86_64, s390x, aarch64)
+- **Stable names**: Event, date, and set name are excluded from the name so that the same upgrade path/tier/arch combination shares one RP history lane across release rotation. Event is carried by the `event` launch attribute; set is carried by the `set` attribute; time filtering uses RP-native `startTime`
+- **Reruns**: Rerun launches use the same name as the original dispatch for identical coordinates — rerun identity is carried by the `rerun` tag and `parent_run_id` attribute
 
 **Configuration:**
 
@@ -572,13 +572,13 @@ export REPORTPORTAL_API_TOKEN="your-reportportal-api-token"
 
 **Test Set Event Configuration:**
 
-Test sets can define custom event names for launch naming:
+Test sets can define event names for launch gating and attributes:
 
 ```toml
 [tests.set.pre-release-smoke]
 source = "9.7"
 target = "10.1"
-event = "release-candidate"  # Used in launch names instead of set name
+event = "release-candidate"  # Gates RP launch creation; carried as launch attribute
 tiers = ["tier0", "tier1"]
 architectures = ["x86_64", "s390x"]
 
@@ -589,16 +589,16 @@ description = "Pre-release smoke testing with RC builds"
 **Usage Examples:**
 
 ```bash
-# Creates launches per request: SMOKE-TESTS~2025-07-30~tier0~x86_64, SMOKE-TESTS~2025-07-30~tier1~x86_64, etc.
+# Creates launches per request: 9to10~tier0~x86_64, 9to10~tier1~x86_64, etc.
 enge test --set smoke-tests --rp
 
-# Creates launches with event name: RELEASE-CANDIDATE~2025-07-30~tier0~x86_64, RELEASE-CANDIDATE~2025-07-30~tier1~x86_64, etc.
+# Event gates launch creation and is stored as attribute (not in the name)
 enge test --set smoke-tests --event "release-candidate" --rp
 
 # Works with legacy approach too
 enge test --source 9.7 --tier tier0 --event "nightly-build" --rp
 
-# Rerun with ReportPortal integration
+# Rerun launches share the original dispatch name for the same coordinates
 enge rerun --run <run_id> --rp
 ```
 
