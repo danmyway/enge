@@ -95,8 +95,9 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   IntEnum; all modules return its members, never bare integers. The
   universal floor (0 success, 1 exception mapped by `__main__`, 99 config
   error, 130 interrupt) applies to every subcommand. Code 2 means "ran,
-  partial failure" for both dispatch (some requests failed) and report
-  (test failures). Report is the ONLY subcommand that returns codes 3
+  partial failure" for dispatch (some requests failed), report
+  (test failures), and cancel (some cancellations failed).
+  Report is the ONLY subcommand that returns codes 3
   (errors in parsed results) and 4 (missing/partial results), and the only
   one requiring severity precedence (3 > 2 > 4 > 0, error-dominates —
   missing results are rerun candidates and must not mask a real error),

@@ -52,6 +52,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `src/__init__.py` (src directory must not be a Python package)
 
 ### Fixed
+- Partial cancellation failures now exit 2 (partial failure) as documented; previously the cancel module's broad `except Exception` handler re-wrapped the internal `ValidationError` as an unmapped `EngeError`, producing exit 1
 - Multi-set runs are now found by `--set <name>` for every dispatched set, not only the first; `find_runs` matches per-request set fields in addition to the run's context
 - Rerun manifests now record `parent_run_id` and inherit the parent run's tags when tasks are resolved from a manifest; previously lineage was always empty despite the documented feature (the `ManifestWriter` was constructed with hardcoded `parent_run_id=None` and tags came only from CLI `--set-tag`)
 - Multi-set dispatch (`-S setA -S setB`) previously resolved build artifacts from the first set's configuration for ALL sets; each set now resolves its own `copr_api`/`brew_api` `build_references` (per-family precedence, evaluated independently: CLI `--copr`/`--brew` > set-level config > run-level config)
