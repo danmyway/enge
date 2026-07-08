@@ -173,41 +173,33 @@ class CancelJobs:
                     console.print(f"  - {task_url}")
 
 
-def main(ctx: AppContext):
+def main(ctx: AppContext) -> int:
     """
     Main function to cancel Testing Farm tasks.
 
     Reuses the same argument parsing and UUID validation as report and rerun modules.
     """
     try:
-        # Initialize the cancel handler
         cancel_handler = CancelJobs(ctx)
 
-        # Check if running in dry-run mode
         if getattr(ctx.cli_args, "dryrun", False):
             LOGGER.info("DRY RUN MODE - No tasks will actually be cancelled")
-            print(f"Would cancel {len(cancel_handler.req_url_list)} task(s):")
+            console.print(f"Would cancel {len(cancel_handler.req_url_list)} task(s):")
             for task_url in cancel_handler.req_url_list:
                 task_id = task_url.split("/")[-1]
                 view_url = f"{ctx.testing_farm.get('log_artifact_baseurl')}/{task_id}"
-                print(f"  - {view_url}")
-            return
+                console.print(f"  - {view_url}")
+            return ExitCode.SUCCESS
 
-        # Cancel the tasks
         results = cancel_handler.cancel_tasks()
-
-        # Display results
         cancel_handler.display_results()
 
-        # Set exit code based on results
         failed_count = sum(1 for r in results if not r["success"])
         if failed_count > 0:
             LOGGER.critical("Some cancellations failed")
             return ExitCode.TEST_FAILURE
-        else:
-            return
+        return ExitCode.SUCCESS
 
     except KeyboardInterrupt:
         LOGGER.info("Cancellation interrupted by user")
-
         raise UserAbort("Cancellation interrupted by user")
