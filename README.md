@@ -954,7 +954,7 @@ Each `enge test` or `enge rerun` invocation writes a JSON manifest to `~/.local/
 **Browsing and filtering runs:**
 
 ```bash
-# List all runs (newest first)
+# List all runs (table shows oldest first, newest at the bottom; json/gitlab output is newest-first)
 enge report --list
 
 # Filter by set, tier, architecture, or tag (repeatable, OR within a filter)
