@@ -41,7 +41,7 @@ class TestCancelCharacterization(unittest.TestCase):
     @patch("enge.cancel.__main__.SubmitTest")
     @patch("enge.cancel.__main__.parse_tasks")
     @patch("enge.cancel.__main__.http_delete")
-    def test_partial_failure_raises_enge_error(
+    def test_partial_failure_returns_exit_2(
         self, mock_delete, mock_parse, mock_submit_cls
     ):
         self._setup_cancel_mocks(
@@ -50,11 +50,10 @@ class TestCancelCharacterization(unittest.TestCase):
         ctx = make_app_context()
 
         from enge.cancel.__main__ import main
-        from enge.utils.errors import EngeError
+        from enge.utils.globals import ExitCode
 
-        with self.assertRaises(EngeError) as cm:
-            main(ctx)
-        self.assertIn("Unexpected error in cancel operation", str(cm.exception))
+        result = main(ctx)
+        self.assertEqual(result, ExitCode.TEST_FAILURE)
 
     @patch("enge.cancel.__main__.parse_tasks")
     def test_dryrun_output_content(self, mock_parse):
@@ -126,7 +125,7 @@ class TestCancelMain(unittest.TestCase):
     @patch("enge.cancel.__main__.SubmitTest")
     @patch("enge.cancel.__main__.parse_tasks")
     @patch("enge.cancel.__main__.http_delete")
-    def test_failed_cancellation_raises_error(
+    def test_failed_cancellation_returns_partial_failure(
         self, mock_delete, mock_parse, mock_submit_cls
     ):
         mock_parse.return_value = (
@@ -143,11 +142,10 @@ class TestCancelMain(unittest.TestCase):
         ctx = make_app_context()
 
         from enge.cancel.__main__ import main
-        from enge.utils.errors import EngeError
+        from enge.utils.globals import ExitCode
 
-        # The broad except Exception handler wraps ValidationError as EngeError
-        with self.assertRaises(EngeError):
-            main(ctx)
+        result = main(ctx)
+        self.assertEqual(result, ExitCode.TEST_FAILURE)
 
     def test_no_parsed_opts_reference_in_module(self):
         import enge.cancel.__main__ as cancel_mod
