@@ -1,6 +1,4 @@
-import io
 import unittest
-from contextlib import redirect_stdout
 from unittest.mock import patch, MagicMock
 
 from tests._helpers import make_app_context
@@ -27,16 +25,17 @@ class TestCancelCharacterization(unittest.TestCase):
     @patch("enge.cancel.__main__.SubmitTest")
     @patch("enge.cancel.__main__.parse_tasks")
     @patch("enge.cancel.__main__.http_delete")
-    def test_full_success_returns_none(self, mock_delete, mock_parse, mock_submit_cls):
+    def test_full_success_returns_zero(self, mock_delete, mock_parse, mock_submit_cls):
         self._setup_cancel_mocks(
             mock_delete, mock_parse, mock_submit_cls, status_code=200
         )
         ctx = make_app_context(api_key="secret-key")
 
         from enge.cancel.__main__ import main
+        from enge.utils.globals import ExitCode
 
         result = main(ctx)
-        self.assertIsNone(result)
+        self.assertEqual(result, ExitCode.SUCCESS)
 
     @patch("enge.cancel.__main__.SubmitTest")
     @patch("enge.cancel.__main__.parse_tasks")
@@ -68,17 +67,16 @@ class TestCancelCharacterization(unittest.TestCase):
 
         from enge.cancel.__main__ import main
 
-        captured = io.StringIO()
-        with redirect_stdout(captured):
+        with patch("enge.cancel.__main__.console") as mock_console:
             main(ctx)
-        output = captured.getvalue()
-        self.assertIn("Would cancel 2 task(s):", output)
-        self.assertIn("https://tf.example.com/artifacts/aaaa-bbbb-cccc", output)
-        self.assertIn("https://tf.example.com/artifacts/dddd-eeee-ffff", output)
-        lines = [line.strip() for line in output.strip().splitlines()]
-        self.assertTrue(lines[0].startswith("Would cancel"))
-        self.assertTrue(lines[1].startswith("- "))
-        self.assertTrue(lines[2].startswith("- "))
+            printed = " ".join(str(c) for c in mock_console.print.call_args_list)
+            self.assertIn("Would cancel 2 task(s):", printed)
+            self.assertIn("https://tf.example.com/artifacts/aaaa-bbbb-cccc", printed)
+            self.assertIn("https://tf.example.com/artifacts/dddd-eeee-ffff", printed)
+            calls = mock_console.print.call_args_list
+            self.assertTrue(calls[0].args[0].startswith("Would cancel"))
+            self.assertTrue(calls[1].args[0].startswith("  - "))
+            self.assertTrue(calls[2].args[0].startswith("  - "))
 
 
 class TestCancelMain(unittest.TestCase):
