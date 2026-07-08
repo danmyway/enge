@@ -13,8 +13,8 @@ from enge.dispatch.tf_send_request import SubmitTest
 from enge.utils.task_resolver import parse_tasks
 from enge.utils.console import console
 from enge.utils.app_context import AppContext
-from enge.utils.errors import ValidationError, UserAbort, EngeError
-from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT
+from enge.utils.errors import UserAbort
+from enge.utils.globals import ExitCode, REQUEST_TIMEOUT_DEFAULT
 
 LOGGER = logging.getLogger(__name__)
 
@@ -202,8 +202,8 @@ def main(ctx: AppContext):
         # Set exit code based on results
         failed_count = sum(1 for r in results if not r["success"])
         if failed_count > 0:
-
-            raise ValidationError("Some cancellations failed")
+            LOGGER.critical("Some cancellations failed")
+            return ExitCode.TEST_FAILURE
         else:
             return
 
@@ -211,7 +211,3 @@ def main(ctx: AppContext):
         LOGGER.info("Cancellation interrupted by user")
 
         raise UserAbort("Cancellation interrupted by user")
-    except Exception as e:
-        LOGGER.error(f"Unexpected error in cancel operation: {e}")
-
-        raise EngeError("Unexpected error in cancel operation") from e
