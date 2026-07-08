@@ -605,5 +605,70 @@ class TestMultiValueFilters(unittest.TestCase):
         self.assertEqual(matched_sets, {"alpha", "beta"})
 
 
+class TestReportListDisplayOrder(unittest.TestCase):
+    """report --list table is oldest-first; json/gitlab are newest-first."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+        self.ids = []
+        for _ in range(3):
+            rid = generate_ulid()
+            self.ids.append(rid)
+            w = ManifestWriter(
+                run_id=rid,
+                command="test",
+                argv=["enge", "test"],
+                context={"set": "smoke"},
+            )
+            w.add_request("uuid-dummy", tier="tier0", arch="x86_64")
+            w.flush(self.runs, self.latest)
+            time.sleep(0.002)
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_table_rows_oldest_first(self):
+        import enge.utils.console as console_mod
+        from rich.console import Console
+
+        buf = StringIO()
+        saved = console_mod._current
+        try:
+            console_mod._current = Console(
+                file=buf, no_color=True, width=200, highlight=False
+            )
+            ctx = _make_ctx(self.runs, self.latest, output_format="terminal")
+            _handle_list(ctx)
+        finally:
+            console_mod._current = saved
+        output = buf.getvalue()
+        positions = [output.index(rid) for rid in self.ids]
+        self.assertEqual(
+            positions,
+            sorted(positions),
+            f"Table rows should be oldest-first: {self.ids}",
+        )
+
+    def test_json_output_newest_first(self):
+        ctx = _make_ctx(self.runs, self.latest, output_format="json")
+        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+            _handle_list(ctx)
+            output = json.loads(mock_out.getvalue())
+        output_ids = [r["run_id"] for r in output]
+        self.assertEqual(output_ids, list(reversed(self.ids)))
+
+    def test_gitlab_output_newest_first(self):
+        ctx = _make_ctx(self.runs, self.latest, output_format="gitlab")
+        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+            _handle_list(ctx)
+            lines = mock_out.getvalue().strip().split("\n")
+        data_lines = [row for row in lines if row.startswith("| 0")]
+        data_ids = [row.split("|")[1].strip() for row in data_lines]
+        self.assertEqual(data_ids, list(reversed(self.ids)))
+
+
 if __name__ == "__main__":
     unittest.main()
