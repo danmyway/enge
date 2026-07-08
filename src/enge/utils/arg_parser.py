@@ -529,28 +529,32 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         "--set",
         dest="filter_set",
         metavar="SET",
-        help="Filter runs by test set name.",
+        action="append",
+        help="Filter runs by test set name (repeatable, OR within).",
     )
 
     report.add_argument(
         "--tier",
         dest="filter_tier",
         metavar="TIER",
-        help="Filter runs by tier.",
+        action="append",
+        help="Filter runs by tier (repeatable, OR within).",
     )
 
     report.add_argument(
         "--arch",
         dest="filter_arch",
         metavar="ARCH",
-        help="Filter runs by architecture.",
+        action="append",
+        help="Filter runs by architecture (repeatable, OR within).",
     )
 
     report.add_argument(
         "--tag",
         dest="filter_tag",
         metavar="TAG",
-        help="Filter runs by tag.",
+        action="append",
+        help="Filter runs by tag (repeatable, OR within).",
     )
 
     # ==================== RERUN SUBCOMMAND ====================

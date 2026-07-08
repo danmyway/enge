@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 
 SCHEMA_VERSION = 1
@@ -128,23 +128,37 @@ class ManifestReader:
         return summaries
 
     @staticmethod
+    def _as_set(
+        val: Union[None, str, Sequence[str]],
+    ) -> Optional[frozenset]:
+        if val is None:
+            return None
+        if isinstance(val, str):
+            return frozenset((val,))
+        return frozenset(val)
+
+    @staticmethod
     def find_runs(
         runs_dir: Path,
         *,
-        set_name: Optional[str] = None,
-        tier: Optional[str] = None,
-        arch: Optional[str] = None,
-        tag: Optional[str] = None,
+        set_name: Union[None, str, List[str]] = None,
+        tier: Union[None, str, List[str]] = None,
+        arch: Union[None, str, List[str]] = None,
+        tag: Union[None, str, List[str]] = None,
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
     ) -> List[Dict[str, Any]]:
+        set_vals = ManifestReader._as_set(set_name)
+        tier_vals = ManifestReader._as_set(tier)
+        arch_vals = ManifestReader._as_set(arch)
+        tag_vals = ManifestReader._as_set(tag)
+
         all_runs = ManifestReader.list_runs(runs_dir)
         results = []
         for summary in all_runs:
-            ctx_set_matches = (
-                not set_name or summary.get("context", {}).get("set") == set_name
-            )
-            if tag and tag not in summary.get("tags", []):
+            ctx_set = summary.get("context", {}).get("set")
+            ctx_set_matches = not set_vals or ctx_set in set_vals
+            if tag_vals and not tag_vals & set(summary.get("tags", [])):
                 continue
             created = summary.get("created_at", "")
             if created:
@@ -157,16 +171,18 @@ class ManifestReader:
                         continue
                     if until and dt > until:
                         continue
-            if not ctx_set_matches or tier or arch:
+            if not ctx_set_matches or tier_vals or arch_vals:
                 full = ManifestReader.load(Path(summary["path"]))
                 requests = full.get("requests", [])
-                if not ctx_set_matches and not any(
-                    r.get("set") == set_name for r in requests
+                if (
+                    not ctx_set_matches
+                    and set_vals
+                    and not any(r.get("set") in set_vals for r in requests)
                 ):
                     continue
-                if tier and not any(r.get("tier") == tier for r in requests):
+                if tier_vals and not any(r.get("tier") in tier_vals for r in requests):
                     continue
-                if arch and not any(r.get("arch") == arch for r in requests):
+                if arch_vals and not any(r.get("arch") in arch_vals for r in requests):
                     continue
             results.append(summary)
         return results
