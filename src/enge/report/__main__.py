@@ -365,7 +365,7 @@ def _handle_list(ctx: AppContext) -> int:
         table.add_column("Reqs", justify="right")
         table.add_column("Origin")
 
-        for r in runs:
+        for r in reversed(runs):
             ctx_data = r.get("context", {})
             created = r.get("created_at", "")
             tiers = ctx_data.get("tiers", [])
