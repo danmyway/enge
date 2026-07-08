@@ -1,7 +1,85 @@
+import io
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch, MagicMock
 
 from tests._helpers import make_app_context
+
+
+class TestCancelCharacterization(unittest.TestCase):
+    """Lock down cancel's observable behavior at the module boundary."""
+
+    def _setup_cancel_mocks(
+        self, mock_delete, mock_parse, mock_submit_cls, task_ids=None, status_code=200
+    ):
+        if task_ids is None:
+            task_ids = ["aaaa-bbbb-cccc"]
+        urls = [f"https://tf.example.com/api/{tid}" for tid in task_ids]
+        mock_parse.return_value = (urls, "latest")
+        mock_submit = MagicMock()
+        mock_submit.build_payload.return_value = ({"Authorization": "Bearer x"}, {})
+        mock_submit_cls.return_value = mock_submit
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.text = ""
+        mock_delete.return_value = mock_response
+
+    @patch("enge.cancel.__main__.SubmitTest")
+    @patch("enge.cancel.__main__.parse_tasks")
+    @patch("enge.cancel.__main__.http_delete")
+    def test_full_success_returns_none(self, mock_delete, mock_parse, mock_submit_cls):
+        self._setup_cancel_mocks(
+            mock_delete, mock_parse, mock_submit_cls, status_code=200
+        )
+        ctx = make_app_context(api_key="secret-key")
+
+        from enge.cancel.__main__ import main
+
+        result = main(ctx)
+        self.assertIsNone(result)
+
+    @patch("enge.cancel.__main__.SubmitTest")
+    @patch("enge.cancel.__main__.parse_tasks")
+    @patch("enge.cancel.__main__.http_delete")
+    def test_partial_failure_raises_enge_error(
+        self, mock_delete, mock_parse, mock_submit_cls
+    ):
+        self._setup_cancel_mocks(
+            mock_delete, mock_parse, mock_submit_cls, status_code=500
+        )
+        ctx = make_app_context()
+
+        from enge.cancel.__main__ import main
+        from enge.utils.errors import EngeError
+
+        with self.assertRaises(EngeError) as cm:
+            main(ctx)
+        self.assertIn("Unexpected error in cancel operation", str(cm.exception))
+
+    @patch("enge.cancel.__main__.parse_tasks")
+    def test_dryrun_output_content(self, mock_parse):
+        mock_parse.return_value = (
+            [
+                "https://tf.example.com/api/aaaa-bbbb-cccc",
+                "https://tf.example.com/api/dddd-eeee-ffff",
+            ],
+            "latest",
+        )
+        ctx = make_app_context(extra_cli={"dryrun": True})
+
+        from enge.cancel.__main__ import main
+
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            main(ctx)
+        output = captured.getvalue()
+        self.assertIn("Would cancel 2 task(s):", output)
+        self.assertIn("https://tf.example.com/artifacts/aaaa-bbbb-cccc", output)
+        self.assertIn("https://tf.example.com/artifacts/dddd-eeee-ffff", output)
+        lines = [line.strip() for line in output.strip().splitlines()]
+        self.assertTrue(lines[0].startswith("Would cancel"))
+        self.assertTrue(lines[1].startswith("- "))
+        self.assertTrue(lines[2].startswith("- "))
 
 
 class TestCancelMain(unittest.TestCase):
