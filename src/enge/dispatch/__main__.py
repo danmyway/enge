@@ -364,7 +364,6 @@ def _build_manifest_writer(ctx):
 
 
 def main(ctx) -> int:
-    global artifact_type
     try:
         output_format = getattr(ctx.cli_args, "output_format", "terminal")
 
@@ -392,6 +391,7 @@ def main(ctx) -> int:
             )
 
         tiers, plans = _compute_tiers_and_plans(ctx)
+        # Run-wide by design; mixed copr/brew per-spec is a known limitation (project ledger).
         artifact_type = _determine_artifact_type(ctx)
 
         manifest_writer = _build_manifest_writer(ctx)
