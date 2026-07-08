@@ -134,8 +134,9 @@ class ManifestReader:
         if val is None:
             return None
         if isinstance(val, str):
-            return frozenset((val,))
-        return frozenset(val)
+            return frozenset((val,)) if val else None
+        filtered = frozenset(v for v in val if v)
+        return filtered or None
 
     @staticmethod
     def find_runs(
