@@ -605,6 +605,83 @@ class TestMultiValueFilters(unittest.TestCase):
         self.assertEqual(matched_sets, {"alpha", "beta"})
 
 
+class TestEmptyStringFilterSemantics(unittest.TestCase):
+    """Empty-string filter values must mean 'no filter' (project convention)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _write(self, set_name, tag=None):
+
+        rid = generate_ulid()
+        w = ManifestWriter(
+            run_id=rid,
+            command="test",
+            argv=["enge", "test"],
+            context={"set": set_name},
+            tags=[tag] if tag else [],
+        )
+        w.add_request(str(uuid_mod.uuid4()), set_name=set_name)
+        w.flush(self.runs, self.latest)
+        time.sleep(0.002)
+        return rid
+
+    def test_empty_string_set_name_matches_all(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("alpha")
+        self._write("beta")
+        results = ManifestReader.find_runs(self.runs, set_name="")
+        self.assertEqual(len(results), 2)
+
+    def test_list_of_empty_string_set_name_matches_all(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("alpha")
+        self._write("beta")
+        results = ManifestReader.find_runs(self.runs, set_name=[""])
+        self.assertEqual(len(results), 2)
+
+    def test_empty_string_among_real_values_dropped(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("alpha")
+        self._write("beta")
+        results = ManifestReader.find_runs(self.runs, set_name=["", "alpha"])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["context"]["set"], "alpha")
+
+    def test_empty_string_tag_matches_all(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("s1", tag="nightly")
+        self._write("s2", tag="gating")
+        results = ManifestReader.find_runs(self.runs, tag="")
+        self.assertEqual(len(results), 2)
+
+    def test_list_of_empty_string_tag_matches_all(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("s1", tag="nightly")
+        self._write("s2", tag="gating")
+        results = ManifestReader.find_runs(self.runs, tag=[""])
+        self.assertEqual(len(results), 2)
+
+    def test_empty_string_among_real_tag_values_dropped(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("s1", tag="nightly")
+        self._write("s2", tag="gating")
+        results = ManifestReader.find_runs(self.runs, tag=["", "nightly"])
+        self.assertEqual(len(results), 1)
+
+
 class TestReportListDisplayOrder(unittest.TestCase):
     """report --list table is oldest-first; json/gitlab are newest-first."""
 
