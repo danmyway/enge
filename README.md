@@ -957,10 +957,11 @@ Each `enge test` or `enge rerun` invocation writes a JSON manifest to `~/.local/
 # List all runs (newest first)
 enge report --list
 
-# Filter by set, tier, architecture, or tag
+# Filter by set, tier, architecture, or tag (repeatable, OR within a filter)
 enge report --list --set base-8to9
+enge report --list --set base-8to9 --set base-9to10
 enge report --list --tier tier0 --arch x86_64
-enge report --list --tag nightly --since 3d
+enge report --list --tag nightly --tag gating --since 3d
 
 # Report a specific run by ID (copy from --list output)
 enge report --run <run_id>
