@@ -432,5 +432,178 @@ class TestFindRunsMultiSetMatching(unittest.TestCase):
         self.assertEqual(len(results), 0)
 
 
+class TestMultiValueFilters(unittest.TestCase):
+    """Multi-value --set/--tier/--arch/--tag: OR within dimension, AND across."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _write(self, set_name, tier="tier0", arch="x86_64", tag=None):
+        rid = generate_ulid()
+        w = ManifestWriter(
+            run_id=rid,
+            command="test",
+            argv=["enge", "test"],
+            context={"set": set_name},
+            tags=[tag] if tag else [],
+        )
+        w.add_request(str(uuid_mod.uuid4()), set_name=set_name, tier=tier, arch=arch)
+        w.flush(self.runs, self.latest)
+        time.sleep(0.002)
+        return rid
+
+    # --- argparse level ---
+
+    def test_argparse_repeated_set_yields_list(self):
+        from enge.utils.arg_parser import get_arguments
+
+        args = get_arguments(
+            args=["report", "--list", "--set", "alpha", "--set", "beta"]
+        )
+        self.assertEqual(args.filter_set, ["alpha", "beta"])
+
+    def test_argparse_repeated_tier_yields_list(self):
+        from enge.utils.arg_parser import get_arguments
+
+        args = get_arguments(
+            args=["report", "--list", "--tier", "tier0", "--tier", "tier1"]
+        )
+        self.assertEqual(args.filter_tier, ["tier0", "tier1"])
+
+    def test_argparse_repeated_arch_yields_list(self):
+        from enge.utils.arg_parser import get_arguments
+
+        args = get_arguments(
+            args=["report", "--list", "--arch", "x86_64", "--arch", "ppc64le"]
+        )
+        self.assertEqual(args.filter_arch, ["x86_64", "ppc64le"])
+
+    def test_argparse_repeated_tag_yields_list(self):
+        from enge.utils.arg_parser import get_arguments
+
+        args = get_arguments(
+            args=["report", "--list", "--tag", "nightly", "--tag", "gating"]
+        )
+        self.assertEqual(args.filter_tag, ["nightly", "gating"])
+
+    # --- find_runs level: OR within dimension ---
+
+    def test_find_runs_set_or(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("alpha")
+        self._write("beta")
+        self._write("gamma")
+        results = ManifestReader.find_runs(self.runs, set_name=["alpha", "beta"])
+        matched_sets = {r["context"]["set"] for r in results}
+        self.assertEqual(matched_sets, {"alpha", "beta"})
+
+    def test_find_runs_tier_or(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("s1", tier="tier0")
+        self._write("s2", tier="tier1")
+        self._write("s3", tier="tier2")
+        results = ManifestReader.find_runs(self.runs, tier=["tier0", "tier1"])
+        self.assertEqual(len(results), 2)
+
+    def test_find_runs_arch_or(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("s1", arch="x86_64")
+        self._write("s2", arch="ppc64le")
+        self._write("s3", arch="s390x")
+        results = ManifestReader.find_runs(self.runs, arch=["x86_64", "ppc64le"])
+        self.assertEqual(len(results), 2)
+
+    def test_find_runs_tag_or(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("s1", tag="nightly")
+        self._write("s2", tag="gating")
+        self._write("s3", tag="manual")
+        results = ManifestReader.find_runs(self.runs, tag=["nightly", "gating"])
+        self.assertEqual(len(results), 2)
+
+    # --- AND across dimensions ---
+
+    def test_find_runs_set_and_tier(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("alpha", tier="tier0")
+        self._write("alpha", tier="tier1")
+        self._write("beta", tier="tier0")
+        results = ManifestReader.find_runs(
+            self.runs, set_name=["alpha"], tier=["tier0"]
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["context"]["set"], "alpha")
+
+    # --- backward compat: single value ---
+
+    def test_find_runs_single_set_scalar_compat(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("alpha")
+        self._write("beta")
+        results = ManifestReader.find_runs(self.runs, set_name="alpha")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["context"]["set"], "alpha")
+
+    def test_find_runs_single_tier_scalar_compat(self):
+        from enge.utils.manifest import ManifestReader
+
+        self._write("s1", tier="tier0")
+        self._write("s2", tier="tier1")
+        results = ManifestReader.find_runs(self.runs, tier="tier0")
+        self.assertEqual(len(results), 1)
+
+    # --- multiset interplay: OR with per-request set matching ---
+
+    def test_find_runs_multi_value_with_multiset_manifest(self):
+        """Multi-value filter must still match per-request set fields."""
+        from enge.utils.manifest import ManifestReader
+
+        rid = generate_ulid()
+        w = ManifestWriter(
+            run_id=rid,
+            command="test",
+            argv=["enge", "test", "-S", "alpha", "-S", "beta"],
+            context={"set": "alpha"},
+        )
+        w.add_request("uuid-alpha-1", set_name="alpha", tier="tier0", arch="x86_64")
+        w.add_request("uuid-beta-1", set_name="beta", tier="tier0", arch="x86_64")
+        w.flush(self.runs, self.latest)
+
+        results = ManifestReader.find_runs(self.runs, set_name=["beta"])
+        self.assertEqual(
+            len(results), 1, "multi-set run not found by non-context set in list"
+        )
+
+    # --- end-to-end: _handle_list with multi-value filters ---
+
+    def test_handle_list_multi_set_or(self):
+        self._write("alpha")
+        self._write("beta")
+        self._write("gamma")
+        ctx = _make_ctx(
+            self.runs,
+            self.latest,
+            output_format="json",
+            filter_set=["alpha", "beta"],
+        )
+        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+            _handle_list(ctx)
+            output = json.loads(mock_out.getvalue())
+        matched_sets = {r["context"]["set"] for r in output}
+        self.assertEqual(matched_sets, {"alpha", "beta"})
+
+
 if __name__ == "__main__":
     unittest.main()
