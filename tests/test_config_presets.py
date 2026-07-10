@@ -45,7 +45,7 @@ BASE_CONFIG = {
 # ── helpers ──────────────────────────────────────────────────────────
 
 
-def _resolve_with_preset(cli_args, set_config, config):
+def _resolve_with_preset(cli_args, set_config, config, set_name="test-set"):
     """Call the preset-aware resolution path.
 
     Imports _resolve_preset from wherever it lands and composes it with
@@ -53,7 +53,7 @@ def _resolve_with_preset(cli_args, set_config, config):
     """
     from enge.utils.test_attribute_builder import _resolve_preset
 
-    merged_set = _resolve_preset(set_config, config)
+    merged_set = _resolve_preset(set_config, config, set_name=set_name)
     return resolve_effective_values(cli_args, merged_set, config)
 
 
@@ -186,7 +186,7 @@ class TestEmptyStringInversion(unittest.TestCase):
         self.assertEqual(result["source"], "RHEL-from-preset")
 
     def test_set_empty_string_warning_fires(self):
-        """WARNING must fire naming set key and preset."""
+        """WARNING must fire naming the set, key, and preset."""
         config = copy.deepcopy(BASE_CONFIG)
         config["tests"]["preset"] = {
             "rhsm_base": {"source": "RHEL-from-preset"},
@@ -198,11 +198,12 @@ class TestEmptyStringInversion(unittest.TestCase):
         from enge.utils.test_attribute_builder import _resolve_preset
 
         with self.assertLogs(level="WARNING") as cm:
-            _resolve_preset(set_config, config)
+            _resolve_preset(set_config, config, set_name="my-set")
 
         warning_text = "\n".join(cm.output)
         self.assertIn("source", warning_text)
         self.assertIn("rhsm_base", warning_text)
+        self.assertIn("my-set", warning_text)
 
     def test_set_none_inherits_preset_value(self):
         config = copy.deepcopy(BASE_CONFIG)
@@ -245,11 +246,12 @@ class TestPresetEmptyString(unittest.TestCase):
         from enge.utils.test_attribute_builder import _resolve_preset
 
         with self.assertLogs(level="WARNING") as cm:
-            _resolve_preset(set_config, config)
+            _resolve_preset(set_config, config, set_name="my-set")
 
         warning_text = "\n".join(cm.output)
         self.assertIn("source", warning_text)
         self.assertIn("rhsm_base", warning_text)
+        self.assertIn("my-set", warning_text)
 
 
 # ── (g) preset-extends-preset → exit 99 ─────────────────────────────
@@ -474,6 +476,96 @@ class TestPresetStructureValidation(unittest.TestCase):
         self.assertTrue(
             warnings, "Expected warning about unknown preset key 'bogus_key'"
         )
+
+
+# ── Fix B: scope preset hard-fail to CLI-selected sets ───────────────
+
+
+class TestPresetValidationScoping(unittest.TestCase):
+    """Hard-fail only when the offending extends belongs to a CLI-selected set;
+    warn (not raise) for non-selected sets."""
+
+    def _make_po(self, config, cli_sets):
+        from enge.utils.opt_manager import ParsedOpts
+        from enge.utils.arg_parser import get_arguments
+
+        po = object.__new__(ParsedOpts)
+        po._validation_hooks = {}
+        po.config = config
+        args = ["test"]
+        for s in cli_sets:
+            args.extend(["-S", s])
+        po.cli_args = get_arguments(args=args)
+        po.options = po._get_config_options()
+        return po
+
+    def test_unknown_preset_in_nonselected_set_warns(self):
+        """Non-selected set with unknown preset → WARNING, not error."""
+        config = copy.deepcopy(BASE_CONFIG)
+        config["tests"]["set"] = {
+            "good": {"git_ref": "main", "tiers": ["tier0"]},
+            "bad": {"extends": "nope", "git_ref": "main", "tiers": ["tier0"]},
+        }
+        config["tests"]["preset"] = {}
+        po = self._make_po(config, cli_sets=["good"])
+
+        with self.assertLogs(level="WARNING") as cm:
+            po._validate_option_dependencies()
+
+        warning_text = "\n".join(cm.output)
+        self.assertIn("bad", warning_text)
+        self.assertIn("nope", warning_text)
+
+    def test_unknown_preset_in_selected_set_raises(self):
+        """Selected set with unknown preset → ConfigurationError."""
+        config = copy.deepcopy(BASE_CONFIG)
+        config["tests"]["set"] = {
+            "good": {"git_ref": "main", "tiers": ["tier0"]},
+            "bad": {"extends": "nope", "git_ref": "main", "tiers": ["tier0"]},
+        }
+        config["tests"]["preset"] = {}
+        po = self._make_po(config, cli_sets=["bad"])
+
+        with self.assertRaises(ConfigurationError) as ctx:
+            po._validate_option_dependencies()
+        self.assertIn("nope", str(ctx.exception))
+
+    def test_chained_preset_in_nonselected_set_warns(self):
+        """Non-selected set referencing a chained preset → WARNING."""
+        config = copy.deepcopy(BASE_CONFIG)
+        config["tests"]["set"] = {
+            "good": {"git_ref": "main", "tiers": ["tier0"]},
+            "bad": {"extends": "chained", "git_ref": "main", "tiers": ["tier0"]},
+        }
+        config["tests"]["preset"] = {
+            "chained": {"extends": "base", "source": "x"},
+            "base": {"source": "y"},
+        }
+        po = self._make_po(config, cli_sets=["good"])
+
+        with self.assertLogs(level="WARNING") as cm:
+            po._validate_option_dependencies()
+
+        warning_text = "\n".join(cm.output)
+        self.assertIn("bad", warning_text)
+        self.assertIn("chained", warning_text)
+
+    def test_chained_preset_in_selected_set_raises(self):
+        """Selected set referencing a chained preset → ConfigurationError."""
+        config = copy.deepcopy(BASE_CONFIG)
+        config["tests"]["set"] = {
+            "good": {"git_ref": "main", "tiers": ["tier0"]},
+            "bad": {"extends": "chained", "git_ref": "main", "tiers": ["tier0"]},
+        }
+        config["tests"]["preset"] = {
+            "chained": {"extends": "base", "source": "x"},
+            "base": {"source": "y"},
+        }
+        po = self._make_po(config, cli_sets=["bad"])
+
+        with self.assertRaises(ConfigurationError) as ctx:
+            po._validate_option_dependencies()
+        self.assertIn("chained", str(ctx.exception))
 
 
 if __name__ == "__main__":
