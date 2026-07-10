@@ -443,8 +443,37 @@ enge test --set-regex 'regression-[0-9]+$'
 enge test --set smoke --set-regex 'regression-.*'
 ```
 
+**Presets:**
+
+Presets define reusable key bundles that test sets can inherit via `extends`.
+A preset lives at `[tests.preset.<name>]` in any config layer (bundled,
+system, or user).  A set that carries `extends = "<name>"` inherits every
+key from the preset that the set itself does not define.  Set keys wholly
+replace the preset's — nested tables are NOT deep-merged.
+
+```toml
+# Preset: common RHSM-bundle settings
+[tests.preset.rhsm_base]
+environment = { RHSM_SETUP = "1", CDN_TYPE = "stage" }
+git_ref = "rhsm-branch"
+tiers = ["tier0"]
+
+# Set: inherits the preset, overrides source/target
+[tests.set.rhsm-9to10]
+extends = "rhsm_base"
+source = "9.6"
+target = "10.1"
+architectures = ["x86_64"]
+```
+
+Rules:
+- One level only — a preset must not carry `extends` (exit 99 if it does).
+- Unknown `extends` target is a configuration error (exit 99).
+- `""` in a set key inherits the preset value (with a warning).
+- Configs with zero presets and zero `extends` resolve identically to before.
+
 **Priority Order:**
-- CLI arguments > Test Set configuration > Main configuration
+- CLI arguments > Test Set > Preset > Main configuration > Bundled defaults
 - For context: Derived base > [tests].context > [tests.set.<name>].context > CLI --context
 - For architectures: CLI `--architectures/--arch` overrides set or tests defaults (warning logged)
 

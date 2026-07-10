@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Config presets (`[tests.preset.<name>]`): reusable key bundles that test sets inherit via `extends = "<name>"`. Resolution chain: CLI > set > preset > `[tests]` > bundled defaults. Set keys wholly replace preset values (no deep-merge of nested tables). Chained presets and unknown targets are rejected at validation (exit 99). Configs with no presets and no `extends` resolve identically to before
 - ReportPortal launches created by enge now carry structured attributes mirroring the manifest context vocabulary: `run_id`, `set`, `tier`, `arch`, `event`, `source` (source compose name), `target` (target compose name; omitted on rerun launches where unavailable), `tool` (always `enge`), plus `parent_run_id` on rerun-created launches. `run_id` is present on all real (non-dry-run) launches. Attributes are deduplicated by key against pre-existing TMT context attributes; pre-existing entries are never overwritten
 - Manifest request entries now record the RP launch UUID (`launch_uuid`) when enge creates a ReportPortal launch during dispatch or rerun; `null` when no launch was created
 - Set-level `plan_filter` and `test_filter` config keys: define FMF filters per test set instead of passing `--plan-filter`/`--test-filter` on every invocation. Priority: CLI > set > tier-generated.
