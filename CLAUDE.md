@@ -87,7 +87,19 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   hidden `--jira` alias), `json` (exactly ONE parseable JSON document on
   stdout; failures included with honest total/successful/failed counts;
   diagnostics on stderr only).
-- **Config precedence**: CLI > test-set > user config > bundled defaults.
+- **Config file layering**: configuration files merge in three layers:
+  bundled defaults (`enge.utils/enge_default_config.toml`, always loaded)
+  < system/external (`/etc/enge/enge_default_config.toml`,
+  `/etc/enge/enge_user_config.toml`) < user (`~/.config/enge_user_config.toml`,
+  `~/enge_user_config.toml`, or `--config`).  Each layer merges per-key
+  over the layer below; nested TOML tables merge recursively.  `""` = unset
+  inherits from the layer below with a WARNING.  `--config` replaces the
+  user layer only — bundled and system layers remain active.
+  `DEFAULT_USER_CONFIG_PATHS` is retired; use `SYSTEM_CONFIG_PATHS` and
+  `USER_CONFIG_PATHS` from `utils/globals.py`.
+- **Config precedence (intra-config)**: CLI > test-set > user config > bundled defaults.
+  This operates on the already-merged config dict — the file layering above
+  determines which values enter the dict.
   Env vars (`TESTING_FARM_API_TOKEN`, `REPORTPORTAL_API_TOKEN`) currently
   LOSE to config values — counterintuitive but documented; don't flip it
   silently.
