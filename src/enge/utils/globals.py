@@ -32,14 +32,21 @@ COPR_BASE_URL: str = "https://copr.fedorainfracloud.org"
 COPR_BUILT_PACKAGES_API_URL: str = f"{COPR_BASE_URL}/api_3/build/built-packages"
 """API endpoint for fetching built packages from a COPR build."""
 
-# ==================== DEFAULT CONFIG SEARCH PATHS ====================
+# ==================== CONFIG SEARCH PATHS (three-layer model) ====================
+# Precedence: bundled defaults  <  system/external  <  user
+# Bundled defaults are always loaded from the package.
 
-DEFAULT_USER_CONFIG_PATHS: Tuple[str, ...] = (
-    "~/.config/enge_user_config.toml",
-    "~/enge_user_config.toml",
+SYSTEM_CONFIG_PATHS: Tuple[str, ...] = (
+    "/etc/enge/enge_default_config.toml",
     "/etc/enge/enge_user_config.toml",
 )
-"""Default paths to search for configuration files, in order of preference."""
+"""System-level config files merged over bundled defaults, in order."""
+
+USER_CONFIG_PATHS: Tuple[str, ...] = (
+    "~/.config/enge_user_config.toml",
+    "~/enge_user_config.toml",
+)
+"""User-level config search paths; first existing file wins."""
 
 # ==================== REPORTPORTAL CONFIGURATION ====================
 

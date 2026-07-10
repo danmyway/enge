@@ -164,9 +164,9 @@ def parse_compose_spec(
     # Load config if not provided
     if config is None:
         from enge.utils.config_parser import load_config
-        from enge.utils.globals import DEFAULT_USER_CONFIG_PATHS
+        from enge.utils.globals import USER_CONFIG_PATHS
 
-        config = load_config(paths=list(DEFAULT_USER_CONFIG_PATHS))
+        config = load_config(paths=list(USER_CONFIG_PATHS))
 
     # Try parsing as CentOS Stream format with aliases
     # Supported formats: CentOS-Stream-9, centos-stream-9, stream-9, cs-9, stream9, cs9

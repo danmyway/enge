@@ -61,13 +61,11 @@ def _handle_list_sets():
         return False
 
     from enge.utils.config_parser import load_config
-    from enge.utils.globals import DEFAULT_USER_CONFIG_PATHS
+    from enge.utils.globals import USER_CONFIG_PATHS
     from rich.table import Table
     from rich import box
 
-    config_paths = (
-        [cli_args.config] if cli_args.config else list(DEFAULT_USER_CONFIG_PATHS)
-    )
+    config_paths = [cli_args.config] if cli_args.config else list(USER_CONFIG_PATHS)
     config = load_config(paths=config_paths)
     sets_cfg = config.get("tests", {}).get("set", {})
 
