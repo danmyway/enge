@@ -85,29 +85,36 @@ The template for the config file is available in the root of the repository. The
 In case of any question, please reach out to the project maintainer(s).
 
 ##### Configuration locations and precedence
-When loading configuration, enge applies these rules:
+Configuration is assembled from three layers, lowest to highest precedence:
 
-- **CLI-provided path**: If `-c/--config` is used, that file is tried first.
-- **User locations (searched in order)**:
+```
+  bundled defaults        (always loaded from the package)
+       ↑
+  system / external       /etc/enge/enge_default_config.toml
+                          /etc/enge/enge_user_config.toml
+       ↑
+  user                    ~/.config/enge_user_config.toml
+                          ~/enge_user_config.toml
+                          (or -c/--config <path>)
+```
+
+Each layer is **merged per-key** over the layer below; nested TOML tables merge recursively. Keys omitted from a higher layer inherit from the lower layer. Empty-string `""` values inherit from the layer below with a WARNING naming the file and key.
+
+- **`-c/--config <path>`** replaces the **user** layer only — bundled and system layers remain active underneath.
+- **User locations** are searched in order; the first existing file is used:
   - `~/.config/enge_user_config.toml`
   - `~/enge_user_config.toml`
-  - `/etc/enge/enge_user_config.toml`
-- The first existing file in the search order above is used as the user configuration.
-- The user configuration is then **merged over defaults** (see below). Nested tables are merged recursively; user values take precedence.
 
 ##### Default configuration and version check
-enge ships with a default configuration used as a base for all settings. Defaults are loaded from the first available location:
-
-- `/etc/enge/enge_default_config.toml` (system-wide, installed by the RPM)
-- Bundled example inside the package (`enge.utils/enge_default_config.toml`)
+enge ships with a bundled default configuration used as the base for all settings. System-level configs under `/etc/enge/` are merged over bundled defaults per-key.
 
 >__NOTE__: Pre-configured default configuration file will be distributed in the leapp-tests repository.
 
 If you maintain the default configuration in a different location (for example,
 checked out from a private repository), point enge to it by adding
 `default_config_path = '/path/to/enge_default_config.toml'` either at the root of
-your `enge.toml` or inside the `[common]` section. When set, this path takes
-precedence over the system-wide default.
+your `enge.toml` or inside the `[common]` section. When set, this path replaces
+the system layer (bundled defaults still apply underneath).
 
 If both are present, enge compares their `version` fields (semantic-like `X.Y.Z`, e.g. `2025.08.27`), and **logs a warning** when the system default under `/etc/enge/enge_default_config.toml` appears older than the bundled example, suggesting an update.
 
@@ -121,7 +128,7 @@ Key default paths from the bundled defaults (can be overridden in your `enge.tom
 ##### System-wide configuration (RPM installs)
 When installed via RPM, the following files are provided under `/etc/enge/`:
 
-- `enge_default_config.toml` — system default configuration used as a base
+- `enge_default_config.toml` — system default configuration merged per-key over bundled defaults
 - `enge_user_config.toml` — an empty user configuration file (marked as `noreplace` so upgrades do not overwrite local changes)
 
 ### Usage
