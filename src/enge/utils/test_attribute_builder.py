@@ -28,6 +28,70 @@ from enge.utils.source_target_parser import (
 logger = logging.getLogger(__name__)
 
 
+def _resolve_preset(set_config, config):
+    """Merge a preset layer under *set_config* if it carries ``extends``.
+
+    Returns a new dict with ``extends`` stripped.  Keys present in the set
+    (and not ``""`` / ``None``) wholly replace the preset's value — nested
+    tables are NOT recursively merged.
+    """
+    raw = dict(set_config)
+    preset_name = raw.pop("extends", None)
+    if not preset_name:
+        return raw
+
+    presets = config.get("tests", {}).get("preset", {})
+    if not isinstance(presets, dict) or preset_name not in presets:
+        available = sorted(presets.keys()) if isinstance(presets, dict) else []
+        raise ConfigurationError(
+            f"Test set extends unknown preset '{preset_name}'. "
+            f"Available presets: {available}"
+        )
+
+    preset = presets[preset_name]
+    if "extends" in preset:
+        raise ConfigurationError(
+            f"Preset '{preset_name}' itself carries 'extends' "
+            f"(targets '{preset['extends']}'); chained presets are not allowed"
+        )
+
+    merged = {}
+    for key, preset_val in preset.items():
+        set_val = raw.get(key)
+        if key in raw and set_val not in (None, ""):
+            merged[key] = set_val
+        elif key in raw and set_val in (None, ""):
+            if preset_val not in (None, ""):
+                logger.warning(
+                    "set key '%s' is empty — inheriting preset '%s' value %r",
+                    key,
+                    preset_name,
+                    preset_val,
+                )
+                merged[key] = preset_val
+            else:
+                logger.warning(
+                    "preset '%s' key '%s' is empty — resolution will fall to [tests]",
+                    preset_name,
+                    key,
+                )
+        else:
+            if preset_val in (None, ""):
+                logger.warning(
+                    "preset '%s' key '%s' is empty — resolution will fall to [tests]",
+                    preset_name,
+                    key,
+                )
+            else:
+                merged[key] = preset_val
+
+    for key, val in raw.items():
+        if key not in merged:
+            merged[key] = val
+
+    return merged
+
+
 def build_test_attributes(cli_args, config):  # noqa: C901
     """Build all test-dispatch attributes from *cli_args* and *config*.
 
@@ -46,7 +110,7 @@ def build_test_attributes(cli_args, config):  # noqa: C901
         try:
             individual_test_sets = []
             for set_name in cli_sets:
-                set_config = config["tests"]["set"][set_name]
+                set_config = _resolve_preset(config["tests"]["set"][set_name], config)
                 logger.log(VERBOSE, f"Processing test set '{set_name}': {set_config}")
 
                 effective_values = resolve_effective_values(
