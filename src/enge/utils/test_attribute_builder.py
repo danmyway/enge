@@ -28,7 +28,7 @@ from enge.utils.source_target_parser import (
 logger = logging.getLogger(__name__)
 
 
-def _resolve_preset(set_config, config):
+def _resolve_preset(set_config, config, *, set_name="<unknown>"):
     """Merge a preset layer under *set_config* if it carries ``extends``.
 
     Returns a new dict with ``extends`` stripped.  Keys present in the set
@@ -63,7 +63,8 @@ def _resolve_preset(set_config, config):
         elif key in raw and set_val in (None, ""):
             if preset_val not in (None, ""):
                 logger.warning(
-                    "set key '%s' is empty — inheriting preset '%s' value %r",
+                    "set '%s': key '%s' is empty " "— inheriting preset '%s' value %r",
+                    set_name,
                     key,
                     preset_name,
                     preset_val,
@@ -71,14 +72,18 @@ def _resolve_preset(set_config, config):
                 merged[key] = preset_val
             else:
                 logger.warning(
-                    "preset '%s' key '%s' is empty — resolution will fall to [tests]",
+                    "set '%s': preset '%s' key '%s' is empty "
+                    "— resolution will fall to [tests]",
+                    set_name,
                     preset_name,
                     key,
                 )
         else:
             if preset_val in (None, ""):
                 logger.warning(
-                    "preset '%s' key '%s' is empty — resolution will fall to [tests]",
+                    "set '%s': preset '%s' key '%s' is empty "
+                    "— resolution will fall to [tests]",
+                    set_name,
                     preset_name,
                     key,
                 )
@@ -110,7 +115,9 @@ def build_test_attributes(cli_args, config):  # noqa: C901
         try:
             individual_test_sets = []
             for set_name in cli_sets:
-                set_config = _resolve_preset(config["tests"]["set"][set_name], config)
+                set_config = _resolve_preset(
+                    config["tests"]["set"][set_name], config, set_name=set_name
+                )
                 logger.log(VERBOSE, f"Processing test set '{set_name}': {set_config}")
 
                 effective_values = resolve_effective_values(
