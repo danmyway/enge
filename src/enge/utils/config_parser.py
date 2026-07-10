@@ -2,8 +2,8 @@
 """
 Configuration file parser for enge.
 
-This module handles loading and parsing TOML configuration files
-with proper error handling, validation, and default value merging.
+This module handles loading and parsing TOML configuration files with
+three-layer merging: bundled defaults < system/external < user.
 """
 
 import logging
@@ -13,7 +13,7 @@ from pathlib import Path
 
 from importlib.resources import files
 from enge.utils.errors import ConfigurationError
-from enge.utils.globals import DEFAULT_USER_CONFIG_PATHS
+from enge.utils.globals import SYSTEM_CONFIG_PATHS, USER_CONFIG_PATHS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def _safe_load_toml(path: Path) -> Optional[Dict[str, Any]]:
             with open(path, "rb") as f:
                 return tomllib.load(f)
     except (FileNotFoundError, tomllib.TOMLDecodeError) as e:
-        LOGGER.warning(f"Skipping default config candidate {path}: {e}")
+        LOGGER.warning(f"Skipping config candidate {path}: {e}")
     return None
 
 
@@ -39,34 +39,8 @@ def _parse_version(version_val: Any) -> Optional[tuple[int, int, int]]:
     return None
 
 
-def load_default_config(
-    user_override: Optional[Union[str, Path]] = None,
-) -> Dict[str, Any]:
-    """
-    Load the built-in default configuration.
-
-    Args:
-        user_override: Optional path provided by user configuration that should
-            be treated as the default configuration source.
-
-    Returns:
-        Default configuration dictionary
-
-    Raises:
-        SystemExit: If default config cannot be loaded
-    """
-    user_override_path: Optional[Path] = None
-    if user_override:
-        try:
-            user_override_path = Path(user_override).expanduser()
-        except TypeError:
-            LOGGER.warning(
-                "Ignoring default configuration override because it is not a valid path"
-            )
-
-    # Preferred external default at /etc/enge/enge_default_config.toml
-    external_path = Path("/etc/enge/enge_default_config.toml")
-    # Fallbacks to package-bundled example and dev path
+def _load_bundled_config() -> Dict[str, Any]:
+    """Load the package-bundled default configuration (always available)."""
     bundled_path: Optional[Path] = None
     try:
         package_files = files("enge.utils")
@@ -74,44 +48,74 @@ def load_default_config(
     except Exception:
         bundled_path = Path(__file__).parent / "enge_default_config.toml"
 
-    override_cfg = None
-    if user_override_path:
-        override_cfg = _safe_load_toml(user_override_path)
-        if override_cfg:
-            LOGGER.info(
-                f"Using user-defined default configuration at {user_override_path}"
-            )
-        else:
+    if bundled_path:
+        cfg = _safe_load_toml(bundled_path)
+        if cfg:
+            return cfg
+
+    LOGGER.critical("Cannot load bundled default configuration")
+    raise ConfigurationError("Cannot load bundled default configuration")
+
+
+def load_default_config(
+    user_override: Optional[Union[str, Path]] = None,
+) -> Dict[str, Any]:
+    """Load the default configuration with layering.
+
+    When called without arguments, returns the bundled defaults merged with
+    any system-level configs.  The *user_override* parameter replaces the
+    system layer with a single file.
+
+    Returns:
+        Default configuration dictionary
+
+    Raises:
+        SystemExit: If default config cannot be loaded
+    """
+    bundled = _load_bundled_config()
+    merged = bundled
+
+    if user_override:
+        override_path: Optional[Path] = None
+        try:
+            override_path = Path(user_override).expanduser()
+        except TypeError:
             LOGGER.warning(
-                f"User-defined default configuration {user_override_path} is "
-                "not readable; falling back"
+                "Ignoring default configuration override because it is not a valid path"
             )
+        if override_path:
+            override_cfg = _safe_load_toml(override_path)
+            if override_cfg:
+                LOGGER.info(
+                    f"Using user-defined default configuration at {override_path}"
+                )
+                merged = merge_configs(merged, override_cfg)
+                return merged
+            else:
+                LOGGER.warning(
+                    f"User-defined default configuration {override_path} is "
+                    "not readable; falling back"
+                )
 
-    external_cfg = _safe_load_toml(external_path)
-    bundled_cfg = _safe_load_toml(bundled_path) if bundled_path else None
+    for sys_path_str in SYSTEM_CONFIG_PATHS:
+        sys_path = Path(sys_path_str)
+        sys_cfg = _safe_load_toml(sys_path)
+        if sys_cfg:
+            ext_ver = _parse_version(sys_cfg.get("version"))
+            bun_ver = _parse_version(bundled.get("version"))
+            if (
+                sys_path_str == "/etc/enge/enge_default_config.toml"
+                and ext_ver
+                and bun_ver
+                and ext_ver < bun_ver
+            ):
+                LOGGER.warning(
+                    "The external default config at /etc/enge/enge_default_config.toml "
+                    "appears older than the bundled example. You may want to update it."
+                )
+            merged = merge_configs(merged, sys_cfg)
 
-    # Version comparison warning: warn only if external exists and is older than bundled
-    if override_cfg is None and external_cfg and bundled_cfg:
-        ext_ver = _parse_version(external_cfg.get("version"))
-        bun_ver = _parse_version(bundled_cfg.get("version"))
-        if ext_ver and bun_ver and ext_ver < bun_ver:
-            LOGGER.warning(
-                "The external default config at /etc/enge/enge_default_config.toml "
-                "appears older than the bundled example. You may want to update it."
-            )
-
-    # Selection: prefer external when present
-    if override_cfg:
-        return override_cfg
-    if external_cfg:
-        return external_cfg
-    if bundled_cfg:
-        return bundled_cfg
-
-    LOGGER.critical(
-        "Cannot load default configuration from external or bundled locations"
-    )
-    raise ConfigurationError("Cannot load default configuration")
+    return merged
 
 
 def merge_configs(default: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
@@ -135,15 +139,12 @@ def merge_configs(default: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, An
 
     for key, value in user.items():
         if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
-            # Recursively merge nested dictionaries
             merged[key] = merge_configs(merged[key], value)
         elif value in (None, ""):
-            # Treat None/"" as absent; keep the default if it is non-empty.
             existing = merged.get(key)
             if existing in (None, ""):
                 merged[key] = value  # no real default to inherit
         else:
-            # User value overwrites default
             merged[key] = value
 
     return merged
@@ -172,16 +173,22 @@ def _warn_empty_user_values(
 
 def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
     """
-    Load a TOML configuration file from the given paths with defaults.
+    Load a TOML configuration file with three-layer merging.
 
-    Tries each path in order until a valid config file is found.
-    The loaded config is merged with built-in defaults.
+    Layer precedence (lowest to highest):
+      bundled defaults  <  system/external config  <  user config
+
+    The *paths* argument specifies where to search for the user-layer config.
+    System-layer paths are loaded automatically from SYSTEM_CONFIG_PATHS.
+    Bundled defaults are always present.
 
     Args:
-        paths: List of file paths to try (strings or Path objects)
+        paths: List of user-config file paths to try (strings or Path objects).
+               When ``--config`` is given, this is ``[config_path]``.
+               When omitted, this is ``USER_CONFIG_PATHS``.
 
     Returns:
-        Parsed configuration as a dictionary with defaults applied
+        Parsed configuration as a dictionary with all layers applied
 
     Raises:
         SystemExit: If no config file is found or parsing fails
@@ -194,15 +201,14 @@ def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
         LOGGER.critical("No configuration file paths provided")
         raise ConfigurationError("No configuration file paths provided")
 
-    # Append system/user paths in priority order if not already present
     expanded_paths = [Path(path).expanduser() for path in paths]
-    for p in DEFAULT_USER_CONFIG_PATHS:
+    for p in USER_CONFIG_PATHS:
         pp = Path(p).expanduser()
         if pp not in expanded_paths:
             expanded_paths.append(pp)
 
-    # Try to find and load user configuration
     user_config = None
+    loaded_user_path: Optional[Path] = None
     for path in expanded_paths:
         if path.exists():
             LOGGER.debug(f"Loading configuration file from: {path}")
@@ -211,6 +217,7 @@ def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
                     user_config = tomllib.load(f)
 
                 LOGGER.info(f"Successfully loaded configuration from: {path}")
+                loaded_user_path = path
                 break
 
             except tomllib.TOMLDecodeError as e:
@@ -248,24 +255,20 @@ def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
                 "because it must be a string path"
             )
 
-    # Load default configuration, honoring user override if provided
     default_config = load_default_config(default_override_path)
 
     if user_config is None:
-        # No user config found, use defaults only
         LOGGER.warning("No user configuration file found, using defaults")
         LOGGER.info("Create a config file at one of these locations:")
         for path in expanded_paths:
             LOGGER.info(f"  - {path}")
         return default_config
 
-    # Merge user config with defaults
     merged_config = merge_configs(default_config, user_config)
 
-    # Warn about keys where the user explicitly wrote "" or None but a real
-    # default was inherited.  One warning per key helps authors understand the rule.
-    loaded_path = next((str(p) for p in expanded_paths if p.exists()), "<unknown>")
-    _warn_empty_user_values(user_config, merged_config, loaded_path)
+    _warn_empty_user_values(
+        user_config, merged_config, str(loaded_user_path or "<unknown>")
+    )
 
     LOGGER.debug("Configuration loaded and merged with defaults")
     return merged_config

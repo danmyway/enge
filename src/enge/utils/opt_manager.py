@@ -9,7 +9,7 @@ from enge.utils.config_parser import (
     load_config,
 )
 from enge.utils.globals import (
-    DEFAULT_USER_CONFIG_PATHS,
+    USER_CONFIG_PATHS,
     RP_COMPATIBLE_EVENT,
 )
 from enge.utils.errors import ConfigurationError, ValidationError
@@ -40,9 +40,7 @@ class ParsedOpts:
 
         # Load configuration
         config_paths = (
-            [self.cli_args.config]
-            if self.cli_args.config
-            else list(DEFAULT_USER_CONFIG_PATHS)
+            [self.cli_args.config] if self.cli_args.config else list(USER_CONFIG_PATHS)
         )
         self.config = load_config(paths=config_paths)
 
