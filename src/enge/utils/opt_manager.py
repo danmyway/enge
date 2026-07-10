@@ -589,6 +589,8 @@ class ParsedOpts:
                 if not self._validate_test_sets_internal(cli_sets):
                     errors.append("Test sets validation failed")
 
+            self._validate_presets()
+
             # Plan validation (from dispatch/__main__.py)
             cli_plans = getattr(self.cli_args, "plan", None)
             cli_tiers = getattr(self.cli_args, "tier", None)
@@ -726,8 +728,8 @@ class ParsedOpts:
             "git_ref",
             "parallel_limit",
             "tiers",
-            "plans",  # Add plans as a valid key
-            "event",  # Add event as a valid key
+            "plans",
+            "event",
             "copr_api",
             "brew_api",
             "environment",
@@ -735,6 +737,7 @@ class ParsedOpts:
             "context",
             "plan_filter",
             "test_filter",
+            "extends",
         }
 
         # Check for unknown keys
@@ -802,6 +805,67 @@ class ParsedOpts:
                 return False
 
         return True
+
+    def _validate_presets(self):
+        """Validate preset fragments referenced by test sets.
+
+        Raises ConfigurationError for chained presets or unknown targets.
+        Warns on unknown keys inside preset fragments.
+        """
+        tests_section = self.config.get("tests", {})
+        if not isinstance(tests_section, dict):
+            return
+        presets = tests_section.get("preset", {})
+        if not isinstance(presets, dict):
+            return
+        sets_section = tests_section.get("set", {})
+        if not isinstance(sets_section, dict):
+            return
+
+        preset_valid_keys = {
+            "source",
+            "target",
+            "architectures",
+            "pool",
+            "git_url",
+            "git_ref",
+            "parallel_limit",
+            "tiers",
+            "plans",
+            "event",
+            "copr_api",
+            "brew_api",
+            "environment",
+            "reportportal",
+            "context",
+            "plan_filter",
+            "test_filter",
+        }
+
+        referenced_presets = set()
+        for set_name, set_cfg in sets_section.items():
+            if isinstance(set_cfg, dict) and "extends" in set_cfg:
+                referenced_presets.add(set_cfg["extends"])
+
+        for preset_name in referenced_presets:
+            if preset_name not in presets:
+                available = sorted(presets.keys())
+                raise ConfigurationError(
+                    f"Test set extends unknown preset '{preset_name}'. "
+                    f"Available presets: {available}"
+                )
+            preset_cfg = presets[preset_name]
+            if not isinstance(preset_cfg, dict):
+                continue
+            if "extends" in preset_cfg:
+                raise ConfigurationError(
+                    f"Preset '{preset_name}' itself carries 'extends' "
+                    f"(targets '{preset_cfg['extends']}'); "
+                    f"chained presets are not allowed"
+                )
+            unknown = set(preset_cfg.keys()) - preset_valid_keys
+            if unknown:
+                logger.warning(f"Preset '{preset_name}' has unknown keys: {unknown}")
 
     def _register_runtime_validation_hooks(self):
         """Register hooks for runtime validation."""
