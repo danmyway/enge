@@ -97,7 +97,15 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   user layer only — bundled and system layers remain active.
   `DEFAULT_USER_CONFIG_PATHS` is retired; use `SYSTEM_CONFIG_PATHS` and
   `USER_CONFIG_PATHS` from `utils/globals.py`.
-- **Config precedence (intra-config)**: CLI > test-set > user config > bundled defaults.
+- **Config precedence (intra-config)**: CLI > test-set > preset > `[tests]` > bundled defaults.
+  A test set opts into a preset via `extends = "<preset_name>"` in its
+  section; the preset fragment lives at `[tests.preset.<name>]`.  Set keys
+  wholly replace preset values (top-level per-key REPLACE, no deep-merge of
+  nested tables); `""` in a set key inherits the preset value with a WARNING.
+  Chained presets (`extends` inside a preset) → ConfigurationError (exit 99).
+  Resolution is handled by `_resolve_preset()` in `test_attribute_builder.py`,
+  called once per set before `resolve_effective_values`.  Configs with zero
+  presets and zero `extends` resolve identically to before this feature.
   This operates on the already-merged config dict — the file layering above
   determines which values enter the dict.
   Env vars (`TESTING_FARM_API_TOKEN`, `REPORTPORTAL_API_TOKEN`) currently
