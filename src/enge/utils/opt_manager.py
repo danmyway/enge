@@ -589,7 +589,7 @@ class ParsedOpts:
                 if not self._validate_test_sets_internal(cli_sets):
                     errors.append("Test sets validation failed")
 
-            self._validate_presets()
+            self._validate_presets(cli_sets or [])
 
             # Plan validation (from dispatch/__main__.py)
             cli_plans = getattr(self.cli_args, "plan", None)
@@ -806,11 +806,12 @@ class ParsedOpts:
 
         return True
 
-    def _validate_presets(self):
+    def _validate_presets(self, selected_sets):
         """Validate preset fragments referenced by test sets.
 
-        Raises ConfigurationError for chained presets or unknown targets.
-        Warns on unknown keys inside preset fragments.
+        Hard-fails (ConfigurationError) only for CLI-selected sets; logs a
+        WARNING for non-selected sets that reference bad presets.
+        Warns on unknown keys inside preset fragments regardless.
         """
         tests_section = self.config.get("tests", {})
         if not isinstance(tests_section, dict):
@@ -842,30 +843,45 @@ class ParsedOpts:
             "test_filter",
         }
 
-        referenced_presets = set()
-        for set_name, set_cfg in sets_section.items():
-            if isinstance(set_cfg, dict) and "extends" in set_cfg:
-                referenced_presets.add(set_cfg["extends"])
+        selected = set(selected_sets)
+        validated_presets = set()
 
-        for preset_name in referenced_presets:
+        for set_name, set_cfg in sets_section.items():
+            if not isinstance(set_cfg, dict) or "extends" not in set_cfg:
+                continue
+            preset_name = set_cfg["extends"]
+            is_selected = set_name in selected
+
             if preset_name not in presets:
                 available = sorted(presets.keys())
-                raise ConfigurationError(
-                    f"Test set extends unknown preset '{preset_name}'. "
-                    f"Available presets: {available}"
+                msg = (
+                    f"Set '{set_name}' extends unknown preset "
+                    f"'{preset_name}'. Available presets: {available}"
                 )
-            preset_cfg = presets[preset_name]
-            if not isinstance(preset_cfg, dict):
+                if is_selected:
+                    raise ConfigurationError(msg)
+                logger.warning(msg)
                 continue
-            if "extends" in preset_cfg:
-                raise ConfigurationError(
-                    f"Preset '{preset_name}' itself carries 'extends' "
-                    f"(targets '{preset_cfg['extends']}'); "
-                    f"chained presets are not allowed"
+
+            preset_cfg = presets[preset_name]
+            if isinstance(preset_cfg, dict) and "extends" in preset_cfg:
+                msg = (
+                    f"Set '{set_name}': preset '{preset_name}' itself "
+                    f"carries 'extends' (targets '{preset_cfg['extends']}');"
+                    f" chained presets are not allowed"
                 )
-            unknown = set(preset_cfg.keys()) - preset_valid_keys
-            if unknown:
-                logger.warning(f"Preset '{preset_name}' has unknown keys: {unknown}")
+                if is_selected:
+                    raise ConfigurationError(msg)
+                logger.warning(msg)
+                continue
+
+            if preset_name not in validated_presets and isinstance(preset_cfg, dict):
+                validated_presets.add(preset_name)
+                unknown = set(preset_cfg.keys()) - preset_valid_keys
+                if unknown:
+                    logger.warning(
+                        f"Preset '{preset_name}' has unknown keys: {unknown}"
+                    )
 
     def _register_runtime_validation_hooks(self):
         """Register hooks for runtime validation."""
