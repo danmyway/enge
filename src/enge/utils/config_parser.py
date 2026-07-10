@@ -90,6 +90,7 @@ def load_default_config(
                     f"Using user-defined default configuration at {override_path}"
                 )
                 merged = merge_configs(merged, override_cfg)
+                _warn_empty_user_values(override_cfg, merged, str(override_path))
                 return merged
             else:
                 LOGGER.warning(
@@ -114,6 +115,7 @@ def load_default_config(
                     "appears older than the bundled example. You may want to update it."
                 )
             merged = merge_configs(merged, sys_cfg)
+            _warn_empty_user_values(sys_cfg, merged, sys_path_str)
 
     return merged
 
