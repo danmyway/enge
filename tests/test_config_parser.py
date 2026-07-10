@@ -284,6 +284,74 @@ class TestConfigLayering(unittest.TestCase):
             )
 
     # ------------------------------------------------------------------
+    # (g) "" in system-layer config inherits bundled value with WARNING
+    # ------------------------------------------------------------------
+    def test_g_system_layer_empty_string_warns(self):
+        """Empty string in a system-layer config inherits the bundled value
+        AND a WARNING names the system file path and the key."""
+        with tempfile.TemporaryDirectory() as td:
+            bundled = self._write_toml(
+                td,
+                "bundled.toml",
+                "[tests]\ntiers = ['tier3']\ngit_ref = 'main'\n",
+            )
+            system = self._write_toml(
+                td,
+                "system.toml",
+                "[tests]\ntiers = ''\n",
+            )
+
+            with self._layered_patches(bundled, (str(system),), ()):
+                with self.assertLogs("enge.utils.config_parser", level="WARNING") as cm:
+                    merged = load_config(paths=[str(Path(td) / "none.toml")])
+
+            self.assertEqual(merged["tests"]["tiers"], ["tier3"])
+            warning_found = any(
+                "[tests].tiers" in msg and str(system) in msg for msg in cm.output
+            )
+            self.assertTrue(
+                warning_found,
+                f"Expected WARNING naming system file and key; got: {cm.output}",
+            )
+
+    # ------------------------------------------------------------------
+    # (h) "" in default_config_path override inherits bundled with WARNING
+    # ------------------------------------------------------------------
+    def test_h_default_config_path_override_empty_string_warns(self):
+        """Empty string in the default_config_path override file inherits
+        the bundled value AND a WARNING names the override file path and key."""
+        with tempfile.TemporaryDirectory() as td:
+            bundled = self._write_toml(
+                td,
+                "bundled.toml",
+                "[project]\nname = 'leapp'\nowner = 'oamg'\n",
+            )
+            override = self._write_toml(
+                td,
+                "override.toml",
+                "[project]\nname = ''\nowner = 'custom_owner'\n",
+            )
+            user = self._write_toml(
+                td,
+                "user.toml",
+                "default_config_path = '" + str(override) + "'\n",
+            )
+
+            with self._layered_patches(bundled, (), (str(user),)):
+                with self.assertLogs("enge.utils.config_parser", level="WARNING") as cm:
+                    merged = load_config(paths=[str(user)])
+
+            self.assertEqual(merged["project"]["name"], "leapp")
+            self.assertEqual(merged["project"]["owner"], "custom_owner")
+            warning_found = any(
+                "[project].name" in msg and str(override) in msg for msg in cm.output
+            )
+            self.assertTrue(
+                warning_found,
+                f"Expected WARNING naming override file and key; got: {cm.output}",
+            )
+
+    # ------------------------------------------------------------------
     # (e) Characterization: full-copy external = identical (GREEN on both)
     # ------------------------------------------------------------------
     def test_e_characterization_full_copy_external_identical(self):
