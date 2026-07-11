@@ -491,7 +491,7 @@ Enge automatically populates TMT context variables that are available to test sc
 **Conditional Context Fields:**
 - `event`: Event name (from `--event` CLI arg or test set `event` field) or test set name fallback (only when using `--set`)
 - `tier`: Test tier (when using `--tier` or test sets with tiers)
-- `uniq_id`: Shortened ReportPortal launch UUID (when using `--rp`), format: "d51eba30-1956"
+- `uniq_id`: Shortened ReportPortal launch UUID (when a ReportPortal launch is created for the request), format: "d51eba30-1956"
 - `target_compose`: Target compose name (when `TARGET_COMPOSE_URL` environment variable is provided), format: "RHEL-10.0-19700101.0"
 
 **Build Artifact Context:**
@@ -562,11 +562,11 @@ Merge order and overrides (warnings are logged on overrides):
 
 ##### ReportPortal Integration
 
-Enge provides native ReportPortal integration that creates launches and manages test result uploads automatically. When using the `--rp` flag, enge creates ReportPortal launches directly via API and configures TMT to upload results to the appropriate launches.
+Enge provides native ReportPortal integration that creates launches and manages test result uploads automatically. There is no dedicated CLI flag to opt in — RP launch creation is triggered automatically when the effective `event` (from `--event` or a test set's `event` field) is one of the RP-compatible events and `[reportportal]` (`url`, `token`, `project`) is configured. When triggered, enge creates ReportPortal launches directly via API and configures TMT to upload results to the appropriate launches.
 
 **Per-Request Launch Strategy:**
 
-When `--rp` is used, enge creates one ReportPortal launch per individual test request. This provides maximum granularity and isolation for test results:
+When RP launch creation is triggered, enge creates one ReportPortal launch per individual test request. This provides maximum granularity and isolation for test results:
 
 - **Launch 1**: `9to10~tier0~x86_64` → Contains tier0 results for x86_64
 - **Launch 2**: `9to10~tier1~x86_64` → Contains tier1 results for x86_64
@@ -625,17 +625,18 @@ description = "Pre-release smoke testing with RC builds"
 **Usage Examples:**
 
 ```bash
-# Creates launches per request: 9to10~tier0~x86_64, 9to10~tier1~x86_64, etc.
-enge test --set smoke-tests --rp
+# Creates launches per request when [reportportal] is configured and the
+# test set's event is RP-compatible: 9to10~tier0~x86_64, 9to10~tier1~x86_64, etc.
+enge test --set smoke-tests
 
-# Event gates launch creation and is stored as attribute (not in the name)
-enge test --set smoke-tests --event "release-candidate" --rp
+# --event sets the event used for launch gating; it is stored as an attribute (not in the name)
+enge test --set smoke-tests --event "release-candidate"
 
 # Works with legacy approach too
-enge test --source 9.7 --tier tier0 --event "nightly-build" --rp
+enge test --source 9.7 --tier tier0 --event "nightly-build"
 
 # Rerun launches share the original dispatch name for the same coordinates
-enge rerun --run <run_id> --rp
+enge rerun --run <run_id>
 ```
 
 **How It Works:**
@@ -664,7 +665,7 @@ Attributes are deduplicated by key against pre-existing TMT context attributes. 
 
 **Testing Farm Payload Integration:**
 
-When `--rp` is used, enge automatically configures the Testing Farm payload with ReportPortal environment variables:
+When RP launch creation is triggered, enge automatically configures the Testing Farm payload with ReportPortal environment variables:
 
 ```json
 {
@@ -686,7 +687,7 @@ When `--rp` is used, enge automatically configures the Testing Farm payload with
 
 **Variable Filtering:**
 
-When `--rp` is used, enge automatically excludes conflicting variables to prevent TMT from creating its own launches:
+When RP launch creation is triggered, enge automatically excludes conflicting variables to prevent TMT from creating its own launches:
 - ✅ **Included**: `TMT_PLUGIN_REPORT_REPORTPORTAL_URL`, `TMT_PLUGIN_REPORT_REPORTPORTAL_TOKEN`, `TMT_PLUGIN_REPORT_REPORTPORTAL_PROJECT`, `TMT_PLUGIN_REPORT_REPORTPORTAL_UPLOAD_TO_LAUNCH`
 - ❌ **Excluded**: `TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH`, `TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH_DESCRIPTION`
 
