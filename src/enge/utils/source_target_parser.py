@@ -32,6 +32,7 @@ VALID_AMI_ARCHITECTURES = {"x86_64", "aarch64"}
 
 # Symbolic RHEL composes (pass-through to Testing Farm, no repinning).
 # RHEL-<major>[-<dash-separated-middle>]-rhui (e.g. RHEL-8-rhui, RHEL-8-sap-hana-rhui).
+# The "-rhui" suffix concept is shared with is_rhui_compose_name() below.
 SYMBOLIC_RHEL_COMPOSE_PATTERN = re.compile(
     r"^RHEL-(\d+)(?:-(.+))?-rhui$",
     re.IGNORECASE,

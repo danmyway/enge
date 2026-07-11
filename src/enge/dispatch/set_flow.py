@@ -15,6 +15,7 @@ from enge.utils.source_target_parser import (
     format_ami_compose_name,
     apply_centos_context_overrides,
     generate_tmt_context,
+    is_rhui_compose_name,
     parse_target_compose_from_url,
     parse_tmt_context,
 )
@@ -171,7 +172,7 @@ def _configure_submit_test(spec, ctx):
         or ctx.tests.get("parallel_limit")
     )
 
-    if spec.source_spec.get("compose_name", "").endswith("-rhui"):
+    if is_rhui_compose_name(spec.source_spec.get("compose_name", "")):
         submit_test.skip_guest_setup = True
         LOGGER.info("RHUI source detected — setting skip_guest_setup=true")
 
