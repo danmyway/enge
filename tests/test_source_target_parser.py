@@ -6,6 +6,7 @@ from enge.utils.source_target_parser import (
     format_ami_compose_name,
     generate_environment_variables,
     generate_tmt_context,
+    is_rhui_compose_name,
     parse_compose_spec,
     parse_source_target_config,
     validate_ami_architectures,
@@ -184,6 +185,23 @@ class TestSourceTargetParser(unittest.TestCase):
         self.assertEqual(context["distro"], "rhel-8")
         self.assertEqual(context["source_compose"], "RHEL-8-rhui")
         self.assertEqual(context["upgrade_path"], "8to9")
+
+
+class TestIsRhuiComposeName(unittest.TestCase):
+    def test_canonical_rhui_compose_name(self):
+        self.assertTrue(is_rhui_compose_name("RHEL-8-rhui"))
+
+    def test_rhui_compose_name_with_middle_segment(self):
+        self.assertTrue(is_rhui_compose_name("RHEL-8-sap-hana-rhui"))
+
+    def test_non_rhui_compose_name(self):
+        self.assertFalse(is_rhui_compose_name("RHEL-8.10"))
+
+    def test_uppercase_suffix_is_not_matched(self):
+        self.assertFalse(is_rhui_compose_name("RHEL-8-RHUI"))
+
+    def test_empty_string(self):
+        self.assertFalse(is_rhui_compose_name(""))
 
 
 class TestAMISourceParser(unittest.TestCase):
