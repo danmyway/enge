@@ -38,6 +38,11 @@ SYMBOLIC_RHEL_COMPOSE_PATTERN = re.compile(
 )
 
 
+def is_rhui_compose_name(name: str) -> bool:
+    """Return True if a compose name denotes an RHUI-mirrored source."""
+    return name.endswith("-rhui")
+
+
 def _strip_ami_arch_suffix(spec: str) -> str:
     """Strip a trailing architecture suffix (space- or dot-separated) from an AMI name."""
     for sep in (" ", "."):
