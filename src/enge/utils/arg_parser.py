@@ -136,16 +136,13 @@ def _add_tagging_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     """
-    Define and parse command-line arguments for enge.
-
-    Args:
-        args: Optional list of arguments to parse (for testing).
-              If None, parses from sys.argv.
+    Build the enge command-line argument parser tree.
 
     Returns:
-        argparse.Namespace: Parsed command-line arguments
+        argparse.ArgumentParser: The fully constructed parser, including
+        all subcommands and subparsers.
     """
     # Global arguments
     common = argparse.ArgumentParser(add_help=False)
@@ -749,8 +746,21 @@ def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
         parents=[common],
     )
 
+    return parser
+
+
+def get_arguments(args: Optional[list] = None) -> argparse.Namespace:
+    """
+    Define and parse command-line arguments for enge.
+
+    Args:
+        args: Optional list of arguments to parse (for testing).
+              If None, parses from sys.argv.
+
+    Returns:
+        argparse.Namespace: Parsed command-line arguments
+    """
+    parser = build_parser()
     if argcomplete:
         argcomplete.autocomplete(parser)
-    parsed_args = parser.parse_args(args)
-
-    return parsed_args
+    return parser.parse_args(args)
