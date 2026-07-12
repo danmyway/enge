@@ -43,6 +43,7 @@ CONFIG = {
         "set": {
             "alpha": {
                 "source": "8.10",
+                "target": "9.4",
                 "tiers": ["tier0"],
                 "architectures": ["x86_64"],
                 "git_ref": "main",
@@ -53,6 +54,7 @@ CONFIG = {
             },
             "beta": {
                 "source": "8.10",
+                "target": "9.4",
                 "tiers": ["tier0"],
                 "architectures": ["x86_64"],
                 "git_ref": "main",
