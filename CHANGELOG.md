@@ -42,6 +42,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Dispatch output batched — summaries printed after all requests complete
 - `ReportPortalLaunch.generate_launch_payload` and `create_launch` accept `extra_tags: list[str] | None` (appended to default tags, deduplicated)
 - Ruff lint gate added: `ruff check src tests` enforced in CI via pre-commit hook
+- **Packaging migrated from `setup.cfg` to `pyproject.toml`** (PEP 621 `[project]` table, `setuptools.build_meta` backend). Package data (`enge_default_config.toml`) is now declared explicitly via `[tool.setuptools.package-data]` rather than relying on `include_package_data` + `MANIFEST.in` alone. No runtime dependency changes. CI's pip cache key (`cache-dependency-path`) now points at `pyproject.toml`
+- **Version unified to CalVer `2026.7.12`**: `setup.cfg` (`2024.03.25`) and `enge.spec` (`0.1.3`, tag-tracked) previously diverged; both now carry the same `pyproject.toml`-sourced version string. Not zero-padded (`2026.7.12`, not `2026.07.12`) — PEP 440 normalizes leading zeros out of release segments during build, and a non-normalized `enge.spec` `Version:` would silently break `Source0`'s `enge-%{version}.tar.gz` tarball match
 
 ### Deprecated
 - `--get-tag` — use `--tag` for native manifests (legacy archive fallback still works for pre-migration runs)
@@ -53,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Dead functions: `merge_environment_variables`, `parse_test_sets` (source_target_parser), `get_config_value`, `validate_config_section` (config_parser), `_maybe_create_rp_launch` (dispatch), `_collect_inherited_tags` (rerun)
 - Committed AI-generation deliberation comments and runtime `RerunReportPortalLaunch` subclass from `_create_rerun_launch_for_payload`
 - `src/__init__.py` (src directory must not be a Python package)
+- `setup.cfg`, including its embedded `[tox:tox]`/`[testenv]` block (unused — CI invokes `pytest` directly, not `tox`)
 
 ### Fixed
 - Report run filters (`--set`/`--tier`/`--arch`/`--tag`) now accept multiple values (OR within a filter, AND across filters); previously repeated flags silently kept only the last value (`enge report --list --set A --set B` dropped A). Empty-string filter values are treated as unset

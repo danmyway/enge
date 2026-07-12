@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enge"
+version = "2026.7.12"
+description = "Testing farm API requests dispatcher."
+readme = "README.md"
+authors = [
+    {name = "Daniel Diblik", email = "ddiblik@redhat.com"},
+]
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "requests",
+    "copr",
+    "koji",
+    "rich",
+    "lxml",
+    "argcomplete",
+]
+
+[project.urls]
+Homepage = "https://github.com/danmyway/enge"
+
+[project.scripts]
+enge = "enge.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"enge.utils" = ["enge_default_config.toml"]
