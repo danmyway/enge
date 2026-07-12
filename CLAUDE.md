@@ -17,7 +17,7 @@ enge --help                               # smoke check after packaging changes
 
 CI: `.github/workflows/ci.yml` — `lint` (pre-commit) + `test` (pytest, py3.11)
 on PRs to `devel`. Packit builds RPMs for Fedora; runtime deps are
-auto-generated from `setup.cfg` via `%pyproject_buildrequires`, so a new pip
+auto-generated from `pyproject.toml` via `%pyproject_buildrequires`, so a new pip
 dependency must exist as a Fedora/EPEL package.
 
 ## Repo map
