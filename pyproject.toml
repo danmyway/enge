@@ -39,3 +39,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "enge.utils" = ["enge_default_config.toml"]
+
+[tool.black]
+target-version = ["py311"]
