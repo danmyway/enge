@@ -327,6 +327,64 @@ def derive_target_from_source(source_spec: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _resolve_target_from_map_or_formula(
+    source_spec: Dict[str, Any], config: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Resolve a target when none was provided by the CLI/set/preset/[tests]
+    chain: an override from [composes.target_map] wins, otherwise the
+    minor-6 formula (derive_target_from_source) applies.
+
+    The map is keyed by the source's "major.minor" string and is only
+    consulted for genuine major.minor sources — CentOS Stream and
+    major-only sources carry minor=0 internally and must not accidentally
+    match an "X.0" map key. A present-but-empty ("") value is treated the
+    same as a missing key (the standing ""-unset convention).
+
+    Raises:
+        ConfigurationError: If a map entry is present but its value is not
+            a parseable compose spec.
+    """
+    target_map = (config or {}).get("composes", {}).get("target_map", {})
+    map_key = f"{source_spec['major']}.{source_spec['minor']}"
+
+    map_value = ""
+    if (
+        target_map
+        and not source_spec.get("is_centos_stream")
+        and not source_spec.get("is_major_only")
+    ):
+        map_value = str(target_map.get(map_key, "")).strip()
+
+    if map_value:
+        LOGGER.info(
+            "Resolved target for source '%s' via [composes.target_map]: "
+            "'%s' -> '%s'",
+            map_key,
+            map_key,
+            map_value,
+        )
+        try:
+            return parse_compose_spec(map_value, config)
+        except ValueError as e:
+            raise ConfigurationError(
+                f'Invalid [composes.target_map] entry "{map_key}" = '
+                f'"{map_value}": {e}'
+            ) from e
+
+    target_spec = derive_target_from_source(source_spec)
+    LOGGER.warning(
+        "No [composes.target_map] entry for source '%s'; target derived "
+        'arithmetically as %s.%s. Add [composes.target_map] "%s" = '
+        '"<target>" to override.',
+        map_key,
+        target_spec["major"],
+        target_spec["minor"],
+        map_key,
+    )
+    return target_spec
+
+
 def generate_upgrade_path_alias(
     source_spec: Dict[str, Any], target_spec: Dict[str, Any]
 ) -> str:
@@ -777,7 +835,7 @@ def parse_source_target_config(
             )
             LOGGER.log(VERBOSE, f"Parsed target spec: {target_spec}")
         else:
-            target_spec = derive_target_from_source(source_spec)
+            target_spec = _resolve_target_from_map_or_formula(source_spec, config)
             LOGGER.log(VERBOSE, f"Derived target spec: {target_spec}")
 
         return source_spec, target_spec

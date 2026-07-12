@@ -197,7 +197,8 @@ def build_parser() -> argparse.ArgumentParser:
         "CentOS Stream format (e.g. CentOS-Stream-9, stream-9, cs-9, stream9, cs9), "
         "or AMI source alias/name for Alma Linux or Rocky Linux (e.g. alma97, rocky97, "
         "'AlmaLinux OS 9.7.20251118 x86_64'). AMI aliases are configured in [sources.ami]. "
-        "If --target is not specified, the path is resolved to <major + 1>.<minor - 6> (e.g. 8.10 -> 9.4). "
+        "If --target is not specified, the path is resolved to <major + 1>.<minor - 6> (e.g. 8.10 -> 9.4), "
+        "unless overridden by [composes.target_map] in config. "
         "Required unless --set is provided.",
     )
 
@@ -207,7 +208,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target compose for upgrade. "
         "Can be provided in a format of <major>.<minor> (e.g. 9.4) or explicit compose name (e.g. RHEL-9.4.0-Nightly). "
         "When --source is CentOS Stream, providing only the major version (e.g. 10) is allowed. "
-        "If not specified, will be derived from source as <source_major + 1>.<source_minor - 6>",
+        "If not specified, resolved from [composes.target_map] in config (keyed by source "
+        "<major>.<minor>), falling back to <source_major + 1>.<source_minor - 6> on a miss.",
     )
 
     # Artifact type (mutually exclusive)
