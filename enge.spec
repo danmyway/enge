@@ -1,5 +1,5 @@
 Name: enge
-Version: 0.1.3
+Version: 2026.7.12
 Release: 1%{?dist}
 
 Summary: enge
