@@ -105,8 +105,13 @@ class TestPrintDispatchSummaries(unittest.TestCase):
             },
         ]
         buf = StringIO()
-        with patch("sys.stdout", new_callable=StringIO) as mock_out, patch.object(
-            console_mod, "_current", Console(file=buf, theme=ENGE_THEME, no_color=True)
+        with (
+            patch("sys.stdout", new_callable=StringIO) as mock_out,
+            patch.object(
+                console_mod,
+                "_current",
+                Console(file=buf, theme=ENGE_THEME, no_color=True),
+            ),
         ):
             _print_dispatch_summaries(results, "terminal")
             stdout = mock_out.getvalue()

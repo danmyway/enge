@@ -1171,9 +1171,12 @@ class TestCheckParity(_ParityTestBase):
             },
         )
 
-        with recorder.patch(), patch(
-            "enge.reportportal.operations.parse_tasks",
-            return_value=([TASK_URL], {}),
+        with (
+            recorder.patch(),
+            patch(
+                "enge.reportportal.operations.parse_tasks",
+                return_value=([TASK_URL], {}),
+            ),
         ):
             from enge.reportportal.__main__ import ReportPortalLaunch
             from enge.reportportal.operations import op_check
