@@ -60,6 +60,7 @@ CONFIG = {
         "set": {
             "golden-set": {
                 "source": "8.10",
+                "target": "9.4",
                 "tiers": ["tier0", "tier3"],
                 "architectures": ["x86_64", "aarch64"],
                 "git_ref": "main",
