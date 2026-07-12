@@ -1,11 +1,12 @@
 import unittest
 
-from enge.utils.errors import ValidationError
+from enge.utils.errors import ConfigurationError, ValidationError
 from enge.utils.source_target_parser import (
     apply_centos_context_overrides,
     format_ami_compose_name,
     generate_environment_variables,
     generate_tmt_context,
+    generate_upgrade_path_alias,
     is_rhui_compose_name,
     parse_compose_spec,
     parse_source_target_config,
@@ -457,6 +458,112 @@ class TestAMISourceParser(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             parse_compose_spec("bad_alias", bad_config)
+
+
+class TestComposeTargetMap(unittest.TestCase):
+    """[composes.target_map] resolves a source's default target as config
+    data, used only when the CLI/set/preset/[tests] chain produced no
+    explicit target — falling back to the minor-6 formula on a miss."""
+
+    def setUp(self):
+        self.base_config = {"testing_farm": {"composes_prod_url": ""}}
+
+    def _config_with_map(self, target_map):
+        config = dict(self.base_config)
+        config["composes"] = {"target_map": target_map}
+        return config
+
+    def test_map_hit_resolves_mapped_target_end_to_end(self):
+        config = self._config_with_map({"8.10": "9.9"})
+
+        source_spec, target_spec = parse_source_target_config("8.10", None, config)
+
+        self.assertEqual(target_spec["major"], 9)
+        self.assertEqual(target_spec["minor"], 9)
+
+        env_vars = generate_environment_variables(source_spec, target_spec)
+        self.assertEqual(env_vars["TARGET_RELEASE"], "9.9")
+
+        context = generate_tmt_context(source_spec, target_spec)
+        self.assertEqual(context["target_distro"], "rhel-9.9")
+
+        self.assertEqual(generate_upgrade_path_alias(source_spec, target_spec), "8to9")
+
+    def test_map_miss_falls_to_formula_with_warning(self):
+        config = self._config_with_map({})
+
+        with self.assertLogs("enge.utils.source_target_parser", level="WARNING") as log:
+            source_spec, target_spec = parse_source_target_config("8.10", None, config)
+
+        self.assertEqual(target_spec["major"], 9)
+        self.assertEqual(target_spec["minor"], 4)
+
+        warning_text = "\n".join(log.output)
+        self.assertIn("derived", warning_text.lower())
+        self.assertIn("8.10", warning_text)
+        self.assertIn("target_map", warning_text)
+
+    def test_explicit_target_bypasses_map_entirely(self):
+        config = self._config_with_map({"8.10": "9.9"})
+
+        source_spec, target_spec = parse_source_target_config("8.10", "9.5", config)
+
+        self.assertEqual(target_spec["major"], 9)
+        self.assertEqual(target_spec["minor"], 5)
+
+    def test_invalid_map_value_raises_configuration_error(self):
+        config = self._config_with_map({"8.10": "not-a-valid-spec!!"})
+
+        with self.assertRaises(ConfigurationError) as ctx:
+            parse_source_target_config("8.10", None, config)
+
+        message = str(ctx.exception)
+        self.assertIn("8.10", message)
+        self.assertIn("not-a-valid-spec!!", message)
+
+    def test_empty_string_map_value_treated_as_miss(self):
+        config = self._config_with_map({"8.10": ""})
+
+        with self.assertLogs("enge.utils.source_target_parser", level="WARNING"):
+            source_spec, target_spec = parse_source_target_config("8.10", None, config)
+
+        self.assertEqual(target_spec["major"], 9)
+        self.assertEqual(target_spec["minor"], 4)
+
+    def test_target_map_skips_centos_stream_source_despite_decoy_key(self):
+        # CentOS Stream sources carry minor=0 internally; a "9.0" map entry
+        # must not be mistaken for a genuine major.minor match.
+        config = self._config_with_map({"9.0": "99.99"})
+
+        source_spec, target_spec = parse_source_target_config(
+            "CentOS-Stream-9", None, config
+        )
+
+        self.assertTrue(source_spec["is_centos_stream"])
+        self.assertEqual(target_spec["major"], 10)
+        self.assertEqual(target_spec["minor"], 0)
+
+    def test_target_map_skips_major_only_source_despite_decoy_key(self):
+        # Major-only (e.g. symbolic RHUI) sources carry minor=0 internally;
+        # an "8.0" map entry must not be mistaken for a genuine match.
+        config = self._config_with_map({"8.0": "99.99"})
+
+        source_spec, target_spec = parse_source_target_config(
+            "RHEL-8-rhui", None, config
+        )
+
+        self.assertTrue(source_spec["is_major_only"])
+        self.assertEqual(target_spec["major"], 9)
+        self.assertEqual(target_spec["minor"], 0)
+
+    def test_formula_boundary_gap_minor_below_six(self):
+        """Source minor < 6 clamps target minor to 0 (max(0, minor - 6))."""
+        config = self._config_with_map({})
+
+        source_spec, target_spec = parse_source_target_config("8.5", None, config)
+
+        self.assertEqual(target_spec["major"], 9)
+        self.assertEqual(target_spec["minor"], 0)
 
 
 if __name__ == "__main__":
