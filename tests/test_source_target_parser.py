@@ -556,6 +556,35 @@ class TestComposeTargetMap(unittest.TestCase):
         self.assertEqual(target_spec["major"], 9)
         self.assertEqual(target_spec["minor"], 0)
 
+    def test_no_warning_for_centos_stream_source_ineligible_for_map(self):
+        # Stream sources are fenced out of the map entirely; falling through
+        # to the formula must not warn about a key the guard will never
+        # consult (the map-miss WARNING is only meaningful for eligible
+        # sources).
+        config = self._config_with_map({"9.0": "99.99"})
+
+        with self.assertNoLogs("enge.utils.source_target_parser", level="WARNING"):
+            source_spec, target_spec = parse_source_target_config(
+                "CentOS-Stream-9", None, config
+            )
+
+        self.assertTrue(source_spec["is_centos_stream"])
+        self.assertEqual(target_spec["major"], 10)
+        self.assertEqual(target_spec["minor"], 0)
+
+    def test_no_warning_for_major_only_source_ineligible_for_map(self):
+        # Same as above for major-only (symbolic RHUI) sources.
+        config = self._config_with_map({"8.0": "99.99"})
+
+        with self.assertNoLogs("enge.utils.source_target_parser", level="WARNING"):
+            source_spec, target_spec = parse_source_target_config(
+                "RHEL-8-rhui", None, config
+            )
+
+        self.assertTrue(source_spec["is_major_only"])
+        self.assertEqual(target_spec["major"], 9)
+        self.assertEqual(target_spec["minor"], 0)
+
     def test_formula_boundary_gap_minor_below_six(self):
         """Source minor < 6 clamps target minor to 0 (max(0, minor - 6))."""
         config = self._config_with_map({})
