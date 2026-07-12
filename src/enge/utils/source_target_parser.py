@@ -347,20 +347,17 @@ def _resolve_target_from_map_or_formula(
     """
     target_map = (config or {}).get("composes", {}).get("target_map", {})
     map_key = f"{source_spec['major']}.{source_spec['minor']}"
+    map_eligible = not source_spec.get("is_centos_stream") and not source_spec.get(
+        "is_major_only"
+    )
 
     map_value = ""
-    if (
-        target_map
-        and not source_spec.get("is_centos_stream")
-        and not source_spec.get("is_major_only")
-    ):
+    if target_map and map_eligible:
         map_value = str(target_map.get(map_key, "")).strip()
 
     if map_value:
         LOGGER.info(
-            "Resolved target for source '%s' via [composes.target_map]: "
-            "'%s' -> '%s'",
-            map_key,
+            "Resolved target via [composes.target_map]: '%s' -> '%s'",
             map_key,
             map_value,
         )
@@ -373,15 +370,27 @@ def _resolve_target_from_map_or_formula(
             ) from e
 
     target_spec = derive_target_from_source(source_spec)
-    LOGGER.warning(
-        "No [composes.target_map] entry for source '%s'; target derived "
-        'arithmetically as %s.%s. Add [composes.target_map] "%s" = '
-        '"<target>" to override.',
-        map_key,
-        target_spec["major"],
-        target_spec["minor"],
-        map_key,
-    )
+
+    if map_eligible:
+        LOGGER.warning(
+            "No [composes.target_map] entry for source '%s'; target derived "
+            'arithmetically as %s.%s. Add [composes.target_map] "%s" = '
+            '"<target>" to override.',
+            map_key,
+            target_spec["major"],
+            target_spec["minor"],
+            map_key,
+        )
+    else:
+        LOGGER.debug(
+            "Source '%s' is not eligible for [composes.target_map] "
+            "(CentOS Stream or major-only); target derived arithmetically "
+            "as %s.%s.",
+            map_key,
+            target_spec["major"],
+            target_spec["minor"],
+        )
+
     return target_spec
 
 
