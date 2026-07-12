@@ -71,7 +71,9 @@ composes_prod_url = '' # REQUIRED: URL for compose translation service (used for
 #   releases further minors. This map carries those pinned-current values
 #   as data; team-wide config layers over it and is the living authority.
 # - Values are compose specs, resolved exactly like an explicit --target.
-# - "" (or an absent key) is a miss: falls through to the formula.
+# - "" (or an absent key) is a miss within a layer. Note: a bundled entry
+#   cannot be cleared by setting "" in a higher config layer (layer merging
+#   inherits the bundled value) — it can only be overridden.
 # ============================================================================
 [composes.target_map]
 "8.10" = "9.9"  # floating final z-stream — pinned-current at release; team config is the living authority
