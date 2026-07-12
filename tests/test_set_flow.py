@@ -27,10 +27,15 @@ class TestSetFlow(unittest.TestCase):
             }
         ]
 
-        with patch(
-            "enge.dispatch.set_flow.generate_upgrade_path_alias",
-            return_value="rhel-9.2-to-9.4",
-        ), patch("enge.dispatch.set_flow.parse_architectures", return_value=["x86_64"]):
+        with (
+            patch(
+                "enge.dispatch.set_flow.generate_upgrade_path_alias",
+                return_value="rhel-9.2-to-9.4",
+            ),
+            patch(
+                "enge.dispatch.set_flow.parse_architectures", return_value=["x86_64"]
+            ),
+        ):
             specs = expand_set_requests(ctx=po)
 
         self.assertEqual(len(specs), 1)
@@ -82,22 +87,29 @@ class TestSetFlow(unittest.TestCase):
             effective_values={},
         )
 
-        with patch(
-            "enge.dispatch.set_flow.generate_tier_plan_filter",
-            return_value="name: /plans/.*",
-        ), patch(
-            "enge.dispatch.set_flow.generate_environment_variables", return_value={}
-        ), patch(
-            "enge.dispatch.set_flow.parse_environment_variables", return_value={}
-        ), patch(
-            "enge.dispatch.set_flow.merge_set_environment_variables", return_value={}
-        ), patch(
-            "enge.dispatch.set_flow.SubmitTest.send_request"
-        ) as mock_send, patch(
-            "enge.dispatch.set_flow.SubmitTest.get_complete_tmt_context",
-            return_value={},
-        ), patch(
-            "enge.dispatch.set_flow.SubmitTest.build_payload", return_value=({}, {})
+        with (
+            patch(
+                "enge.dispatch.set_flow.generate_tier_plan_filter",
+                return_value="name: /plans/.*",
+            ),
+            patch(
+                "enge.dispatch.set_flow.generate_environment_variables", return_value={}
+            ),
+            patch(
+                "enge.dispatch.set_flow.parse_environment_variables", return_value={}
+            ),
+            patch(
+                "enge.dispatch.set_flow.merge_set_environment_variables",
+                return_value={},
+            ),
+            patch("enge.dispatch.set_flow.SubmitTest.send_request") as mock_send,
+            patch(
+                "enge.dispatch.set_flow.SubmitTest.get_complete_tmt_context",
+                return_value={},
+            ),
+            patch(
+                "enge.dispatch.set_flow.SubmitTest.build_payload", return_value=({}, {})
+            ),
         ):
             with patch(
                 "enge.dispatch.set_flow.ArtifactResolver.resolve_builds",
@@ -157,15 +169,21 @@ class TestSetFlow(unittest.TestCase):
             effective_values={},
         )
 
-        with patch(
-            "enge.dispatch.set_flow.generate_tier_plan_filter",
-            side_effect=ValueError("bad tier"),
-        ), patch(
-            "enge.dispatch.set_flow.generate_environment_variables", return_value={}
-        ), patch(
-            "enge.dispatch.set_flow.parse_environment_variables", return_value={}
-        ), patch(
-            "enge.dispatch.set_flow.merge_set_environment_variables", return_value={}
+        with (
+            patch(
+                "enge.dispatch.set_flow.generate_tier_plan_filter",
+                side_effect=ValueError("bad tier"),
+            ),
+            patch(
+                "enge.dispatch.set_flow.generate_environment_variables", return_value={}
+            ),
+            patch(
+                "enge.dispatch.set_flow.parse_environment_variables", return_value={}
+            ),
+            patch(
+                "enge.dispatch.set_flow.merge_set_environment_variables",
+                return_value={},
+            ),
         ):
             result = process_request_spec(
                 idx=1,
