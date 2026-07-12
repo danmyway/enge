@@ -63,6 +63,23 @@ composes_prod_url = '' # REQUIRED: URL for compose translation service (used for
 
 
 # ============================================================================
+# COMPOSES.TARGET_MAP (Pinned default targets, keyed by source "major.minor")
+# - Overrides the major+1/minor-6 formula used when no target is given by
+#   the CLI/set/preset/[tests] chain. The formula is correct at a compose's
+#   release time, but final z-stream sources (minor .10) drift afterward:
+#   their real-world default target floats forward as the next major
+#   releases further minors. This map carries those pinned-current values
+#   as data; team-wide config layers over it and is the living authority.
+# - Values are compose specs, resolved exactly like an explicit --target.
+# - "" (or an absent key) is a miss: falls through to the formula.
+# ============================================================================
+[composes.target_map]
+"8.10" = "9.9"  # floating final z-stream — pinned-current at release; team config is the living authority
+"9.6" = "10.0"
+"9.7" = "10.1"
+
+
+# ============================================================================
 # COPR_API (COPR build settings for artifacts)
 # - Configuration for COPR build artifact resolution
 # - REQUIRED when using --copr with alias:reference format (e.g., lp:pr123)

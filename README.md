@@ -367,7 +367,7 @@ enge test --source 9.7 --plan /plans/subscription --only-rhsm-stage-cdn
   - `RHEL-MAJOR.MINOR.0-Nightly` (RHEL 8/9 style)
   - `RHEL-MAJOR.MINOR-Nightly` (RHEL 10 style)
   If the `composes_prod_url` is not configured or resolution fails, enge falls back to `RHEL-MAJOR.MINOR.0-Nightly`.
-- If `--target` is not provided, it is derived from the source version using the rule: `target_major = source_major + 1`, `target_minor = max(0, source_minor - 6)`. The target compose name is then formed as `RHEL-target_major.target_minor.0-Nightly`.
+- If `--target` is not provided, enge first looks up the source's `<major>.<minor>` in `[composes.target_map]` (config data, resolved exactly like an explicit `--target`); on a miss it falls back to the rule `target_major = source_major + 1`, `target_minor = max(0, source_minor - 6)`, forming the target compose name as `RHEL-target_major.target_minor.0-Nightly`. The map exists because the formula is only accurate at a compose's release time — a final z-stream source (e.g. `.10`) keeps the same default target on paper even after later minors ship, so `[composes.target_map]` lets that pinned-current value be corrected as data instead of code.
 
 ##### Test Sets
 
