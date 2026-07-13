@@ -1,0 +1,12 @@
+{
+  "run_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+  "request_timestamp": "2026-07-12T15:00:00Z",
+  "set": "rhel8-to-rhel9",
+  "tier": "tier0",
+  "arch": "x86_64",
+  "source": "rhel-8.10",
+  "target": "rhel-9.4",
+  "verdict": "CANCELED",
+  "tests": [],
+  "total_duration_seconds": 32.4
+}
