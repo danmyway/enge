@@ -19,7 +19,7 @@ from enge.utils.source_target_parser import (
 LOGGER = logging.getLogger(__name__)
 
 
-def _resolve_launch_name(context: Optional[Dict[str, Any]], ctx) -> str:
+def _resolve_launch_name(context: Optional[Dict[str, Any]], ctx) -> Optional[str]:
     """Derive a ReportPortal launch name using config + context rules."""
     rp_env_vars = generate_reportportal_environment_variables(
         ctx.config,
