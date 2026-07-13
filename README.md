@@ -124,6 +124,7 @@ Key default paths from the bundled defaults (can be overridden in your `enge.tom
 - **Latest pointer**: `~/.local/state/enge/latest`
 - **Legacy archive** (read-only bridge): `~/.enge/jobs_archive/`
 - **Logs directory**: `/var/tmp/enge/logs/`
+- **Results store**: `~/.local/share/enge/results/` (XDG_DATA_HOME respected; schema defined, but no subcommand writes here yet — see `CLAUDE.md` "Results.json format")
 
 ##### System-wide configuration (RPM installs)
 When installed via RPM, the following files are provided under `/etc/enge/`:
@@ -1035,6 +1036,7 @@ This creates synthetic manifests with `origin="migrated"`. Task IDs and artifact
 - Manifests: `~/.local/share/enge/runs/<run_id>.json`
 - Latest pointer: `~/.local/state/enge/latest`
 - Logs: `~/.local/state/enge/logs/`
+- Results (schema defined; not yet written by any subcommand): `~/.local/share/enge/results/<run_id>.json`, xunit colocated at `~/.local/share/enge/results/<run_id>.xml`
 
 **Examples:**
 ```bash
