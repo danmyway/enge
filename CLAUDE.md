@@ -164,6 +164,136 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   Precedence: CLI `--rp-launch` > config `[reportportal].launch` >
   auto-generation.
 
+## Results.json format
+
+**Ownership**: `enge report` will eventually write `results.json` after
+parsing xunit; `enge dispatch` never touches it. As of this MVP, the
+writer (`utils/results_parser.py`) exists and is fully tested, but
+nothing calls it yet — report-subcommand integration (manifest lookup,
+actual write calls during `enge report`) is deferred to a separate
+feature branch. `results_parser.py` is standalone and does not import
+manifest modules, by design.
+
+**Schema (contract-pinned as of 2026-07-13)**:
+```json
+{
+  "run_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "request_timestamp": "2026-07-12T14:30:00Z",
+  "set": "rhel8-to-rhel9",
+  "tier": "tier0",
+  "arch": "x86_64",
+  "source": "rhel-8.10",
+  "target": "rhel-9.4",
+  "verdict": "PASSED",
+  "tests": [
+    {
+      "name": "test_upgrade_9_to_10",
+      "verdict": "PASSED",
+      "duration_seconds": 120.5,
+      "output": "test output or summary"
+    },
+    {
+      "name": "test_rollback_scenario",
+      "verdict": "FAILED",
+      "duration_seconds": 45.2,
+      "output": "Assertion failed: /proc/version mismatch",
+      "error_detail": "Full error traceback if available"
+    },
+    {
+      "name": "test_package_compat",
+      "verdict": "SKIPPED",
+      "duration_seconds": 0,
+      "output": "Skipped: requires RHEL9+"
+    }
+  ],
+  "total_duration_seconds": 245.7
+}
+```
+
+CANCELED example (dispatch-level event — misconfiguration, timeout, user
+interrupt — not a test-level outcome; `tests` is always empty,
+`total_duration_seconds` reflects actual elapsed time before
+cancellation):
+```json
+{
+  "run_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+  "request_timestamp": "2026-07-12T15:00:00Z",
+  "set": "rhel8-to-rhel9",
+  "tier": "tier0",
+  "arch": "x86_64",
+  "source": "rhel-8.10",
+  "target": "rhel-9.4",
+  "verdict": "CANCELED",
+  "tests": [],
+  "total_duration_seconds": 32.4
+}
+```
+
+**Verdict enum** (top-level and per-test, identical vocabulary): `PASSED
+| FAILED | SKIPPED | ERROR | CANCELED`. Unknown values are rejected at
+validation. The root `verdict` is a required, explicit, caller-supplied
+value — it is never auto-derived from per-test verdicts anywhere in this
+module; a root verdict that disagrees with the "worst" per-test verdict
+is accepted verbatim (see `tests/test_results_parser.py::
+test_verdict_is_caller_supplied_not_derived`).
+
+**Required top-level fields**: `run_id`, `request_timestamp` (ISO 8601 —
+when the request was created, not when results.json was written),
+`set`, `tier`, `arch`, `source`, `target`, `verdict`, `tests`,
+`total_duration_seconds`. **Per-test required**: `name`, `verdict`,
+`duration_seconds` (0 if skipped/not run). **Per-test optional**:
+`output`, `error_detail` (only meaningful when verdict is FAILED or
+ERROR — not otherwise enforced).
+
+**CANCELED semantics**: verdict = `CANCELED` at root implies `tests`
+MUST be empty — rejected by `ResultsJsonSchema` otherwise.
+`total_duration_seconds` for a CANCELED run is independent of `tests`
+(there are none) and reflects actual elapsed wall time.
+
+**Duration arithmetic**: `total_duration_seconds` is not schema-validated
+against `sum(tests[].duration_seconds)` — it is a caller-supplied value,
+not derived or cross-checked, because the CANCELED case requires a
+positive total with zero tests (impossible to reconcile with a strict
+sum-equality rule), and TF-side timing overhead may not be attributable
+to any single test. Tests still pin the golden fixture's own arithmetic
+as an internal-consistency regression check (not a schema rule).
+
+**Metadata strategy (baked-in with fallback lookup)**: `set`, `tier`,
+`arch`, `source`, `target` are stored directly in `results.json` for
+self-containment. When (future) `report` integration writes
+`results.json`, it will attempt a manifest lookup by `run_id` to
+populate these fields, falling back to caller-supplied values if the
+manifest is unavailable — `results.json` remains valid either way.
+`write_results_json()` itself only accepts explicit values; the
+manifest-lookup/fallback logic lives in the report layer, not here.
+
+**Storage location** (XDG-compliant, config-overridable, mirrors the
+manifest store): `~/.local/share/enge/results/<run_id>.json`
+(`XDG_DATA_HOME` respected; override via `[common] results_dir` in
+config). Raw xunit is colocated verbatim (byte-for-byte, no
+re-encoding) at `~/.local/share/enge/results/<run_id>.xml`. This
+resolves an inconsistency in early drafts of this feature that floated
+`~/.enge/results/` informally — that path doesn't match any existing
+XDG convention in this codebase, so `results_dir()` in
+`utils/state_paths.py` instead follows `resolve_runs_dir()`'s pattern:
+same `XDG_DATA_HOME` root as the manifest store, `results/` instead of
+`runs/` as the leaf directory. Unlike the `resolve_*` family,
+`results_dir()` also creates the directory on first call (no separate
+writer/flush step exists yet to do that for it).
+
+**TF artifact URL**: NOT stored in `results.json`. The coldstore
+hyperlink will be constructed externally later from the TF result URL
+plus `run_id` — no field for this exists or is planned here.
+
+**Golden fixture MD5s** (`tests/fixtures/`):
+- `results_golden.json` (mixed PASSED/FAILED/SKIPPED/ERROR):
+  `873497adc800d7eec35c1ecfa4098acc`
+- `results_golden_canceled.json` (CANCELED, empty tests, positive
+  duration): `56e5ef2f51c3b86a9d7bc9f16d25289d`
+
+This schema is contract-pinned as of 2026-07-13. Cross-cutting contract:
+schema changes require maintainer sign-off.
+
 ## Conventions
 
 - **Tests**: unittest.TestCase style exclusively (tempfile.TemporaryDirectory,
