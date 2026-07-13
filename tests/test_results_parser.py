@@ -217,6 +217,64 @@ class TestWriteAndParseRoundTrip(unittest.TestCase):
                 parse_results_json(bad_path)
 
 
+class TestXunitColocation(unittest.TestCase):
+    # Deliberately quirky bytes (CRLF, non-ASCII, no trailing newline) to
+    # prove the write is a verbatim byte copy -- no re-encoding, no
+    # transformation, no re-serialization through an XML parser.
+    RAW_XUNIT = (
+        b'<?xml version="1.0" encoding="UTF-8"?>\r\n'
+        b'<testsuite name="upgrade" tests="1">\n'
+        b'  <testcase name="test_upgrade_9_to_10" time="120.5"/>\n'
+        b"  <!-- non-ascii byte check: \xc3\xa9 -->\n"
+        b"</testsuite>"
+    )
+
+    def test_write_results_json_stores_byte_identical_xunit(self):
+        payload = _load(GOLDEN_PATH)
+        with tempfile.TemporaryDirectory() as tmp:
+            write_results_json(
+                run_id=payload["run_id"],
+                verdict=payload["verdict"],
+                tests=payload["tests"],
+                request_timestamp=payload["request_timestamp"],
+                set=payload["set"],
+                tier=payload["tier"],
+                arch=payload["arch"],
+                source=payload["source"],
+                target=payload["target"],
+                total_duration_seconds=payload["total_duration_seconds"],
+                output_path=tmp,
+                xunit_bytes=self.RAW_XUNIT,
+            )
+            xunit_path = Path(tmp) / f"{payload['run_id']}.xml"
+            self.assertTrue(xunit_path.exists())
+            on_disk = xunit_path.read_bytes()
+        self.assertEqual(
+            on_disk,
+            self.RAW_XUNIT,
+            "xunit storage must be a verbatim byte copy of the input",
+        )
+
+    def test_write_results_json_without_xunit_bytes_writes_no_xml_file(self):
+        payload = _load(GOLDEN_PATH)
+        with tempfile.TemporaryDirectory() as tmp:
+            write_results_json(
+                run_id=payload["run_id"],
+                verdict=payload["verdict"],
+                tests=payload["tests"],
+                request_timestamp=payload["request_timestamp"],
+                set=payload["set"],
+                tier=payload["tier"],
+                arch=payload["arch"],
+                source=payload["source"],
+                target=payload["target"],
+                total_duration_seconds=payload["total_duration_seconds"],
+                output_path=tmp,
+            )
+            xunit_path = Path(tmp) / f"{payload['run_id']}.xml"
+            self.assertFalse(xunit_path.exists())
+
+
 class TestResultsDirStatePath(unittest.TestCase):
     def test_results_dir_creates_directory_on_first_call(self):
         with tempfile.TemporaryDirectory() as tmp:
