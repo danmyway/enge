@@ -252,6 +252,7 @@ def write_results_json(
     target: str,
     total_duration_seconds: float,
     output_path: Union[str, Path],
+    xunit_bytes: Optional[bytes] = None,
 ) -> Path:
     """Validate and write results.json to `<output_path>/<run_id>.json`.
 
@@ -259,6 +260,10 @@ def write_results_json(
     manifest lookup with fallback-to-explicit-values is a report-layer
     concern (see CLAUDE.md "Results.json format" / DEBRIEF.md "Report
     integration scope"), not this module's.
+
+    When `xunit_bytes` is given, the raw bytes are also written
+    byte-for-byte to `<output_path>/<run_id>.xml` -- no re-encoding, no
+    transformation, a verbatim copy of the TF artifact input.
 
     Raises ValidationError on schema violation.
     """
@@ -287,5 +292,11 @@ def write_results_json(
     tmp_path = out_dir / f"{run_id}.json.tmp"
     tmp_path.write_text(json.dumps(schema.to_dict(), indent=2))
     os.rename(tmp_path, results_path)
+
+    if xunit_bytes is not None:
+        xunit_path = out_dir / f"{run_id}.xml"
+        xunit_tmp_path = out_dir / f"{run_id}.xml.tmp"
+        xunit_tmp_path.write_bytes(xunit_bytes)
+        os.rename(xunit_tmp_path, xunit_path)
 
     return results_path
