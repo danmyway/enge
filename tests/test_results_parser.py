@@ -6,15 +6,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from enge.utils.errors import ValidationError
-from enge.utils.results_parser import (
-    XUNIT_RESULT_MAP,
-    PlanEntry,
-    ResultsJsonSchema,
-    TaskEntry,
-    TestEntry,
-    Verdict,
-    parse_results_json,
-)
+from enge.utils.results_parser import XUNIT_RESULT_MAP
+from enge.utils.results_parser import PlanEntry
+from enge.utils.results_parser import ResultsJsonSchema
+from enge.utils.results_parser import TaskEntry
+
+# Aliased: a bare "TestEntry" import makes pytest's default collector treat
+# the name as a candidate test class (Test* prefix) purely because it's
+# present in this module's namespace, emitting a spurious
+# PytestCollectionWarning (same root cause as the pre-existing
+# "TestingFarmEndpoint" warnings from other test modules). The alias keeps
+# the import but not the "Test" prefix.
+from enge.utils.results_parser import TestEntry as _TestEntry
+from enge.utils.results_parser import Verdict
+from enge.utils.results_parser import parse_results_json
 from enge.utils.state_paths import results_dir
 
 
@@ -84,7 +89,7 @@ def _root_payload(**overrides):
 
 class TestTestEntryValidation(unittest.TestCase):
     def test_valid_test_entry_parses(self):
-        entry = TestEntry.from_dict(_test_payload())
+        entry = _TestEntry.from_dict(_test_payload())
         self.assertEqual(entry.verdict, "FAILED")
         self.assertEqual(entry.duration_seconds, 75.0)
         self.assertEqual(entry.start_time, "2026-07-07T10:51:27.205058+00:00")
@@ -95,18 +100,18 @@ class TestTestEntryValidation(unittest.TestCase):
                 payload = _test_payload()
                 del payload[field]
                 with self.assertRaises(ValidationError):
-                    TestEntry.from_dict(payload)
+                    _TestEntry.from_dict(payload)
 
     def test_unknown_verdict_rejected(self):
         with self.assertRaises(ValidationError):
-            TestEntry.from_dict(_test_payload(verdict="RUNNING"))
+            _TestEntry.from_dict(_test_payload(verdict="RUNNING"))
 
     def test_duration_must_be_a_number(self):
         with self.assertRaises(ValidationError):
-            TestEntry.from_dict(_test_payload(duration_seconds="fast"))
+            _TestEntry.from_dict(_test_payload(duration_seconds="fast"))
 
     def test_duration_zero_allowed_for_not_run(self):
-        entry = TestEntry.from_dict(_test_payload(duration_seconds=0, verdict="ERROR"))
+        entry = _TestEntry.from_dict(_test_payload(duration_seconds=0, verdict="ERROR"))
         self.assertEqual(entry.duration_seconds, 0.0)
 
     def test_optional_fields_default_to_none_when_omitted(self):
@@ -115,7 +120,7 @@ class TestTestEntryValidation(unittest.TestCase):
             "verdict": "PASSED",
             "duration_seconds": 1.0,
         }
-        entry = TestEntry.from_dict(payload)
+        entry = _TestEntry.from_dict(payload)
         self.assertIsNone(entry.start_time)
         self.assertIsNone(entry.end_time)
         self.assertIsNone(entry.output)
@@ -123,7 +128,7 @@ class TestTestEntryValidation(unittest.TestCase):
 
     def test_non_iso8601_start_time_rejected(self):
         with self.assertRaises(ValidationError):
-            TestEntry.from_dict(_test_payload(start_time="not-a-timestamp"))
+            _TestEntry.from_dict(_test_payload(start_time="not-a-timestamp"))
 
 
 class TestPlanEntryValidation(unittest.TestCase):
@@ -322,7 +327,7 @@ class TestParseResultsJson(unittest.TestCase):
         self.assertIsInstance(schema, ResultsJsonSchema)
         self.assertIsInstance(schema.results[0], TaskEntry)
         self.assertIsInstance(schema.results[0].plans[0], PlanEntry)
-        self.assertIsInstance(schema.results[0].plans[0].tests[0], TestEntry)
+        self.assertIsInstance(schema.results[0].plans[0].tests[0], _TestEntry)
 
     def test_parse_rejects_malformed_json(self):
         with tempfile.TemporaryDirectory() as tmp:
