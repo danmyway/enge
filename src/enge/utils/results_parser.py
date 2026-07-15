@@ -562,10 +562,12 @@ def upsert_task_result(
 def _derive_root_verdict(task_verdicts: Sequence[str]) -> str:
     """Severity-max derivation: ERROR > FAILED > CANCELED > PASSED >
     SKIPPED. All-SKIPPED naturally yields SKIPPED (lowest rank, nothing
-    higher present). `task_verdicts` must be non-empty; finalize_root_
-    verdict with expected_count=0 (zero results) is an edge case the
-    ratified spec does not address -- see CLAUDE.md "Results.json format"
-    for the documented gap."""
+    higher present)."""
+    if not task_verdicts:
+        raise ValidationError(
+            "cannot derive a root verdict from zero task results "
+            "(expected_count=0 is an impossible state)"
+        )
     return max(task_verdicts, key=lambda v: _SEVERITY_RANK[v])
 
 
