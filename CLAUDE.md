@@ -168,130 +168,236 @@ tests/               unittest.TestCase style ONLY (see Conventions)
 
 **Ownership**: `enge report` will eventually write `results.json` after
 parsing xunit; `enge dispatch` never touches it. As of this MVP, the
-writer (`utils/results_parser.py`) exists and is fully tested, but
-nothing calls it yet — report-subcommand integration (manifest lookup,
-actual write calls during `enge report`) is deferred to a separate
-feature branch. `results_parser.py` is standalone and does not import
-manifest modules, by design.
+schema + gap-fill write API (`utils/results_parser.py`) exist and are
+fully tested, but nothing calls it yet — report-subcommand integration
+(manifest lookup, calling `init_results_json`/`upsert_task_result`/
+`finalize_root_verdict`/`write_xunit` during `enge report`) is deferred
+to a separate feature branch. `results_parser.py` is standalone and does
+not import manifest modules, by design — callers pass expected counts
+and all needed values explicitly.
 
-**Schema (contract-pinned as of 2026-07-13)**:
+**Why v3.1 replaces the v1 flat schema**: the v1 flat schema (one
+`set`/`tier`/`arch` + flat `tests[]` per `run_id`) was falsified against
+real data before it ever shipped. One enge dispatch produces ONE
+manifest with N requests — one TF task per set x tier x arch combination
+(a real run had 8 requests across 2 upgrade-path sets x 4 arches) — and
+one TF task's xunit contains MULTIPLE testsuites/plans, not a flat list
+of tests. The flat schema could represent neither a multi-task run nor a
+multi-plan task. v3.1 fixes both with a three-level hierarchy: run
+envelope -> per-task results -> per-plan -> per-test.
+
+**Schema v3.1 (contract-pinned as of 2026-07-14)**:
 ```json
 {
-  "run_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-  "request_timestamp": "2026-07-12T14:30:00Z",
-  "set": "rhel8-to-rhel9",
-  "tier": "tier0",
-  "arch": "x86_64",
-  "source": "rhel-8.10",
-  "target": "rhel-9.4",
-  "verdict": "PASSED",
-  "tests": [
+  "schema_version": 1,
+  "run_id": "01KWY2ANGF1TCT6E3X8M7QPJTW",
+  "created_at": "2026-07-07T10:35:07Z",
+  "event": "preliminary",
+  "source": "9.9",
+  "target": "10.3",
+  "verdict": null,
+  "results": [
     {
-      "name": "test_upgrade_9_to_10",
-      "verdict": "PASSED",
-      "duration_seconds": 120.5,
-      "output": "test output or summary"
-    },
-    {
-      "name": "test_rollback_scenario",
-      "verdict": "FAILED",
-      "duration_seconds": 45.2,
-      "output": "Assertion failed: /proc/version mismatch",
-      "error_detail": "Full error traceback if available"
-    },
-    {
-      "name": "test_package_compat",
-      "verdict": "SKIPPED",
-      "duration_seconds": 0,
-      "output": "Skipped: requires RHEL9+"
+      "task_id": "5d67eecf-a02d-46b7-aee2-9ffb673f40df",
+      "set": "verification_99_103_ctc2-ver-9to10",
+      "tier": "tier3",
+      "arch": "s390x",
+      "source_compose": "RHEL-9.9.0-20260629.0",
+      "target_compose": null,
+      "dispatched_at": "2026-07-07T10:35:13Z",
+      "verdict": "ERROR",
+      "total_duration_seconds": 349.0,
+      "plans": [
+        {
+          "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
+          "verdict": "FAILED",
+          "tests": [
+            {
+              "name": "/tests/newstyle/upgrades/tests/nondestructive/test_var_run_symlink.py::TestVarRunSymlink",
+              "verdict": "FAILED",
+              "duration_seconds": 75.0,
+              "start_time": "2026-07-07T10:51:27.205058+00:00",
+              "end_time": "2026-07-07T10:52:48.504964+00:00"
+            }
+          ]
+        },
+        {
+          "name": "/plans/newstyle/upgrades/tests/destructive/test_luks_multiple_partitions.py::TestLuksMultiplePartitions",
+          "verdict": "ERROR",
+          "tests": [
+            {
+              "name": "/default-0/upgrades/tests/destructive/test_luks_multiple_partitions.py::TestLuksMultiplePartitions",
+              "verdict": "ERROR",
+              "duration_seconds": 0
+            }
+          ]
+        }
+      ]
     }
-  ],
-  "total_duration_seconds": 245.7
+  ]
 }
 ```
 
-CANCELED example (dispatch-level event — misconfiguration, timeout, user
-interrupt — not a test-level outcome; `tests` is always empty,
-`total_duration_seconds` reflects actual elapsed time before
-cancellation):
-```json
-{
-  "run_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
-  "request_timestamp": "2026-07-12T15:00:00Z",
-  "set": "rhel8-to-rhel9",
-  "tier": "tier0",
-  "arch": "x86_64",
-  "source": "rhel-8.10",
-  "target": "rhel-9.4",
-  "verdict": "CANCELED",
-  "tests": [],
-  "total_duration_seconds": 32.4
+**Run envelope — all keys required**: `schema_version` (int, literal `1`
+for this contract version; any other value is rejected), `run_id` (ULID;
+matches manifest and filename), `created_at` (ISO 8601; mirrors manifest
+`created_at` — run creation, NOT file-write time), `event` (from manifest
+context, e.g. `preliminary`; harvest-retention filter axis), `source`,
+`target` (upgrade-path values, e.g. `"9.9"`/`"10.3"`), `verdict`
+(**nullable, write-once**: null = run incomplete; set exactly once by
+`finalize_root_verdict` when all manifest requests have entries),
+`results` (list of task entries; may be empty for a freshly initialized
+file).
+
+**Task entry — required unless noted; keyed by `task_id`**: `task_id`
+(TF request UUID; join key to manifest `requests[]`; gap-fill idempotency
+key), `set`, `tier`, `arch`, `source_compose`/`target_compose` (required
+keys, nullable values — manifest parity), `dispatched_at` (ISO 8601, from
+manifest request), `verdict` (task-level, non-null), `total_duration_seconds`
+(float; for CANCELED/no-xunit ERROR: elapsed time before terminal
+state), `plans` (list; see validity rules below).
+
+**Plan — all required**: `name` (str, verbatim `testsuite@name` from
+xunit), `verdict` (enum), `tests` (list).
+
+**Test — required**: `name` (str, verbatim `testcase@name`), `verdict`
+(enum), `duration_seconds` (float; `0` when not run). **Optional**:
+`start_time`, `end_time` (ISO 8601, copied verbatim from xunit
+`start-time`/`end-time`), `output` (str), `error_detail` (str).
+
+**Verdict enum** (identical vocabulary at every level): `PASSED | FAILED
+| SKIPPED | ERROR | CANCELED`. Unknown values are rejected at validation.
+
+**Validity rules (8, enforced by `from_dict` at each level)**:
+1. Task `CANCELED` -> `plans` MUST be `[]` (dispatch-level cancel; no
+   partial results).
+2. Task `ERROR` -> `plans` MAY be `[]` (terminal task with no xunit, e.g.
+   misconfigured plan filter -> zero plans discovered) or populated (task
+   errored mid-run).
+3. Task `PASSED` or `FAILED` -> `plans` MUST be non-empty.
+4. Plan `SKIPPED` or `ERROR` -> `tests` MAY be `[]`. Plan `PASSED`/
+   `FAILED` -> `tests` MUST be non-empty.
+5. Root `verdict`: `null` or enum. Non-null root verdict = file
+   finalized/frozen.
+6. `schema_version != 1` -> `ValidationError`.
+7. Task entries must have unique `task_id`s -> duplicate ->
+   `ValidationError`.
+8. Duration/type/timestamp validation carries the lenient
+   `datetime.fromisoformat` acceptance forward from the v1 module —
+   ratified for MVP.
+
+**Documented gaps (not contradictions — the ratified rule set is
+explicit about which verdict/emptiness pairs it constrains, and no
+others)**: task-level `SKIPPED` has no plans-emptiness rule (rules 1-3
+only cover CANCELED/ERROR/PASSED/FAILED), and plan-level `CANCELED` has
+no tests-emptiness rule (rule 4 only covers SKIPPED/ERROR/PASSED/FAILED).
+Both are left unconstrained rather than inventing a rule; a maintainer
+call is needed if either should be tightened.
+
+**Root verdict derivation** (`finalize_root_verdict` in
+`utils/results_parser.py`, the ONLY place this happens): severity
+ranking `ERROR > FAILED > CANCELED > PASSED > SKIPPED`; root = the
+highest-severity task verdict present. All-SKIPPED -> `SKIPPED`
+(falls out of the ranking naturally — no special case needed).
+Derivation happens exactly once, when `len(results)` reaches the
+expected count passed in by the caller; never recomputed, never
+overwritten once written.
+
+**Xunit -> schema mapping contract** (exported from `results_parser` as
+`XUNIT_RESULT_MAP`, NOT applied by this module — parsing xunit is
+report-layer work on a later branch; the map exists purely so that
+future parser and this schema cannot drift):
+```python
+XUNIT_RESULT_MAP = {
+    "passed": "PASSED",
+    "failed": "FAILED",
+    "error": "ERROR",
+    "skipped": "SKIPPED",
+    "undefined": "ERROR",   # terminal task, plan never completed (e.g. stage=guest-provisioning)
+    "pending": "ERROR",     # terminal task, test never ran; duration_seconds = 0
 }
 ```
+This mapping applies only to TERMINAL tasks; unknown xunit values are
+report-layer policy (map to ERROR + WARNING log), not a schema concern.
+The xunit `stage` attribute is deliberately not stored in results.json —
+the verbatim xunit archive (see storage location below) retains it.
 
-**Verdict enum** (top-level and per-test, identical vocabulary): `PASSED
-| FAILED | SKIPPED | ERROR | CANCELED`. Unknown values are rejected at
-validation. The root `verdict` is a required, explicit, caller-supplied
-value — it is never auto-derived from per-test verdicts anywhere in this
-module; a root verdict that disagrees with the "worst" per-test verdict
-is accepted verbatim (see `tests/test_results_parser.py::
-test_verdict_is_caller_supplied_not_derived`).
+**Gap-fill write API** (`utils/results_parser.py`; replaces the deleted
+v1 `write_results_json()` one-shot writer outright — there is no v3.1
+equivalent of a single all-at-once write, because one run's results
+arrive incrementally, one TF task at a time):
+- `init_results_json(run_id, created_at, event, source, target,
+  output_dir) -> Path` — creates `<output_dir>/<run_id>.json` with
+  `verdict: null`, `results: []`. Refuses to overwrite an existing file
+  by raising the builtin `FileExistsError` (its stdlib semantics are an
+  exact match for "trying to create a file which already exists" — a
+  filesystem precondition, not a schema-validation failure, so no new
+  `EngeError` subclass was added for it).
+- `upsert_task_result(path, task_entry) -> bool` — write-once per
+  `task_id`. Absent task_id: validate, append, atomic rewrite, return
+  `True`. Present with identical content: no-op, return `False`.
+  Present with different content: raise `ConflictError` (new exception
+  in `utils/errors.py`, alongside `ValidationError`) — the idempotency
+  fence; never silently overwritten. File already finalized (non-null
+  root verdict): raise `ConflictError` regardless of content.
+- `finalize_root_verdict(path, expected_count) -> Optional[str]` — see
+  derivation rules above. Under count: no-op, `None`. Exact count:
+  derive and write, return the value (idempotent on repeat calls once
+  finalized — returns the stored value, no rewrite). Over count: raise
+  `ValidationError` (impossible state — something upstream recorded more
+  tasks than expected).
+- `write_xunit(run_id, task_id, xunit_bytes, output_dir) -> Path` —
+  byte-verbatim write to `<output_dir>/<run_id>/<task_id>.xml` (one
+  subdirectory per run; created as needed). **Conditionally present by
+  contract**: a no-xunit ERROR task has an entry in results.json but no
+  xml — gap-fill logic keys on the JSON entry, never on xml presence.
+  Write-once: existing file with different bytes -> `ConflictError`;
+  identical -> no-op.
+- `parse_results_json(path)` — validates and returns the full nested
+  dataclass structure (`ResultsJsonSchema` -> `TaskEntry` -> `PlanEntry`
+  -> `TestEntry`).
+- `results_dir()` in `utils/state_paths.py` is unchanged by this rework
+  (XDG behavior stays the same).
 
-**Required top-level fields**: `run_id`, `request_timestamp` (ISO 8601 —
-when the request was created, not when results.json was written),
-`set`, `tier`, `arch`, `source`, `target`, `verdict`, `tests`,
-`total_duration_seconds`. **Per-test required**: `name`, `verdict`,
-`duration_seconds` (0 if skipped/not run). **Per-test optional**:
-`output`, `error_detail` (only meaningful when verdict is FAILED or
-ERROR — not otherwise enforced).
+Both JSON and xunit writes use the same tmp-file-then-`os.replace`
+atomic-write pattern as `ManifestWriter.flush()` in `utils/manifest.py`
+(duplicated, not imported — this module stays dependency-free of the
+manifest layer by design).
 
-**CANCELED semantics**: verdict = `CANCELED` at root implies `tests`
-MUST be empty — rejected by `ResultsJsonSchema` otherwise.
-`total_duration_seconds` for a CANCELED run is independent of `tests`
-(there are none) and reflects actual elapsed wall time.
-
-**Duration arithmetic**: `total_duration_seconds` is not schema-validated
-against `sum(tests[].duration_seconds)` — it is a caller-supplied value,
-not derived or cross-checked, because the CANCELED case requires a
-positive total with zero tests (impossible to reconcile with a strict
-sum-equality rule), and TF-side timing overhead may not be attributable
-to any single test. Tests still pin the golden fixture's own arithmetic
-as an internal-consistency regression check (not a schema rule).
-
-**Metadata strategy (baked-in with fallback lookup)**: `set`, `tier`,
-`arch`, `source`, `target` are stored directly in `results.json` for
-self-containment. When (future) `report` integration writes
-`results.json`, it will attempt a manifest lookup by `run_id` to
-populate these fields, falling back to caller-supplied values if the
-manifest is unavailable — `results.json` remains valid either way.
-`write_results_json()` itself only accepts explicit values; the
-manifest-lookup/fallback logic lives in the report layer, not here.
-
-**Storage location** (XDG-compliant, config-overridable, mirrors the
-manifest store): `~/.local/share/enge/results/<run_id>.json`
+**Storage layout** (XDG-compliant, config-overridable, mirrors the
+manifest store, sibling symmetry with `~/.local/share/enge/runs/
+<run_id>.json`):
+```
+~/.local/share/enge/results/<run_id>.json          # run envelope + all task/plan/test results
+~/.local/share/enge/results/<run_id>/<task_id>.xml # one raw xunit file per task, verbatim bytes
+```
 (`XDG_DATA_HOME` respected; override via `[common] results_dir` in
-config). Raw xunit is colocated verbatim (byte-for-byte, no
-re-encoding) at `~/.local/share/enge/results/<run_id>.xml`. This
-resolves an inconsistency in early drafts of this feature that floated
-`~/.enge/results/` informally — that path doesn't match any existing
-XDG convention in this codebase, so `results_dir()` in
-`utils/state_paths.py` instead follows `resolve_runs_dir()`'s pattern:
-same `XDG_DATA_HOME` root as the manifest store, `results/` instead of
-`runs/` as the leaf directory. Unlike the `resolve_*` family,
-`results_dir()` also creates the directory on first call (no separate
-writer/flush step exists yet to do that for it).
+config.) `results_dir()` in `utils/state_paths.py` follows
+`resolve_runs_dir()`'s pattern: same `XDG_DATA_HOME` root as the
+manifest store, `results/` instead of `runs/` as the leaf directory, and
+(unlike the `resolve_*` family) also creates the directory on first
+call, since the gap-fill writers each take their own `output_dir`
+explicitly rather than sharing one central flush step.
 
 **TF artifact URL**: NOT stored in `results.json`. The coldstore
 hyperlink will be constructed externally later from the TF result URL
-plus `run_id` — no field for this exists or is planned here.
+plus `run_id`/`task_id` — no field for this exists or is planned here.
 
 **Golden fixture MD5s** (`tests/fixtures/`):
-- `results_golden.json` (mixed PASSED/FAILED/SKIPPED/ERROR):
-  `873497adc800d7eec35c1ecfa4098acc`
-- `results_golden_canceled.json` (CANCELED, empty tests, positive
-  duration): `56e5ef2f51c3b86a9d7bc9f16d25289d`
+- `results_golden.json` (finalized multi-task run; 3 task entries —
+  PASSED, FAILED-with-a-SKIPPED-plan, and an ERROR task with
+  `plans: []`; root `verdict` = `"ERROR"`, the severity-max of
+  PASSED/FAILED/ERROR): `eada98dd3a5dcc69d013ee6933dc84b5`
+- `results_golden_partial.json` (unfinalized run; root `verdict: null`,
+  2 task entries against an assumed `expected_count=3` — a third
+  tier1/aarch64 task has not reported in yet):
+  `72f3de4443d0aefea8354dfd018bdc9b`
+- `results_golden_canceled.json` (finalized run mixing a CANCELED task,
+  `plans: []`, `total_duration_seconds: 32.4`, with a PASSED task; root
+  `verdict` = `"CANCELED"`, demonstrating CANCELED outranking PASSED in
+  the severity ranking): `725f997c0ce9c0d33321754fd68e506c`
 
-This schema is contract-pinned as of 2026-07-13. Cross-cutting contract:
+This schema is contract-pinned as of 2026-07-14. Cross-cutting contract:
 schema changes require maintainer sign-off.
 
 ## Conventions

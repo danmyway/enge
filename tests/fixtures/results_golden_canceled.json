@@ -1,12 +1,49 @@
 {
-  "run_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
-  "request_timestamp": "2026-07-12T15:00:00Z",
-  "set": "rhel8-to-rhel9",
-  "tier": "tier0",
-  "arch": "x86_64",
-  "source": "rhel-8.10",
-  "target": "rhel-9.4",
+  "schema_version": 1,
+  "run_id": "01KXJ8QJT7P1Y4T45JDMH07M9Q",
+  "created_at": "2026-07-09T14:00:00Z",
+  "event": "preliminary",
+  "source": "9.9",
+  "target": "10.3",
   "verdict": "CANCELED",
-  "tests": [],
-  "total_duration_seconds": 32.4
+  "results": [
+    {
+      "task_id": "004e567b-9c11-4e54-aab7-6cad0e9a2e0f",
+      "set": "verification_99_103_ctc2-ver-9to10",
+      "tier": "tier0",
+      "arch": "x86_64",
+      "source_compose": "RHEL-9.9.0-20260629.0",
+      "target_compose": "RHEL-10.3.0-20260705.0",
+      "dispatched_at": "2026-07-09T14:00:05Z",
+      "verdict": "CANCELED",
+      "total_duration_seconds": 32.4,
+      "plans": []
+    },
+    {
+      "task_id": "16fabf6a-b495-4b86-9948-be2a62262f27",
+      "set": "verification_99_103_ctc2-ver-9to10",
+      "tier": "tier1",
+      "arch": "aarch64",
+      "source_compose": "RHEL-9.9.0-20260629.0",
+      "target_compose": "RHEL-10.3.0-20260705.0",
+      "dispatched_at": "2026-07-09T14:00:10Z",
+      "verdict": "PASSED",
+      "total_duration_seconds": 180.0,
+      "plans": [
+        {
+          "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
+          "verdict": "PASSED",
+          "tests": [
+            {
+              "name": "/tests/newstyle/upgrades/tests/nondestructive/test_grub_config.py::TestGrubConfig",
+              "verdict": "PASSED",
+              "duration_seconds": 170.0,
+              "start_time": "2026-07-09T14:05:00.000000+00:00",
+              "end_time": "2026-07-09T14:07:50.000000+00:00"
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }
