@@ -504,6 +504,17 @@ class TestFinalizeRootVerdict(_GapFillTestCase):
             with self.assertRaises(ValidationError):
                 finalize_root_verdict(path, expected_count=1)
 
+    def test_zero_expected_count_raises_validation_error(self):
+        # Mutation-check target: _derive_root_verdict([]) previously raised
+        # the builtin ValueError ("max() arg is an empty sequence") for this
+        # impossible-but-reachable input (expected_count=0 on a freshly
+        # initialized file with zero results). ValidationError is this
+        # module's contract for "impossible state", not a stdlib leak.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            with self.assertRaises(ValidationError):
+                finalize_root_verdict(path, expected_count=0)
+
     def test_idempotent_finalize_returns_same_value_without_rewrite(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = self._init(tmp)
