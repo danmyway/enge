@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from enge.utils.errors import ValidationError
+from enge.utils.errors import ConflictError, ValidationError
 from enge.utils.results_parser import XUNIT_RESULT_MAP
 from enge.utils.results_parser import PlanEntry
 from enge.utils.results_parser import ResultsJsonSchema
@@ -19,7 +19,11 @@ from enge.utils.results_parser import TaskEntry
 # the import but not the "Test" prefix.
 from enge.utils.results_parser import TestEntry as _TestEntry
 from enge.utils.results_parser import Verdict
+from enge.utils.results_parser import finalize_root_verdict
+from enge.utils.results_parser import init_results_json
 from enge.utils.results_parser import parse_results_json
+from enge.utils.results_parser import upsert_task_result
+from enge.utils.results_parser import write_xunit
 from enge.utils.state_paths import results_dir
 
 
@@ -335,6 +339,251 @@ class TestParseResultsJson(unittest.TestCase):
             bad_path.write_text("{not valid json")
             with self.assertRaises(ValidationError):
                 parse_results_json(bad_path)
+
+
+class TestInitResultsJson(unittest.TestCase):
+    def test_init_creates_file_with_null_verdict_and_empty_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = init_results_json(
+                run_id="01TESTRUNID00000000000000",
+                created_at="2026-07-07T10:35:07Z",
+                event="preliminary",
+                source="9.9",
+                target="10.3",
+                output_dir=tmp,
+            )
+            self.assertEqual(path, Path(tmp) / "01TESTRUNID00000000000000.json")
+            schema = parse_results_json(path)
+            self.assertEqual(schema.schema_version, 1)
+            self.assertEqual(schema.run_id, "01TESTRUNID00000000000000")
+            self.assertIsNone(schema.verdict)
+            self.assertEqual(schema.results, [])
+
+    def test_init_refuses_to_overwrite_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            init_results_json(
+                run_id="01TESTRUNID00000000000000",
+                created_at="2026-07-07T10:35:07Z",
+                event="preliminary",
+                source="9.9",
+                target="10.3",
+                output_dir=tmp,
+            )
+            with self.assertRaises(FileExistsError):
+                init_results_json(
+                    run_id="01TESTRUNID00000000000000",
+                    created_at="2026-07-07T10:35:07Z",
+                    event="preliminary",
+                    source="9.9",
+                    target="10.3",
+                    output_dir=tmp,
+                )
+
+
+class _GapFillTestCase(unittest.TestCase):
+    def _init(self, tmp, run_id="01RUNIDXXXXXXXXXXXXXXXXXXX"):
+        return init_results_json(
+            run_id=run_id,
+            created_at="2026-07-07T10:35:07Z",
+            event="preliminary",
+            source="9.9",
+            target="10.3",
+            output_dir=tmp,
+        )
+
+
+class TestUpsertTaskResult(_GapFillTestCase):
+    def test_upsert_new_task_id_appends_and_returns_true(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            result = upsert_task_result(path, _task_payload())
+            self.assertTrue(result)
+            schema = parse_results_json(path)
+            self.assertEqual(len(schema.results), 1)
+            self.assertEqual(schema.results[0].task_id, _task_payload()["task_id"])
+
+    def test_upsert_accepts_task_entry_dataclass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            entry = TaskEntry.from_dict(_task_payload())
+            result = upsert_task_result(path, entry)
+            self.assertTrue(result)
+
+    def test_upsert_identical_task_is_noop_and_returns_false(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(path, _task_payload())
+            result = upsert_task_result(path, _task_payload())
+            self.assertFalse(result)
+
+    def test_upsert_identical_task_does_not_rewrite_file(self):
+        # Mutation-check target (c): if the ConflictError branch is removed
+        # and upsert silently overwrites instead, this still passes -- the
+        # complementary test_upsert_conflicting_task_raises_conflict_error
+        # is what catches that mutation. This test instead pins the
+        # separate identical-content no-op-write guarantee.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(path, _task_payload())
+            with patch("enge.utils.results_parser._atomic_write_json") as mock_write:
+                result = upsert_task_result(path, _task_payload())
+            self.assertFalse(result)
+            mock_write.assert_not_called()
+
+    def test_upsert_conflicting_task_raises_conflict_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(path, _task_payload())
+            with self.assertRaises(ConflictError):
+                upsert_task_result(
+                    path,
+                    _task_payload(
+                        verdict="PASSED",
+                        plans=[_plan_payload(verdict="PASSED")],
+                    ),
+                )
+
+    def test_upsert_after_finalize_raises_conflict_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(path, _task_payload())
+            finalize_root_verdict(path, expected_count=1)
+            with self.assertRaises(ConflictError):
+                upsert_task_result(path, _task_payload(task_id="a-different-task-id"))
+
+
+class TestFinalizeRootVerdict(_GapFillTestCase):
+    def test_under_expected_count_is_noop_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(path, _task_payload())
+            result = finalize_root_verdict(path, expected_count=2)
+            self.assertIsNone(result)
+            schema = parse_results_json(path)
+            self.assertIsNone(schema.verdict)
+
+    def test_exact_expected_count_derives_severity_max(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(
+                path,
+                _task_payload(
+                    task_id="t1",
+                    verdict="PASSED",
+                    plans=[_plan_payload(verdict="PASSED")],
+                ),
+            )
+            upsert_task_result(path, _task_payload(task_id="t2", verdict="FAILED"))
+            result = finalize_root_verdict(path, expected_count=2)
+            self.assertEqual(result, "FAILED")
+            schema = parse_results_json(path)
+            self.assertEqual(schema.verdict, "FAILED")
+
+    def test_error_outranks_failed_in_severity_derivation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(path, _task_payload(task_id="t1", verdict="FAILED"))
+            upsert_task_result(path, _task_payload(task_id="t2", verdict="ERROR"))
+            result = finalize_root_verdict(path, expected_count=2)
+            self.assertEqual(result, "ERROR")
+
+    def test_all_skipped_derives_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(
+                path, _task_payload(task_id="t1", verdict="SKIPPED", plans=[])
+            )
+            result = finalize_root_verdict(path, expected_count=1)
+            self.assertEqual(result, "SKIPPED")
+
+    def test_over_expected_count_raises_validation_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(path, _task_payload(task_id="t1"))
+            upsert_task_result(path, _task_payload(task_id="t2"))
+            with self.assertRaises(ValidationError):
+                finalize_root_verdict(path, expected_count=1)
+
+    def test_idempotent_finalize_returns_same_value_without_rewrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(
+                path,
+                _task_payload(
+                    task_id="t1",
+                    verdict="PASSED",
+                    plans=[_plan_payload(verdict="PASSED")],
+                ),
+            )
+            first = finalize_root_verdict(path, expected_count=1)
+            with patch("enge.utils.results_parser._atomic_write_json") as mock_write:
+                second = finalize_root_verdict(path, expected_count=1)
+            self.assertEqual(first, "PASSED")
+            self.assertEqual(second, "PASSED")
+            mock_write.assert_not_called()
+
+
+class TestWriteXunit(unittest.TestCase):
+    # Deliberately quirky bytes (CRLF, non-ASCII, no trailing newline) to
+    # prove the write is a verbatim byte copy -- no re-encoding, no
+    # transformation, no re-serialization through an XML parser.
+    RAW_XUNIT = (
+        b'<?xml version="1.0" encoding="UTF-8"?>\r\n'
+        b'<testsuite name="upgrade" tests="1">\n'
+        b'  <testcase name="test_upgrade_9_to_10" time="120.5"/>\n'
+        b"  <!-- non-ascii byte check: \xc3\xa9 -->\n"
+        b"</testsuite>"
+    )
+
+    def test_write_xunit_stores_byte_identical_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_xunit(
+                run_id="01RUNIDXXXXXXXXXXXXXXXXXXX",
+                task_id="5d67eecf-a02d-46b7-aee2-9ffb673f40df",
+                xunit_bytes=self.RAW_XUNIT,
+                output_dir=tmp,
+            )
+            self.assertEqual(
+                path,
+                Path(tmp)
+                / "01RUNIDXXXXXXXXXXXXXXXXXXX"
+                / "5d67eecf-a02d-46b7-aee2-9ffb673f40df.xml",
+            )
+            self.assertEqual(path.read_bytes(), self.RAW_XUNIT)
+
+    def test_write_xunit_identical_rewrite_is_noop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_xunit("01RUNID", "task-1", self.RAW_XUNIT, tmp)
+            with patch("enge.utils.results_parser._atomic_write_bytes") as mock_write:
+                result = write_xunit("01RUNID", "task-1", self.RAW_XUNIT, tmp)
+            self.assertEqual(result, path)
+            mock_write.assert_not_called()
+
+    def test_write_xunit_conflicting_rewrite_raises_conflict_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_xunit("01RUNID", "task-1", self.RAW_XUNIT, tmp)
+            with self.assertRaises(ConflictError):
+                write_xunit("01RUNID", "task-1", self.RAW_XUNIT + b"tampered", tmp)
+
+    def test_no_xunit_error_task_is_fully_representable_without_xml_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results_path = init_results_json(
+                run_id="01NOXUNIT0000000000000000",
+                created_at="2026-07-07T10:35:07Z",
+                event="preliminary",
+                source="9.9",
+                target="10.3",
+                output_dir=tmp,
+            )
+            upsert_task_result(
+                results_path,
+                _task_payload(task_id="no-xunit-task", verdict="ERROR", plans=[]),
+            )
+            schema = parse_results_json(results_path)
+            self.assertEqual(schema.results[0].verdict, "ERROR")
+            self.assertEqual(schema.results[0].plans, [])
+            xunit_path = Path(tmp) / "01NOXUNIT0000000000000000" / "no-xunit-task.xml"
+            self.assertFalse(xunit_path.exists())
 
 
 class TestResultsDirStatePath(unittest.TestCase):
