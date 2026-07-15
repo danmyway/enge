@@ -1,22 +1,22 @@
 {
   "schema_version": 1,
-  "run_id": "01KWY2ANGF1TCT6E3X8M7QPJTW",
-  "created_at": "2026-07-07T10:35:07Z",
+  "run_id": "01KXJ8QJT7XCY0NJJVYNP498NB",
+  "created_at": "2026-07-08T09:00:00Z",
   "event": "preliminary",
   "source": "9.9",
   "target": "10.3",
-  "verdict": "ERROR",
+  "verdict": null,
   "results": [
     {
-      "task_id": "7692ea3e-c6a5-4bac-8784-ff3a197f4140",
+      "task_id": "2dd9850e-3e95-4bbf-b63f-ca44582ab3a3",
       "set": "verification_99_103_ctc2-ver-9to10",
       "tier": "tier0",
       "arch": "x86_64",
       "source_compose": "RHEL-9.9.0-20260629.0",
       "target_compose": "RHEL-10.3.0-20260705.0",
-      "dispatched_at": "2026-07-07T10:35:10Z",
+      "dispatched_at": "2026-07-08T09:00:05Z",
       "verdict": "PASSED",
-      "total_duration_seconds": 210.5,
+      "total_duration_seconds": 150.0,
       "plans": [
         {
           "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
@@ -25,24 +25,24 @@
             {
               "name": "/tests/newstyle/upgrades/tests/nondestructive/test_selinux_labels.py::TestSelinuxLabels",
               "verdict": "PASSED",
-              "duration_seconds": 180.2,
-              "start_time": "2026-07-07T10:40:00.000000+00:00",
-              "end_time": "2026-07-07T10:43:00.200000+00:00"
+              "duration_seconds": 140.0,
+              "start_time": "2026-07-08T09:05:00.000000+00:00",
+              "end_time": "2026-07-08T09:07:20.000000+00:00"
             }
           ]
         }
       ]
     },
     {
-      "task_id": "d4a16fad-2b2b-49ef-887a-52e6c4828b38",
+      "task_id": "d11ee03f-ab05-41c0-a4fd-77f2b18fe1a3",
       "set": "verification_99_103_ctc2-ver-9to10",
       "tier": "tier3",
       "arch": "s390x",
       "source_compose": "RHEL-9.9.0-20260629.0",
       "target_compose": null,
-      "dispatched_at": "2026-07-07T10:35:13Z",
+      "dispatched_at": "2026-07-08T09:00:08Z",
       "verdict": "FAILED",
-      "total_duration_seconds": 349.0,
+      "total_duration_seconds": 300.0,
       "plans": [
         {
           "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
@@ -51,30 +51,13 @@
             {
               "name": "/tests/newstyle/upgrades/tests/nondestructive/test_var_run_symlink.py::TestVarRunSymlink",
               "verdict": "FAILED",
-              "duration_seconds": 75.0,
-              "start_time": "2026-07-07T10:51:27.205058+00:00",
-              "end_time": "2026-07-07T10:52:48.504964+00:00"
+              "duration_seconds": 290.0,
+              "start_time": "2026-07-08T09:10:00.000000+00:00",
+              "end_time": "2026-07-08T09:14:50.000000+00:00"
             }
           ]
-        },
-        {
-          "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2_optional",
-          "verdict": "SKIPPED",
-          "tests": []
         }
       ]
-    },
-    {
-      "task_id": "3aee70a1-0adc-4ba1-aaf3-8a5b391fc07b",
-      "set": "verification_99_103_ctc2-ver-9to10",
-      "tier": "tier1",
-      "arch": "aarch64",
-      "source_compose": "RHEL-9.9.0-20260629.0",
-      "target_compose": "RHEL-10.3.0-20260705.0",
-      "dispatched_at": "2026-07-07T10:35:16Z",
-      "verdict": "ERROR",
-      "total_duration_seconds": 42.0,
-      "plans": []
     }
   ]
 }

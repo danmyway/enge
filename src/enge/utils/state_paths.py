@@ -36,12 +36,14 @@ def results_dir(config: Dict[str, Any]) -> Path:
     resolve_runs_dir (results.json is sibling data to the run manifests,
     both under the enge XDG_DATA_HOME root) -- not the literal
     `~/.enge/results/` path floated informally elsewhere, which would be
-    inconsistent with the manifest store's XDG convention. See
-    DEBRIEF.md "Path convention" for the full resolution rationale.
+    inconsistent with the manifest store's XDG convention. See CLAUDE.md
+    "Results.json format" for the full storage-layout contract.
 
     Unlike the resolve_* functions above, this also creates the directory
-    on first call (mkdir -p): results_parser.py has no separate
-    writer/flush step to do that for it, so the resolver takes it on.
+    on first call (mkdir -p): results_parser.py's gap-fill writers
+    (init_results_json, write_xunit) each take their own output_dir
+    explicitly rather than sharing a single flush step, so the resolver
+    takes ownership of directory creation instead.
     """
     override = config.get("common", {}).get("results_dir", "")
     if override:
