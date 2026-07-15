@@ -1,11 +1,12 @@
 import json
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from enge.utils.errors import ValidationError
+from enge.utils.errors import ConflictError, ValidationError
 
 
 class Verdict(str, Enum):
@@ -444,3 +445,190 @@ def parse_results_json(path: Union[str, Path]) -> ResultsJsonSchema:
     except json.JSONDecodeError as exc:
         raise ValidationError(f"{path}: not valid JSON: {exc}") from exc
     return ResultsJsonSchema.from_dict(data)
+
+
+# ---------------------------------------------------------------------------
+# Gap-fill write API.
+#
+# Replaces the old one-shot write_results_json(): one dispatch produces one
+# results.json seeded up front (init_results_json) and filled in
+# incrementally as each TF task's xunit becomes available
+# (upsert_task_result), with the root verdict derived exactly once all
+# expected tasks have landed (finalize_root_verdict). Raw xunit is
+# colocated separately per task (write_xunit) since a no-xunit ERROR task
+# must remain fully representable in results.json with no xml file.
+# ---------------------------------------------------------------------------
+
+
+def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
+    """Tmp-then-replace atomic write, mirroring the pattern used by
+    ManifestWriter.flush() in utils/manifest.py. Duplicated rather than
+    imported: this module stays dependency-free of the manifest layer by
+    design (see CLAUDE.md "Results.json format")."""
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(json.dumps(data, indent=2))
+    os.replace(tmp_path, path)
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Byte-mode counterpart of _atomic_write_json, used by write_xunit."""
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_bytes(data)
+    os.replace(tmp_path, path)
+
+
+def init_results_json(
+    run_id: str,
+    created_at: str,
+    event: str,
+    source: str,
+    target: str,
+    output_dir: Union[str, Path],
+) -> Path:
+    """Create `<output_dir>/<run_id>.json` with verdict: null, results: [].
+
+    Refuses to overwrite an existing file by raising the builtin
+    FileExistsError -- its stdlib semantics ("trying to create a file...
+    which already exists") are an exact match for this precondition, and no
+    new EngeError subclass is warranted for what is a filesystem
+    precondition rather than a data-validation failure.
+    """
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    results_path = out_dir / f"{run_id}.json"
+    if results_path.exists():
+        raise FileExistsError(
+            f"{results_path}: results.json already exists; refusing to overwrite"
+        )
+
+    schema = ResultsJsonSchema.from_dict(
+        {
+            "schema_version": 1,
+            "run_id": run_id,
+            "created_at": created_at,
+            "event": event,
+            "source": source,
+            "target": target,
+            "verdict": None,
+            "results": [],
+        }
+    )
+    _atomic_write_json(results_path, schema.to_dict())
+    return results_path
+
+
+def upsert_task_result(
+    path: Union[str, Path], task_entry: Union[TaskEntry, Dict[str, Any]]
+) -> bool:
+    """Write-once upsert of one task entry, keyed by task_id.
+
+    - task_id absent -> validate, append, atomic rewrite, return True.
+    - task_id present with identical content -> no-op, return False.
+    - task_id present with different content -> raise ConflictError (the
+      idempotency fence; never silently overwrite).
+    - file already finalized (root verdict non-null) -> raise
+      ConflictError, regardless of content.
+    """
+    path = Path(path)
+    schema = parse_results_json(path)
+
+    if schema.verdict is not None:
+        raise ConflictError(
+            f"{path}: results.json is already finalized (verdict="
+            f"{schema.verdict!r}); cannot upsert further task results"
+        )
+
+    new_entry = (
+        task_entry
+        if isinstance(task_entry, TaskEntry)
+        else TaskEntry.from_dict(task_entry)
+    )
+
+    existing = next((t for t in schema.results if t.task_id == new_entry.task_id), None)
+    if existing is None:
+        updated = replace(schema, results=[*schema.results, new_entry])
+        _atomic_write_json(path, updated.to_dict())
+        return True
+
+    if existing.to_dict() == new_entry.to_dict():
+        return False
+
+    raise ConflictError(
+        f"{path}: task_id {new_entry.task_id!r} already has a different "
+        "result recorded; refusing to overwrite"
+    )
+
+
+def _derive_root_verdict(task_verdicts: Sequence[str]) -> str:
+    """Severity-max derivation: ERROR > FAILED > CANCELED > PASSED >
+    SKIPPED. All-SKIPPED naturally yields SKIPPED (lowest rank, nothing
+    higher present). `task_verdicts` must be non-empty; finalize_root_
+    verdict with expected_count=0 (zero results) is an edge case the
+    ratified spec does not address -- see CLAUDE.md "Results.json format"
+    for the documented gap."""
+    return max(task_verdicts, key=lambda v: _SEVERITY_RANK[v])
+
+
+def finalize_root_verdict(path: Union[str, Path], expected_count: int) -> Optional[str]:
+    """Derive and write the root verdict exactly once, when `results`
+    reaches `expected_count` entries.
+
+    - len(results) < expected_count -> no-op, return None.
+    - len(results) == expected_count -> derive severity-max and write it
+      (unless already finalized, in which case the stored value is
+      returned verbatim with no rewrite), return the value.
+    - len(results) > expected_count -> raise ValidationError (impossible
+      state; something upstream recorded more tasks than expected).
+    """
+    path = Path(path)
+    schema = parse_results_json(path)
+
+    count = len(schema.results)
+    if count < expected_count:
+        return None
+    if count > expected_count:
+        raise ValidationError(
+            f"{path}: {count} task entries recorded but expected_count="
+            f"{expected_count}; more entries than expected is an "
+            "impossible state"
+        )
+
+    if schema.verdict is not None:
+        return schema.verdict
+
+    derived = _derive_root_verdict([task.verdict for task in schema.results])
+    updated = replace(schema, verdict=derived)
+    _atomic_write_json(path, updated.to_dict())
+    return derived
+
+
+def write_xunit(
+    run_id: str,
+    task_id: str,
+    xunit_bytes: bytes,
+    output_dir: Union[str, Path],
+) -> Path:
+    """Byte-verbatim write to `<output_dir>/<run_id>/<task_id>.xml`.
+
+    Conditionally present by contract: a no-xunit ERROR task has an entry
+    in results.json but no xml -- gap-fill logic must key on the JSON
+    entry, never on xml presence.
+
+    Write-once: existing file with different bytes -> ConflictError;
+    identical -> no-op.
+    """
+    run_dir = Path(output_dir) / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    xunit_path = run_dir / f"{task_id}.xml"
+
+    if xunit_path.exists():
+        existing_bytes = xunit_path.read_bytes()
+        if existing_bytes == xunit_bytes:
+            return xunit_path
+        raise ConflictError(
+            f"{xunit_path}: xunit already recorded for task {task_id!r} "
+            "with different content"
+        )
+
+    _atomic_write_bytes(xunit_path, xunit_bytes)
+    return xunit_path
