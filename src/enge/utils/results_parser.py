@@ -1,6 +1,5 @@
 import json
-import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -11,7 +10,7 @@ from enge.utils.errors import ValidationError
 
 class Verdict(str, Enum):
     """The results.json verdict enum -- shared by the root verdict and every
-    per-test verdict. Contract-pinned; do not add members without
+    task/plan/test verdict. Contract-pinned; do not add members without
     maintainer sign-off (see CLAUDE.md "Results.json format")."""
 
     PASSED = "PASSED"
@@ -23,18 +22,55 @@ class Verdict(str, Enum):
 
 _VALID_VERDICTS = {member.value for member in Verdict}
 
+# Severity ranking for root-verdict derivation (finalize_root_verdict):
+# highest-severity task verdict present wins. All-SKIPPED naturally yields
+# SKIPPED since it is the lowest rank and no higher rank is present.
+_SEVERITY_RANK = {
+    Verdict.SKIPPED.value: 0,
+    Verdict.PASSED.value: 1,
+    Verdict.CANCELED.value: 2,
+    Verdict.FAILED.value: 3,
+    Verdict.ERROR.value: 4,
+}
+
+# Xunit result -> schema verdict mapping contract. This module does NOT
+# parse xunit (report-layer work, later branch); the map is exported so the
+# future parser and this schema contract cannot drift. Mapping applies only
+# to TERMINAL tasks -- unknown xunit values are report-layer policy (map to
+# ERROR + WARNING log), not a schema concern. The xunit `stage` attribute is
+# deliberately not stored here; the verbatim xunit archive retains it.
+XUNIT_RESULT_MAP = {
+    "passed": "PASSED",
+    "failed": "FAILED",
+    "error": "ERROR",
+    "skipped": "SKIPPED",
+    "undefined": "ERROR",  # terminal task, plan never completed (e.g. stage=guest-provisioning)
+    "pending": "ERROR",  # terminal task, test never ran; duration_seconds = 0
+}
+
 _TEST_REQUIRED_FIELDS = ("name", "verdict", "duration_seconds")
-_ROOT_REQUIRED_FIELDS = (
-    "run_id",
-    "request_timestamp",
+_PLAN_REQUIRED_FIELDS = ("name", "verdict", "tests")
+_TASK_REQUIRED_FIELDS = (
+    "task_id",
     "set",
     "tier",
     "arch",
+    "source_compose",
+    "target_compose",
+    "dispatched_at",
+    "verdict",
+    "total_duration_seconds",
+    "plans",
+)
+_ROOT_REQUIRED_FIELDS = (
+    "schema_version",
+    "run_id",
+    "created_at",
+    "event",
     "source",
     "target",
     "verdict",
-    "tests",
-    "total_duration_seconds",
+    "results",
 )
 
 
@@ -48,7 +84,11 @@ def _require_fields(
         )
 
 
-def _validate_verdict(value: Any, *, context: str) -> str:
+def _validate_verdict(value: Any, *, context: str, nullable: bool = False) -> Any:
+    if value is None:
+        if nullable:
+            return None
+        raise ValidationError(f"{context}: verdict is required and cannot be null")
     if isinstance(value, Verdict):
         value = value.value
     if not isinstance(value, str) or value not in _VALID_VERDICTS:
@@ -75,37 +115,52 @@ def _validate_optional_string(
     return _validate_string(value, field_name, context=context)
 
 
-def _validate_duration(value: Any, *, context: str) -> float:
+def _validate_duration(value: Any, field_name: str, *, context: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValidationError(
-            f"{context}: 'duration_seconds' must be a number, got {value!r}"
+            f"{context}: '{field_name}' must be a number, got {value!r}"
         )
     return float(value)
 
 
-def _validate_timestamp(value: Any, *, context: str) -> str:
+def _validate_timestamp(value: Any, field_name: str, *, context: str) -> str:
     if not isinstance(value, str):
         raise ValidationError(
-            f"{context}: 'request_timestamp' must be an ISO 8601 string, "
-            f"got {value!r}"
+            f"{context}: '{field_name}' must be an ISO 8601 string, got {value!r}"
         )
     try:
         datetime.fromisoformat(value)
     except ValueError as exc:
         raise ValidationError(
-            f"{context}: 'request_timestamp' is not a valid ISO 8601 "
-            f"timestamp: {value!r}"
+            f"{context}: '{field_name}' is not a valid ISO 8601 timestamp: "
+            f"{value!r}"
         ) from exc
     return value
 
 
+def _validate_optional_timestamp(
+    value: Any, field_name: str, *, context: str
+) -> Optional[str]:
+    if value is None:
+        return None
+    return _validate_timestamp(value, field_name, context=context)
+
+
+def _validate_schema_version(value: Any, *, context: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value != 1:
+        raise ValidationError(f"{context}: 'schema_version' must be 1, got {value!r}")
+    return value
+
+
 @dataclass(frozen=True)
-class TestResult:
-    """One entry of the results.json `tests` array."""
+class TestEntry:
+    """One entry of a plan's `tests` array."""
 
     name: str
     verdict: str
     duration_seconds: float
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
     output: Optional[str] = None
     error_detail: Optional[str] = None
 
@@ -115,6 +170,10 @@ class TestResult:
             "verdict": self.verdict,
             "duration_seconds": self.duration_seconds,
         }
+        if self.start_time is not None:
+            payload["start_time"] = self.start_time
+        if self.end_time is not None:
+            payload["end_time"] = self.end_time
         if self.output is not None:
             payload["output"] = self.output
         if self.error_detail is not None:
@@ -122,64 +181,208 @@ class TestResult:
         return payload
 
     @classmethod
-    def from_dict(cls, data: Any) -> "TestResult":
+    def from_dict(cls, data: Any) -> "TestEntry":
         if not isinstance(data, dict):
             raise ValidationError(f"test entry: expected an object, got {data!r}")
         _require_fields(data, _TEST_REQUIRED_FIELDS, context="test entry")
 
         name = _validate_string(data["name"], "name", context="test entry")
-        verdict = _validate_verdict(data["verdict"], context=f"test '{name}'")
+        context = f"test '{name}'"
+        verdict = _validate_verdict(data["verdict"], context=context)
         duration = _validate_duration(
-            data["duration_seconds"], context=f"test '{name}'"
+            data["duration_seconds"], "duration_seconds", context=context
+        )
+        start_time = _validate_optional_timestamp(
+            data.get("start_time"), "start_time", context=context
+        )
+        end_time = _validate_optional_timestamp(
+            data.get("end_time"), "end_time", context=context
         )
         output = _validate_optional_string(
-            data.get("output"), "output", context=f"test '{name}'"
+            data.get("output"), "output", context=context
         )
         error_detail = _validate_optional_string(
-            data.get("error_detail"), "error_detail", context=f"test '{name}'"
+            data.get("error_detail"), "error_detail", context=context
         )
         return cls(
             name=name,
             verdict=verdict,
             duration_seconds=duration,
+            start_time=start_time,
+            end_time=end_time,
             output=output,
             error_detail=error_detail,
         )
 
 
 @dataclass(frozen=True)
-class ResultsJsonSchema:
-    """The results.json MVP schema (contract-pinned, see CLAUDE.md).
+class PlanEntry:
+    """One entry of a task's `plans` array -- one xunit testsuite."""
 
-    A plain dataclass + manual validators, not pydantic: pydantic is not a
-    project dependency, is used nowhere else in the codebase, and this
-    module's scope (schema + local storage only) does not warrant adding
-    a new hard runtime dependency. See DEBRIEF.md for the full rationale.
-    """
-
-    run_id: str
-    request_timestamp: str
-    set: str
-    tier: str
-    arch: str
-    source: str
-    target: str
+    name: str
     verdict: str
-    tests: List[TestResult]
-    total_duration_seconds: float
+    tests: List[TestEntry] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "run_id": self.run_id,
-            "request_timestamp": self.request_timestamp,
+            "name": self.name,
+            "verdict": self.verdict,
+            "tests": [t.to_dict() for t in self.tests],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "PlanEntry":
+        if not isinstance(data, dict):
+            raise ValidationError(f"plan entry: expected an object, got {data!r}")
+        _require_fields(data, _PLAN_REQUIRED_FIELDS, context="plan entry")
+
+        name = _validate_string(data["name"], "name", context="plan entry")
+        context = f"plan '{name}'"
+        verdict = _validate_verdict(data["verdict"], context=context)
+
+        raw_tests = data["tests"]
+        if not isinstance(raw_tests, list):
+            raise ValidationError(
+                f"{context}: 'tests' must be an array, got {raw_tests!r}"
+            )
+        tests = [TestEntry.from_dict(t) for t in raw_tests]
+
+        # Validity rule 4: PASSED/FAILED plans must have non-empty tests;
+        # SKIPPED/ERROR plans may have an empty tests array.
+        if verdict in (Verdict.PASSED.value, Verdict.FAILED.value) and not tests:
+            raise ValidationError(
+                f"{context}: verdict is {verdict} but 'tests' is empty; "
+                "PASSED/FAILED plans must have at least one test"
+            )
+
+        return cls(name=name, verdict=verdict, tests=tests)
+
+
+@dataclass(frozen=True)
+class TaskEntry:
+    """One entry of the run envelope's `results` array -- one TF request."""
+
+    task_id: str
+    set: str  # mirrors the results.json "set" field verbatim
+    tier: str
+    arch: str
+    source_compose: Optional[str]
+    target_compose: Optional[str]
+    dispatched_at: str
+    verdict: str
+    total_duration_seconds: float
+    plans: List[PlanEntry] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "task_id": self.task_id,
             "set": self.set,
             "tier": self.tier,
             "arch": self.arch,
+            "source_compose": self.source_compose,
+            "target_compose": self.target_compose,
+            "dispatched_at": self.dispatched_at,
+            "verdict": self.verdict,
+            "total_duration_seconds": self.total_duration_seconds,
+            "plans": [p.to_dict() for p in self.plans],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "TaskEntry":
+        if not isinstance(data, dict):
+            raise ValidationError(f"task entry: expected an object, got {data!r}")
+        _require_fields(data, _TASK_REQUIRED_FIELDS, context="task entry")
+
+        task_id = _validate_string(data["task_id"], "task_id", context="task entry")
+        context = f"task '{task_id}'"
+        set_name = _validate_string(data["set"], "set", context=context)
+        tier = _validate_string(data["tier"], "tier", context=context)
+        arch = _validate_string(data["arch"], "arch", context=context)
+        source_compose = _validate_optional_string(
+            data["source_compose"], "source_compose", context=context
+        )
+        target_compose = _validate_optional_string(
+            data["target_compose"], "target_compose", context=context
+        )
+        dispatched_at = _validate_timestamp(
+            data["dispatched_at"], "dispatched_at", context=context
+        )
+        verdict = _validate_verdict(data["verdict"], context=context)
+        total_duration_seconds = _validate_duration(
+            data["total_duration_seconds"], "total_duration_seconds", context=context
+        )
+
+        raw_plans = data["plans"]
+        if not isinstance(raw_plans, list):
+            raise ValidationError(
+                f"{context}: 'plans' must be an array, got {raw_plans!r}"
+            )
+        plans = [PlanEntry.from_dict(p) for p in raw_plans]
+
+        _validate_task_plans_arity(verdict, plans, context=context)
+
+        return cls(
+            task_id=task_id,
+            set=set_name,
+            tier=tier,
+            arch=arch,
+            source_compose=source_compose,
+            target_compose=target_compose,
+            dispatched_at=dispatched_at,
+            verdict=verdict,
+            total_duration_seconds=total_duration_seconds,
+            plans=plans,
+        )
+
+
+def _validate_task_plans_arity(
+    verdict: str, plans: List[PlanEntry], *, context: str
+) -> None:
+    """Validity rules 1-3. SKIPPED task-level verdicts are not covered by
+    the ratified rule set and are deliberately left unconstrained here --
+    see CLAUDE.md "Results.json format" for the documented gap."""
+    if verdict == Verdict.CANCELED.value and plans:
+        raise ValidationError(
+            f"{context}: verdict is CANCELED but 'plans' is non-empty; "
+            "CANCELED tasks are dispatch-level cancels with no partial results"
+        )
+    if verdict in (Verdict.PASSED.value, Verdict.FAILED.value) and not plans:
+        raise ValidationError(
+            f"{context}: verdict is {verdict} but 'plans' is empty; "
+            "PASSED/FAILED tasks must have at least one plan"
+        )
+
+
+@dataclass(frozen=True)
+class ResultsJsonSchema:
+    """The results.json v3.1 run envelope (contract-pinned as of
+    2026-07-14, see CLAUDE.md "Results.json format").
+
+    A plain dataclass + manual validators, not pydantic: pydantic is not a
+    project dependency, is used nowhere else in the codebase, and this
+    module's scope (schema + local storage only) does not warrant adding a
+    new hard runtime dependency.
+    """
+
+    schema_version: int
+    run_id: str
+    created_at: str
+    event: str
+    source: str
+    target: str
+    verdict: Optional[str]
+    results: List[TaskEntry] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "created_at": self.created_at,
+            "event": self.event,
             "source": self.source,
             "target": self.target,
             "verdict": self.verdict,
-            "tests": [t.to_dict() for t in self.tests],
-            "total_duration_seconds": self.total_duration_seconds,
+            "results": [t.to_dict() for t in self.results],
         }
 
     @classmethod
@@ -188,45 +391,48 @@ class ResultsJsonSchema:
             raise ValidationError(f"results.json: expected an object, got {data!r}")
         _require_fields(data, _ROOT_REQUIRED_FIELDS, context="results.json")
 
-        run_id = _validate_string(data["run_id"], "run_id", context="results.json")
-        request_timestamp = _validate_timestamp(
-            data["request_timestamp"], context="results.json"
+        schema_version = _validate_schema_version(
+            data["schema_version"], context="results.json"
         )
-        set_name = _validate_string(data["set"], "set", context="results.json")
-        tier = _validate_string(data["tier"], "tier", context="results.json")
-        arch = _validate_string(data["arch"], "arch", context="results.json")
+        run_id = _validate_string(data["run_id"], "run_id", context="results.json")
+        created_at = _validate_timestamp(
+            data["created_at"], "created_at", context="results.json"
+        )
+        event = _validate_string(data["event"], "event", context="results.json")
         source = _validate_string(data["source"], "source", context="results.json")
         target = _validate_string(data["target"], "target", context="results.json")
-        verdict = _validate_verdict(data["verdict"], context="results.json")
-        total_duration_seconds = _validate_duration(
-            data["total_duration_seconds"], context="results.json"
+        verdict = _validate_verdict(
+            data["verdict"], context="results.json", nullable=True
         )
 
-        raw_tests = data["tests"]
-        if not isinstance(raw_tests, list):
+        raw_results = data["results"]
+        if not isinstance(raw_results, list):
             raise ValidationError(
-                f"results.json: 'tests' must be an array, got {raw_tests!r}"
+                f"results.json: 'results' must be an array, got {raw_results!r}"
             )
-        tests = [TestResult.from_dict(t) for t in raw_tests]
-
-        if verdict == Verdict.CANCELED.value and tests:
-            raise ValidationError(
-                "results.json: verdict is CANCELED but 'tests' is "
-                "non-empty; CANCELED runs must have an empty tests array"
-            )
+        results = [TaskEntry.from_dict(t) for t in raw_results]
+        _validate_unique_task_ids(results)
 
         return cls(
+            schema_version=schema_version,
             run_id=run_id,
-            request_timestamp=request_timestamp,
-            set=set_name,
-            tier=tier,
-            arch=arch,
+            created_at=created_at,
+            event=event,
             source=source,
             target=target,
             verdict=verdict,
-            tests=tests,
-            total_duration_seconds=total_duration_seconds,
+            results=results,
         )
+
+
+def _validate_unique_task_ids(results: List[TaskEntry]) -> None:
+    seen = set()
+    for task in results:
+        if task.task_id in seen:
+            raise ValidationError(
+                f"results.json: duplicate task_id {task.task_id!r} in 'results'"
+            )
+        seen.add(task.task_id)
 
 
 def parse_results_json(path: Union[str, Path]) -> ResultsJsonSchema:
@@ -238,65 +444,3 @@ def parse_results_json(path: Union[str, Path]) -> ResultsJsonSchema:
     except json.JSONDecodeError as exc:
         raise ValidationError(f"{path}: not valid JSON: {exc}") from exc
     return ResultsJsonSchema.from_dict(data)
-
-
-def write_results_json(
-    run_id: str,
-    verdict: str,
-    tests: Sequence[Union[TestResult, Dict[str, Any]]],
-    request_timestamp: str,
-    set: str,  # noqa: A002 -- mirrors the results.json "set" field verbatim
-    tier: str,
-    arch: str,
-    source: str,
-    target: str,
-    total_duration_seconds: float,
-    output_path: Union[str, Path],
-    xunit_bytes: Optional[bytes] = None,
-) -> Path:
-    """Validate and write results.json to `<output_path>/<run_id>.json`.
-
-    Metadata (set/tier/arch/source/target) is accepted explicitly here --
-    manifest lookup with fallback-to-explicit-values is a report-layer
-    concern (see CLAUDE.md "Results.json format" / DEBRIEF.md "Report
-    integration scope"), not this module's.
-
-    When `xunit_bytes` is given, the raw bytes are also written
-    byte-for-byte to `<output_path>/<run_id>.xml` -- no re-encoding, no
-    transformation, a verbatim copy of the TF artifact input.
-
-    Raises ValidationError on schema violation.
-    """
-    tests_payload: List[Any] = [
-        t.to_dict() if isinstance(t, TestResult) else t for t in tests
-    ]
-    schema = ResultsJsonSchema.from_dict(
-        {
-            "run_id": run_id,
-            "request_timestamp": request_timestamp,
-            "set": set,
-            "tier": tier,
-            "arch": arch,
-            "source": source,
-            "target": target,
-            "verdict": verdict,
-            "tests": tests_payload,
-            "total_duration_seconds": total_duration_seconds,
-        }
-    )
-
-    out_dir = Path(output_path)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    results_path = out_dir / f"{run_id}.json"
-    tmp_path = out_dir / f"{run_id}.json.tmp"
-    tmp_path.write_text(json.dumps(schema.to_dict(), indent=2))
-    os.rename(tmp_path, results_path)
-
-    if xunit_bytes is not None:
-        xunit_path = out_dir / f"{run_id}.xml"
-        xunit_tmp_path = out_dir / f"{run_id}.xml.tmp"
-        xunit_tmp_path.write_bytes(xunit_bytes)
-        os.rename(xunit_tmp_path, xunit_path)
-
-    return results_path
