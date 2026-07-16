@@ -318,7 +318,7 @@ class TestExitCodeFromMainEntrypoint(unittest.TestCase):
         with patch.object(
             rm,
             "build_table",
-            return_value=([(table, {"k": "v"})], ExitCode.TEST_FAILURE),
+            return_value=([(table, {"k": "v"})], ExitCode.TEST_FAILURE, []),
         ):
             code = rm.main(ctx)
         self.assertEqual(code, ExitCode.TEST_FAILURE)
@@ -335,10 +335,81 @@ class TestExitCodeFromMainEntrypoint(unittest.TestCase):
         with patch.object(
             rm,
             "build_table_comparison",
-            return_value=([(table, {})], ExitCode.TEST_ERROR),
+            return_value=([(table, {})], ExitCode.TEST_ERROR, []),
         ):
             code = rm.main(ctx)
         self.assertEqual(code, ExitCode.TEST_ERROR)
+
+
+class TestReportResultsCacheWiring(unittest.TestCase):
+    """Pins the integration point between the report flow and the
+    results-cache writer: main() must forward the raw TaskResult list to
+    results_cache.cache_report_results, and a caching failure must never
+    prevent the report's table/exit-code output (defense in depth on top
+    of cache_report_results' own internal exception handling)."""
+
+    def _make_ctx(self, **cli_overrides):
+        cli = {
+            "list": False,
+            "show_ids": False,
+            "compare": False,
+            "jira": False,
+            "short": False,
+            "skip_pass": False,
+            "show_tests": False,
+        }
+        cli.update(cli_overrides)
+        return make_app_context(action="report", extra_cli=cli)
+
+    def test_main_forwards_task_results_to_cache_writer(self):
+        import enge.report.__main__ as rm
+        from rich.table import Table
+
+        ctx = self._make_ctx()
+        table = Table()
+        table.add_column("Test")
+        table.add_row("dummy")
+        sentinel_task_results = ["sentinel-task-result"]
+
+        with (
+            patch.object(
+                rm,
+                "build_table",
+                return_value=(
+                    [(table, {"k": "v"})],
+                    ExitCode.SUCCESS,
+                    sentinel_task_results,
+                ),
+            ),
+            patch("enge.report.results_cache.cache_report_results") as mock_cache,
+        ):
+            rm.main(ctx)
+
+        mock_cache.assert_called_once_with(ctx, sentinel_task_results)
+
+    def test_cache_writer_exception_does_not_break_report_output(self):
+        import enge.report.__main__ as rm
+        from rich.table import Table
+
+        ctx = self._make_ctx()
+        table = Table()
+        table.add_column("Test")
+        table.add_row("dummy")
+
+        with (
+            patch.object(
+                rm,
+                "build_table",
+                return_value=([(table, {"k": "v"})], ExitCode.TEST_FAILURE, ["x"]),
+            ),
+            patch(
+                "enge.report.results_cache.cache_report_results",
+                side_effect=RuntimeError("unexpected cache bug"),
+            ),
+        ):
+            code = rm.main(ctx)
+
+        self.assertEqual(code, ExitCode.TEST_FAILURE)
 
 
 # ── Exception-to-exit-code mapping (via __main__) ──────────────────
