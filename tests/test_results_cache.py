@@ -151,12 +151,13 @@ def _make_task_result(**overrides):
 
 
 class _CacheTestCase(unittest.TestCase):
-    def _ctx(self, runs_dir, results_dir_path, extra_cli=None):
+    def _ctx(self, runs_dir, results_dir_path, extra_cli=None, manifest_latest=None):
         return make_app_context(
             action="report",
             extra_cli=extra_cli or {},
             extra_config={"common": {"results_dir": str(results_dir_path)}},
             manifest_runs_dir=str(runs_dir),
+            manifest_latest=str(manifest_latest) if manifest_latest else "/nonexistent",
         )
 
     def _tmp_dirs(self):
@@ -165,6 +166,11 @@ class _CacheTestCase(unittest.TestCase):
         runs_dir = Path(tmp.name) / "runs"
         results_dir_path = Path(tmp.name) / "results"
         return runs_dir, results_dir_path
+
+    def _write_latest_pointer(self, tmp_root, manifest_path):
+        latest_path = Path(tmp_root) / "latest"
+        latest_path.write_text(str(manifest_path))
+        return latest_path
 
 
 class TestManifestBackedVsRawInput(_CacheTestCase):
@@ -218,30 +224,57 @@ class TestManifestBackedVsRawInput(_CacheTestCase):
     def test_file_flag_invocation_does_not_write_cache(self):
         # Mutation-check target (c): if raw-input invocations were made to
         # write a cache, this test would fail because a results.json would
-        # appear despite --file having no resolvable run_id.
+        # appear despite --file having no resolvable run_id. A real latest
+        # manifest is seeded so the assertion is discriminating: without
+        # the --file guard firing FIRST, _resolve_manifests_for_report
+        # would otherwise fall through to (and find) this latest manifest.
         from enge.report.results_cache import cache_report_results
 
         runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDXXFILEGUARDXXXXXXXX"
+        task_id = "5d67eecf-a02d-46b7-aee2-9ffb673f40df"
+        manifest_path = runs_dir / f"{run_id}.json"
+        _write_manifest(runs_dir, run_id, [_request(task_id)])
+        latest_pointer = self._write_latest_pointer(runs_dir.parent, manifest_path)
+
         ctx = self._ctx(
-            runs_dir, results_dir_path, extra_cli={"file": ["/tmp/some_tasks.txt"]}
+            runs_dir,
+            results_dir_path,
+            extra_cli={"file": ["/tmp/some_tasks.txt"]},
+            manifest_latest=latest_pointer,
         )
 
-        task_result = _make_task_result(xunit_bytes=_xunit_bytes())
+        task_result = _make_task_result(
+            request_uuid=task_id, xunit_bytes=_xunit_bytes()
+        )
         cache_report_results(ctx, [task_result])
 
         self.assertFalse(any(results_dir_path.glob("*.json")))
 
     def test_input_flag_invocation_does_not_write_cache(self):
+        # Same discriminating setup as the --file test above: a real
+        # latest manifest exists (and would match this task_id) so the
+        # --input guard is what's actually being pinned, not an absent
+        # fallback.
         from enge.report.results_cache import cache_report_results
 
         runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDXXINPUTGUARDXXXXXXX"
+        task_id = "5d67eecf-a02d-46b7-aee2-9ffb673f40df"
+        manifest_path = runs_dir / f"{run_id}.json"
+        _write_manifest(runs_dir, run_id, [_request(task_id)])
+        latest_pointer = self._write_latest_pointer(runs_dir.parent, manifest_path)
+
         ctx = self._ctx(
             runs_dir,
             results_dir_path,
-            extra_cli={"input": ["5d67eecf-a02d-46b7-aee2-9ffb673f40df"]},
+            extra_cli={"input": [task_id]},
+            manifest_latest=latest_pointer,
         )
 
-        task_result = _make_task_result(xunit_bytes=_xunit_bytes())
+        task_result = _make_task_result(
+            request_uuid=task_id, xunit_bytes=_xunit_bytes()
+        )
         cache_report_results(ctx, [task_result])
 
         self.assertFalse(any(results_dir_path.glob("*.json")))
