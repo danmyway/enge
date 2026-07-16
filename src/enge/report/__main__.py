@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from enge.report import results_cache
 from enge.utils import parse_date_arg
 from enge.utils.app_context import AppContext
 from enge.utils.console import console
@@ -24,7 +25,7 @@ def parse_request_xunit(
     """Parse request xunit — returns the parsed dict only."""
     from enge.report.concurrent_parser import parse_request_xunit_concurrent
 
-    parsed_dict, _retval = parse_request_xunit_concurrent(
+    parsed_dict, _retval, _task_results = parse_request_xunit_concurrent(
         ctx, request_url_list, tasks_source, skip_pass
     )
     return parsed_dict
@@ -59,7 +60,7 @@ def build_table_comparison(ctx):
         planname_split_index = -1
         testname_split_index = -1
 
-    parsed_dict, retval = _parse_request_xunit_with_retval(
+    parsed_dict, retval, task_results = _parse_request_xunit_with_retval(
         ctx, skip_pass=ctx.cli_args.skip_pass
     )
     result_table = Table(box=box.ROUNDED)
@@ -167,11 +168,11 @@ def build_table_comparison(ctx):
 
     tables_list.append((result_table, uuid_mapping))
 
-    return tables_list, retval
+    return tables_list, retval, task_results
 
 
 def build_table(ctx):
-    parsed_dict, retval = _parse_request_xunit_with_retval(
+    parsed_dict, retval, task_results = _parse_request_xunit_with_retval(
         ctx, skip_pass=ctx.cli_args.skip_pass
     )
 
@@ -266,7 +267,7 @@ def build_table(ctx):
 
         tables_list.append((result_table, metadata))
 
-    return tables_list, retval
+    return tables_list, retval, task_results
 
 
 def _rich_style_for_result(result):
@@ -403,9 +404,24 @@ def main(ctx: AppContext, result_table=None):
     retval = None
     if result_table is None:
         if ctx.cli_args.compare:
-            result_table, retval = build_table_comparison(ctx)
+            result_table, retval, task_results = build_table_comparison(ctx)
         else:
-            result_table, retval = build_table(ctx)
+            result_table, retval, task_results = build_table(ctx)
+
+        if task_results:
+            try:
+                results_cache.cache_report_results(ctx, task_results)
+            except Exception:  # noqa: BLE001
+                # Never let caching fail the report command -- caching is
+                # a side effect of reporting, never a gate on it.
+                # cache_report_results already guards its own known
+                # failure modes internally; this is the outer backstop so
+                # a caching bug can never take the report table down with
+                # it (see CLAUDE.md "Results.json format" write policy).
+                LOGGER.warning(
+                    "Failed to update the local results cache; continuing",
+                    exc_info=True,
+                )
 
     has_content = False
     for table, metadata in result_table:

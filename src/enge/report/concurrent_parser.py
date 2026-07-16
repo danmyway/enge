@@ -43,6 +43,7 @@ class TaskResult:
     results_xml_url: str
     url: str
     xunit_content: Optional[str] = None
+    xunit_bytes: Optional[bytes] = None
     error_message: Optional[str] = None
     should_skip: bool = False
     potential_pipeline_error: bool = False
@@ -386,7 +387,14 @@ class ConcurrentRequestParser:
                 task_result.results_xml_url, timeout=self.timeout
             )
             if response.status_code == 200:
+                # xunit_content (decoded) and xunit_bytes (wire-verbatim)
+                # must come from this same response -- response.text
+                # decodes via a guessed/header charset that is not a safe
+                # inverse of str.encode(), so the byte-verbatim results.json
+                # archive (enge.report.results_cache) needs the raw bytes,
+                # not a re-encode of the decoded string.
                 task_result.xunit_content = response.text
+                task_result.xunit_bytes = response.content
                 return task_result
             else:
                 # Handle non-200 responses
@@ -801,7 +809,11 @@ def parse_request_xunit_concurrent(
     """Parse request xunit with concurrent requests.
 
     Returns:
-        Tuple of (parsed_dict, retval) where retval is the worst exit code.
+        Tuple of (parsed_dict, retval, task_results) where retval is the
+        worst exit code and task_results is the raw, unfiltered TaskResult
+        list (including CANCELED/queued/running/no-xunit tasks that
+        parsed_dict excludes) -- enge.report.results_cache needs this raw
+        list to cache terminal tasks that never make it into parsed_dict.
     """
     if request_url_list is None or tasks_source is None:
         from enge.utils.task_resolver import parse_tasks
@@ -816,7 +828,7 @@ def parse_request_xunit_concurrent(
 
     if not request_url_list or all(element == "" for element in request_url_list):
         LOGGER.critical("There are no tasks to report for!")
-        return {}, None
+        return {}, None, []
 
     with ConcurrentRequestParser(
         ctx, max_workers=10, timeout=30, max_retries=3
@@ -913,4 +925,4 @@ def parse_request_xunit_concurrent(
     console.print(f"   {'No reportable data:':<28}{failed_tasks:>3}", style="error")
     console.print("─" * 60, style="dim")
 
-    return parsed_dict, retval
+    return parsed_dict, retval, task_results
