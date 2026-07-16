@@ -40,6 +40,8 @@ src/enge/
   utils/             opt_manager (config loading + validation: ParsedOpts), app_context
                      (runtime DI container), globals (ExitCode + worst_exit_code),
                      task_resolver (shared task-ID resolution: manifest, legacy, -i/-f),
+                     manifest_resolution (shared invocation→manifest-object
+                     resolution: report results cache, future `enge compare`),
                      test_attribute_builder (computed test attrs for AppContext),
                      manifest/state_paths/ulid/legacy_archive (manifest store + XDG paths),
                      arg_parser, console, source_target_parser, tf_artifact (COPR/Brew),
@@ -174,8 +176,10 @@ write API (`utils/results_parser.py`) is standalone and does not import
 manifest modules, by design — callers pass expected counts and all
 needed values explicitly. Report-subcommand integration lives in
 `report/results_cache.py` (`cache_report_results`, wired into
-`report/__main__.main()`), which owns the manifest lookup that
-`results_parser.py` deliberately does not.
+`report/__main__.main()`), which delegates manifest lookup — which
+`results_parser.py` deliberately does not own — to
+`utils/manifest_resolution.py`'s `resolve_manifests_for_invocation`
+(imported into `results_cache.py` as `_resolve_manifests_for_report`).
 
 **Report write policy (implemented in `report/results_cache.py`)**:
 caching is a side effect of `enge report`, never a behavior change to
@@ -184,11 +188,12 @@ its table output or exit code.
   structured filters `--set`/`--tier`/`--arch`/`--tag`) gap-fill
   `results.json` + verbatim xunit for **every** matched run — a filter
   selector matching N runs produces N cache files. Manifest resolution
-  is re-derived independently in `results_cache.py` (mirroring, not
-  importing, `utils/task_resolver.py`'s precedence) because this module
-  needs full manifest objects and run_id-per-task attribution across
-  possibly-multiple matched runs, not `task_resolver`'s flat task_id
-  list.
+  is independently re-derived in `utils/manifest_resolution.py`
+  (mirroring, not importing, `utils/task_resolver.py`'s precedence)
+  because it needs full manifest objects and run_id-per-task attribution
+  across possibly-multiple matched runs, not `task_resolver`'s flat
+  task_id list. Shared with the planned `enge compare` subcommand so
+  that selector precedence isn't reimplemented a third time.
 - **Raw-input invocations** (`-f/--file`, `-i/--input`, or the legacy
   `--get-tag`/bare-date archive path) never write a cache — there is no
   resolvable run_id to key on. No flag opts out of caching for
