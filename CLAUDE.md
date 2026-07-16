@@ -29,7 +29,9 @@ src/enge/
                      tf_send_request (SubmitTest, payload build/POST, task recording),
                      pin_compose (compose resolution)
   report/            __main__ (tables, -o formats), concurrent_parser (parallel xunit fetch,
-                     ExitCode via TaskResult.retval, severity-precedence aggregation)
+                     ExitCode via TaskResult.retval, severity-precedence aggregation),
+                     results_cache (manifest-backed results.json gap-fill, see
+                     "Results.json format")
   rerun/             requalify FAILED/ERROR plans and re-dispatch
   cancel/            cancel TF tasks
   reportportal/      launch finish/enrich/delete subcommands (unified pipeline
@@ -166,15 +168,79 @@ tests/               unittest.TestCase style ONLY (see Conventions)
 
 ## Results.json format
 
-**Ownership**: `enge report` will eventually write `results.json` after
-parsing xunit; `enge dispatch` never touches it. As of this MVP, the
-schema + gap-fill write API (`utils/results_parser.py`) exist and are
-fully tested, but nothing calls it yet — report-subcommand integration
-(manifest lookup, calling `init_results_json`/`upsert_task_result`/
-`finalize_root_verdict`/`write_xunit` during `enge report`) is deferred
-to a separate feature branch. `results_parser.py` is standalone and does
-not import manifest modules, by design — callers pass expected counts
-and all needed values explicitly.
+**Ownership**: `enge report` writes `results.json` after parsing xunit;
+`enge dispatch` never touches it (hard invariant). The schema + gap-fill
+write API (`utils/results_parser.py`) is standalone and does not import
+manifest modules, by design — callers pass expected counts and all
+needed values explicitly. Report-subcommand integration lives in
+`report/results_cache.py` (`cache_report_results`, wired into
+`report/__main__.main()`), which owns the manifest lookup that
+`results_parser.py` deliberately does not.
+
+**Report write policy (implemented in `report/results_cache.py`)**:
+caching is a side effect of `enge report`, never a behavior change to
+its table output or exit code.
+- **Manifest-backed invocations** (default latest-run, `--run`, or the
+  structured filters `--set`/`--tier`/`--arch`/`--tag`) gap-fill
+  `results.json` + verbatim xunit for **every** matched run — a filter
+  selector matching N runs produces N cache files. Manifest resolution
+  is re-derived independently in `results_cache.py` (mirroring, not
+  importing, `utils/task_resolver.py`'s precedence) because this module
+  needs full manifest objects and run_id-per-task attribution across
+  possibly-multiple matched runs, not `task_resolver`'s flat task_id
+  list.
+- **Raw-input invocations** (`-f/--file`, `-i/--input`, or the legacy
+  `--get-tag`/bare-date archive path) never write a cache — there is no
+  resolvable run_id to key on. No flag opts out of caching for
+  manifest-backed invocations; there is no cache-disable switch.
+- **Terminality predicate** (`_is_task_terminal` in
+  `report/results_cache.py`): a task is terminal iff its TF state is
+  `COMPLETE`/`ERROR`/`CANCELED` (or `CANCELLED`). This is a **separate**
+  predicate from `reportportal/operations.py`'s `_is_tf_task_incomplete`,
+  which treats `CANCELED` as *incomplete* (nothing left to poll for RP
+  finish/enrich). For the results cache, `CANCELED` **is** terminal: it
+  is a valid, final entry (`verdict: CANCELED`, `plans: []`) that must be
+  recorded so a later report invocation doesn't keep re-checking it. RP's
+  predicate is untouched by this — RP is feature-frozen pending sunset.
+  Non-terminal tasks get no entry this invocation; gap-fill picks them up
+  on a later `enge report` run.
+- **Verdict mapping** goes through `XUNIT_RESULT_MAP` exactly. A
+  task_id present in the fetched TF results but absent from the
+  manifest's `requests[]` is skipped with a WARNING — metadata is never
+  fabricated. An unrecognized xunit verdict value maps to `ERROR` with a
+  WARNING naming the value (report-layer policy, not a schema concern).
+  Task-level verdict prefers TF's own per-task overall result when it is
+  a real, recognized value; otherwise it falls back to severity-max over
+  that task's plan verdicts.
+- **`total_duration_seconds`** is the sum of per-test durations when
+  xunit is present. For `CANCELED` and terminal-no-xunit `ERROR` entries
+  it is the `0.0` sentinel (maintainer ruling, 2026-07-15/16): the TF
+  fetch layer (`report/concurrent_parser.py`) does not expose a
+  finished/updated timestamp to compute elapsed time from, and none of
+  the code or fixtures in this repository confirm TF's API even carries
+  one — inventing an estimate was rejected in favor of an honest zero.
+- **Caching failures never fail the report command.** A `ConflictError`
+  from a corrupted prior cache (or any other unexpected error) is caught
+  per-task/per-run inside `cache_report_results` and logged at WARNING;
+  `report/__main__.main()` additionally wraps the whole call in a
+  broad backstop for defense in depth. The user's table/exit code always
+  renders regardless of cache state.
+- **Verbatim xunit bytes**: `report/concurrent_parser.py`'s `TaskResult`
+  carries both `xunit_content` (decoded `str`, used by the existing
+  table-rendering `XMLParser`) and `xunit_bytes` (raw `response.content`,
+  populated in the same non-streaming fetch as `xunit_content`). The
+  results cache writes `xunit_bytes` verbatim to the `.xml` archive —
+  never `xunit_content.encode()` — because `response.text`'s
+  charset-guessing decode is not a safe inverse of `str.encode()`; a
+  wrong guess would silently corrupt the archived xunit for any
+  non-ASCII byte sequence. `results_cache.py` also parses xunit for
+  schema purposes independently of `XMLParser` (a small internal lxml
+  pass): `XMLParser` truncates plan names for display
+  (`.split(":")[-1]`) and never reads per-test `time`/`start-time`/
+  `end-time` attributes, neither of which is compatible with the
+  results.json contract (verbatim names, real durations/timestamps).
+  This also means the existing table-rendering code path is completely
+  untouched by this feature.
 
 **Why v3.1 replaces the v1 flat schema**: the v1 flat schema (one
 `set`/`tier`/`arch` + flat `tests[]` per `run_id`) was falsified against

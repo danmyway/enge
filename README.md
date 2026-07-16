@@ -124,7 +124,7 @@ Key default paths from the bundled defaults (can be overridden in your `enge.tom
 - **Latest pointer**: `~/.local/state/enge/latest`
 - **Legacy archive** (read-only bridge): `~/.enge/jobs_archive/`
 - **Logs directory**: `/var/tmp/enge/logs/`
-- **Results store**: `~/.local/share/enge/results/` (XDG_DATA_HOME respected; schema defined, but no subcommand writes here yet — see `CLAUDE.md` "Results.json format")
+- **Results store**: `~/.local/share/enge/results/` (XDG_DATA_HOME respected; `enge report` gap-fills `<run_id>.json` + verbatim xunit here for manifest-backed invocations — see `CLAUDE.md` "Results.json format")
 
 ##### System-wide configuration (RPM installs)
 When installed via RPM, the following files are provided under `/etc/enge/`:
@@ -855,6 +855,7 @@ You can chain the report command with test command and use the `-w/--wait` argum
 Default invocation `enge report` reads tasks from the latest manifest. Use `enge report --list` to browse all runs, then `enge report --run <run_id>` to report a specific one.<br>
 You can specify a different path to a file with `-f/--file` or pass task IDs with `-i/--input`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
 Use structured filters `--set`, `--tier`, `--arch`, `--tag` to match against manifest metadata. Legacy `--get-tag` still works for pre-migration archive files but is deprecated.<br>
+Manifest-backed invocations (default latest run, `--run`, or the structured filters above) also gap-fill a local results cache under `~/.local/share/enge/results/<run_id>.json`, plus a byte-verbatim copy of each task's xunit under `~/.local/share/enge/results/<run_id>/<task_id>.xml` — see `CLAUDE.md` "Results.json format" for the schema and write policy. This is a caching side effect only: it never changes what `enge report` prints or its exit code, and raw-input invocations (`-f/--file`, `-i/--input`) never write to the cache since they have no manifest run to key on.<br>
 The tool is able to parse and report for multiple variants of values as long as they are separated by a new-line (in the files) or a `-i/--input` argument (on the commandline). Raw request_ids, artifact URLs (Testing Farm result page URLs) or request URLs are allowed.
 Use `--show-ids` to display only a list of UUIDs queried from the requested inputs, which is useful for extracting task IDs for further processing or scripting.<br>
 In case you want to get the log files stored locally, use `--download`. Log files for pytest runs will be stored in `/var/tmp/enge/logs/{request_id}_log/`. In case there are multiple plans in one pipeline, the logs should get divided in their respective plan directories.
