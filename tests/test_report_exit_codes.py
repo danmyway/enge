@@ -323,21 +323,21 @@ class TestExitCodeFromMainEntrypoint(unittest.TestCase):
             code = rm.main(ctx)
         self.assertEqual(code, ExitCode.TEST_FAILURE)
 
-    def test_main_returns_retval_from_build_table_comparison(self):
+    def test_main_compare_flag_delegates_to_enge_compare(self):
+        """build_table_comparison is deleted outright (ratified design);
+        --compare is now a deprecation alias that delegates to
+        'enge compare' -- see test_report_compare_deprecation.py for the
+        full alias contract (warning, read-only, no cache write)."""
         import enge.report.__main__ as rm
-        from rich.table import Table
 
         ctx = self._make_ctx(compare=True)
-        table = Table()
-        table.add_column("Test")
-        table.add_row("dummy")
 
-        with patch.object(
-            rm,
-            "build_table_comparison",
-            return_value=([(table, {})], ExitCode.TEST_ERROR, []),
-        ):
+        with patch(
+            "enge.compare.__main__.main", return_value=ExitCode.TEST_ERROR
+        ) as mock_compare_main:
             code = rm.main(ctx)
+
+        mock_compare_main.assert_called_once_with(ctx)
         self.assertEqual(code, ExitCode.TEST_ERROR)
 
 
