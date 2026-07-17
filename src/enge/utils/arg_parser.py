@@ -556,6 +556,90 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filter runs by tag (repeatable, OR within).",
     )
 
+    # ==================== COMPARE SUBCOMMAND ====================
+    compare = subparsers.add_parser(
+        "compare",
+        help="Compare and consolidate results.json caches across runs.",
+        description="Read cached results.json data (see 'enge report') and "
+        "build consolidation or flakiness comparison tables across runs.",
+        parents=[common],
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  enge compare --tag regression                       # consolidate all regression-tagged runs\n"
+            "  enge compare --set smoke --tier tier0 --show-tests   # detailed test view\n"
+            "  enge compare --run <run_id> --tier tier1             # single run, still needs a 2nd source\n"
+            "  enge compare --flakiness --tier tier1                # flakiness view (no consolidation)\n"
+        ),
+    )
+
+    compare.add_argument(
+        "--run",
+        metavar="RUN_ID",
+        help="Select a specific run by manifest ID (needs another matched run to compare against).",
+    )
+
+    compare.add_argument(
+        "--set",
+        dest="filter_set",
+        metavar="SET",
+        action="append",
+        help="Filter runs by test set name (repeatable, OR within). "
+        "Display-only provenance -- never a comparison coordinate.",
+    )
+
+    compare.add_argument(
+        "--tier",
+        dest="filter_tier",
+        metavar="TIER",
+        action="append",
+        help="Filter runs by tier (repeatable, OR within).",
+    )
+
+    compare.add_argument(
+        "--arch",
+        dest="filter_arch",
+        metavar="ARCH",
+        action="append",
+        help="Filter runs by architecture (repeatable, OR within).",
+    )
+
+    compare.add_argument(
+        "--tag",
+        dest="filter_tag",
+        metavar="TAG",
+        action="append",
+        help="Filter runs by tag (repeatable, OR within).",
+    )
+
+    compare.add_argument(
+        "-s",
+        "--short",
+        action="store_true",
+        help="Display shortened test and plan names.",
+    )
+
+    compare.add_argument(
+        "--show-tests",
+        action="store_true",
+        help="Display detailed test view. By default, only plan view is shown.",
+    )
+
+    compare.add_argument(
+        "--flakiness",
+        action="store_true",
+        help="Flakiness view: one table per tier, arch/upgrade-path fold in as "
+        "columns. Comparison only -- no consolidated column, ever.",
+    )
+
+    compare.add_argument(
+        "--jira",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+
+    _add_format_arg(compare, choices=["terminal", "gitlab", "json"])
+
     # ==================== RERUN SUBCOMMAND ====================
     rerun = subparsers.add_parser(
         "rerun",
