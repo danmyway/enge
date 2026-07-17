@@ -138,6 +138,7 @@ When installed via RPM, the following files are provided under `/etc/enge/`:
 Enge provides several commands for comprehensive test workflow management:<br>
 `test` feeds the request payload with provided config options or arguments and dispatches a test job to the Testing Farm.<br>
 `report` outputs the test results back to the command line.<br>
+`compare` consolidates or flakiness-compares cached `results.json` data across multiple runs.<br>
 `rerun` re-dispatches failed or errored test jobs.<br>
 `cancel` cancels running or queued Testing Farm tasks. Reads the same input as the report module — default is the latest manifest; use `--run <id>`, `--file`, or `--input` to select specific runs.
 
@@ -915,23 +916,38 @@ enge uses a single `ExitCode` enum (`utils/globals.py`). The universal floor app
 | 99   | Configuration error (bad/missing config, invalid endpoint URL) |
 | 130  | Interrupted (Ctrl-C) |
 
-`enge report` additionally returns result-grading codes, since it is the only command that grades multi-plan result sets:
+`enge report` and `enge compare` additionally return result-grading codes, since they are the only commands that grade multi-plan result sets:
 
 | Code | Meaning |
 |------|---------|
 | 2    | Ran; at least one test FAILED (no errors) |
 | 3    | Ran; at least one ERROR was hit |
-| 4    | Ran; at least one request had no results (missing/expired) |
+| 4    | Ran; at least one request had no results (missing/expired), or (compare only) a CANCELED task |
 
-When a report run mixes these, the most severe wins: **3 > 2 > 4 > 0** (error-dominates — missing results are rerun candidates and must not mask a real error). `enge test` also uses code 2 for partial dispatch failure (some requests submitted, some failed).
+When a report run mixes these, the most severe wins: **3 > 2 > 4 > 0** (error-dominates — missing results are rerun candidates and must not mask a real error). `enge test` also uses code 2 for partial dispatch failure (some requests submitted, some failed). `enge compare`'s consolidation-mode exit code is the worst mapped code across every table's consolidated verdicts (same ExitCode-domain reduction, not the same severity table as the `results.json` root-verdict derivation); flakiness mode always returns 0 unless the invocation itself was unusable (code 99, see below).
 
-**Comparison mode (`--compare`, `--unify`):**
+##### Compare
 
-By default each run's results are shown as a separate table. Use `--compare` to build a side-by-side comparison table across multiple runs. `--unify PLAN1=PLAN2` treats renamed plans as equivalent when comparing (can be specified multiple times).
+`enge compare` reads the local `results.json` caches written by `enge report` (see `CLAUDE.md` "Results.json format") and builds comparison tables across multiple runs — it never re-parses xunit or calls Testing Farm. Selectors are the same manifest filters as `enge report` (`--run`, `--set`, `--tier`, `--arch`, `--tag`); `--set` is display-only provenance and never a comparison coordinate.
+
+Two modes:
+- **Consolidation (default):** one table per `(tier, arch, source, target)` coordinate found in the input, one column per matching execution (chronological), plus a `Consolidated` column: any PASSED among a row's present executions wins, otherwise the chronologically latest present execution's verdict reports. A fail→pass rerun history therefore consolidates to PASSED.
+- **Flakiness (`--flakiness`):** one table per tier only — architecture and upgrade path fold in as columns instead of separate tables. Comparison only, no consolidated column, ever.
+
+`--show-tests` switches rows from plans (default) to individual tests. A selector matching fewer than 2 runs with a usable `results.json` cache is a usage error (exit code 99) naming the missing run and the fix (`enge report --run <run_id>`) to generate its cache.
 
 ```
-❯ enge report -i 8f4e2e3e-beb4-4d3a-9b0a-68a2f428dd1b -i c3726a72-8e6b-4c51-88d8-612556df7ac1 --short --unify tier2=tier2_7to8 --compare
+# Consolidate every regression-tagged run
+enge compare --tag regression
+
+# Detailed test-level view for one tier
+enge compare --set smoke --tier tier0 --show-tests
+
+# Flakiness view across architectures/upgrade paths for a tier
+enge compare --flakiness --tier tier1
 ```
+
+`enge report --compare` is a **deprecated alias** for `enge compare` (one release only): it emits a WARNING and delegates, but — unlike a normal `enge report` invocation — does not gap-fill the results cache while delegating. `--unify` has been removed outright (it only existed to support the legacy comparison table, which this alias replaces).
 
 ##### Rerun
 Rerun tasks which report as FAILED or ERROR.<br>

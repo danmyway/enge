@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Structured JSON output (`-o json`) with honest success/failure counts
 - `enge reportportal` subcommands: `finish`, `enrich`, `delete-logs`, `delete-stale`, `check` — replacing the flag-verb grammar
 - `finish --enrich` combined flow: enrich artifact logs then finish the launch in one command
+- New `enge compare` subcommand: consolidates or flakiness-compares the `results.json` caches written by `enge report` across multiple runs, read-only (never parses xunit, never calls Testing Farm). Selectors mirror `enge report`'s manifest filters (`--run`, `--set`, `--tier`, `--arch`, `--tag`) via the shared `utils/manifest_resolution.resolve_manifests_for_invocation`; `--set` is display-only provenance, never a comparison coordinate, and tier is always a hard partition (one table never spans two tiers). Two modes: consolidation (default, one table per `(tier, arch, source, target)` coordinate, PASS-wins-else-latest-wins per row, plus a `Consolidated` column) and `--flakiness` (one table per tier only, arch/upgrade-path fold into columns, comparison only, no consolidated column ever). `--show-tests` switches rows from plans to tests. A selector matching fewer than 2 runs with a usable results cache exits 99, naming the run and the exact `enge report --run <run_id>` fix
 
 ### Changed
 - **⚠ Behavior change — config file layering**: Configuration files now **layer** (bundled defaults < system/external `/etc/enge/` < user `~/.config/`) instead of first-found-wins. Each layer merges per-key over the layer below; nested TOML tables merge recursively. Keys omitted from a higher layer now inherit from the lower layer (previously, with wholesale file replacement, they effectively vanished). Empty-string `""` values inherit downward with a WARNING naming the file and key. `--config` replaces the user layer only — bundled and system layers remain active underneath. Full-copy external configs that contain every key are unaffected (merge is idempotent with identical content)
@@ -53,8 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--auto-tag` — context is now always recorded in the manifest; the flag is a no-op
 - `--jira` flag in `report` — use `-o gitlab` for merge-request-friendly output
 - Old flag-verb spellings (`--finish`, `--enrich-logs`, `--delete-logs`, `--delete-stale`, `--test`, `--all-launches`) — use subcommands instead; old spellings emit a deprecation warning and will be removed in a future release
+- `enge report --compare` — one-release deprecation alias for the new `enge compare` subcommand. Emits a WARNING and delegates, but does **not** gap-fill the results cache while delegating (unlike a normal manifest-backed `enge report` invocation) — use `enge report --run <run_id>` first if you need the cache populated, then `enge compare`
 
 ### Removed
+- `report --unify PLAN1=PLAN2`: the legacy plan-name-equivalence flag, and the `build_table_comparison` comparison table it fed. Its only consumer was the legacy `--compare` table, which `enge compare` (see Added) replaces; there is no unify equivalent in the new subcommand, since results.json plan names are always verbatim
 - Dead functions: `merge_environment_variables`, `parse_test_sets` (source_target_parser), `get_config_value`, `validate_config_section` (config_parser), `_maybe_create_rp_launch` (dispatch), `_collect_inherited_tags` (rerun)
 - Committed AI-generation deliberation comments and runtime `RerunReportPortalLaunch` subclass from `_create_rerun_launch_for_payload`
 - `src/__init__.py` (src directory must not be a Python package)
