@@ -518,8 +518,10 @@ direction; do not import or align the two.
 `ExitCode` across every table's consolidated verdicts (`PASSED`/`SKIPPED`
 → `SUCCESS`(0), `FAILED` → `TEST_FAILURE`(2), `ERROR` → `TEST_ERROR`(3),
 `CANCELED` → `MISSING_RESULTS`(4) — maintainer-ratified 2026-07-17
-("yes, ratify"): rerun-candidate semantics, mirroring the unknown-TF-overall
-→ `MISSING_RESULTS` ruling in `report/results_cache.py`; the ExitCode
+("yes, ratify"): rerun-candidate semantics, mirroring
+`report/concurrent_parser.py`'s existing canceled/non-terminal-task →
+`MISSING_RESULTS` mapping (no results exist to grade — a rerun
+candidate, not an error-family verdict); the ExitCode
 severity rank guarantees it never masks a FAILED/ERROR row from the same
 tables, so this mapping is not to be casually remapped), reduced via the
 existing ExitCode-domain `worst_exit_code` — not the Verdict-domain
