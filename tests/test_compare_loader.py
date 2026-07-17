@@ -8,7 +8,9 @@ policy (fire-time ruling, no override): a matched run with no results.json
 logs an ERROR naming the run and the exact fix command
 (`enge report --run <run_id>`); compare proceeds if >=2 result sources
 still have a usable cache, else returns the usage/data error code
-(ExitCode.CONFIG_ERROR -- see SESSION_LOG.md design decision #4 for why).
+(ExitCode.CONFIG_ERROR -- the established usage/configuration-error code;
+TEST_FAILURE/TEST_ERROR/MISSING_RESULTS describe grading outcomes and no
+grading occurred).
 """
 
 import json

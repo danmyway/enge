@@ -1,9 +1,9 @@
 """RED tests for the report --compare deprecation alias and the removal of
 --unify from the CLI surface.
 
-Ratified design (fire-time maintainer ruling, Q7, verbatim in
-SESSION_LOG.md / DEBRIEF.md): `enge report --compare` becomes a
-deprecation alias for ONE release. It emits a WARNING pointing at
+Ratified design (fire-time maintainer ruling Q7, 2026-07-16: alias is
+read-only during the deprecation window): `enge report --compare` becomes
+a deprecation alias for ONE release. It emits a WARNING pointing at
 `enge compare` and delegates to it -- read-only, meaning it must NOT
 write/gap-fill results.json caches during the deprecation window (unlike
 every other manifest-backed report invocation). `--unify` is removed
