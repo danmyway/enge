@@ -12,6 +12,7 @@ Send requests to and get results back from Testing Farm conveniently.
 
 - `test` — Dispatch a job to the Testing Farm API endpoint.
 - `report` — Report results for requested tasks.
+- `compare` — Compare and consolidate results.json caches across runs.
 - `rerun` — Parse given tasks and rerun specified jobs.
 - `reportportal` — Manage ReportPortal launches.
 - `cancel` — Cancel Testing Farm tasks.
@@ -90,8 +91,6 @@ Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs fro
 - `-w, --wait` — Wait for the job to complete. Print the table afterwards
 - `--download` — Download logs for requested run(s).
 - `--skip-pass` — Skip PASSED results in table and log downloads.
-- `--compare` — Build a comparison table for multiple run results.
-- `--unify PLAN1=PLAN2` — Treat plan names as equivalent in 'plan1=plan2' format. Useful for comparing runs with renamed plans.
 - `--show-ids` — Display only a list of UUIDs queried from the requested inputs.
 - `-o, --format {terminal,gitlab,json}` — Output format. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks and tables. 'json': machine-readable JSON to stdout (suppresses other output). (default: `terminal`)
 - `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
@@ -102,6 +101,10 @@ Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs fro
 - `--tier TIER` — Filter runs by tier (repeatable, OR within).
 - `--arch ARCH` — Filter runs by architecture (repeatable, OR within).
 - `--tag TAG` — Filter runs by tag (repeatable, OR within).
+
+### Deprecated
+
+- `--compare` — Deprecated: delegates to 'enge compare' with a WARNING. Will be removed in a future release; use 'enge compare' directly.
 
 ### Examples
 
@@ -114,7 +117,36 @@ examples:
   enge report --run <run_id>                           # report specific run
   enge report --tag regression --show-tests            # detailed test view
   enge report -f tasks.txt -w                          # wait for completion
-  enge report --get-tag v1 --get-tag v2 --compare      # compare runs (legacy)
+  enge compare --tag v1 --tag v2                       # compare runs (see 'enge compare --help')
+```
+
+## compare
+
+Read cached results.json data (see 'enge report') and build consolidation or flakiness comparison tables across runs.
+
+### Options
+
+- `-h, --help` — show this help message and exit
+- `-c, --config CONFIG` — Custom path to the config file.
+- `-v, --verbose` — Increase output verbosity. -v for verbose, -vv for full debug.
+- `--run RUN_ID` — Select a specific run by manifest ID (needs another matched run to compare against).
+- `--set SET` — Filter runs by test set name (repeatable, OR within). Display-only provenance -- never a comparison coordinate.
+- `--tier TIER` — Filter runs by tier (repeatable, OR within).
+- `--arch ARCH` — Filter runs by architecture (repeatable, OR within).
+- `--tag TAG` — Filter runs by tag (repeatable, OR within).
+- `-s, --short` — Display shortened test and plan names.
+- `--show-tests` — Display detailed test view. By default, only plan view is shown.
+- `--flakiness` — Flakiness view: one table per tier, arch/upgrade-path fold in as columns. Comparison only -- no consolidated column, ever.
+- `-o, --format {terminal,gitlab,json}` — Output format. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks and tables. 'json': machine-readable JSON to stdout (suppresses other output). (default: `terminal`)
+
+### Examples
+
+```
+examples:
+  enge compare --tag regression                       # consolidate all regression-tagged runs
+  enge compare --set smoke --tier tier0 --show-tests   # detailed test view
+  enge compare --run <run_id> --tier tier1             # single run, still needs a 2nd source
+  enge compare --flakiness --tier tier1                # flakiness view (no consolidation)
 ```
 
 ## rerun

@@ -32,6 +32,11 @@ src/enge/
                      ExitCode via TaskResult.retval, severity-precedence aggregation),
                      results_cache (manifest-backed results.json gap-fill, see
                      "Results.json format")
+  compare/           enge compare subcommand: engine (pure grouping/consolidation/
+                     flakiness/exit-code logic), loader (manifest resolution +
+                     results.json load + missing-cache policy), __main__ (rendering).
+                     Read-only consumer of results.json — never parses xunit, never
+                     writes a cache, see "Results.json format"
   rerun/             requalify FAILED/ERROR plans and re-dispatch
   cancel/            cancel TF tasks
   reportportal/      launch finish/enrich/delete subcommands (unified pipeline
@@ -180,6 +185,14 @@ needed values explicitly. Report-subcommand integration lives in
 `results_parser.py` deliberately does not own — to
 `utils/manifest_resolution.py`'s `resolve_manifests_for_invocation`
 (imported into `results_cache.py` as `_resolve_manifests_for_report`).
+`enge compare` (`compare/loader.py`) is a second, read-only consumer of
+`resolve_manifests_for_invocation` and `parse_results_json` — it never
+writes, gap-fills, or re-derives verdicts; a manifest-backed
+`enge report --run <run_id>` remains the only way to populate a run's
+cache. `enge report --compare` is a one-release deprecation alias that
+delegates to `enge compare` and is therefore also read-only, unlike every
+other manifest-backed `enge report` invocation (see "Compare consolidation
+policy" below).
 
 **Report write policy (implemented in `report/results_cache.py`)**:
 caching is a side effect of `enge report`, never a behavior change to
@@ -470,6 +483,55 @@ plus `run_id`/`task_id` — no field for this exists or is planned here.
 
 This schema is contract-pinned as of 2026-07-14. Cross-cutting contract:
 schema changes require maintainer sign-off.
+
+## Compare consolidation policy
+
+`enge compare` (`src/enge/compare/`) is a **read-only** consumer of the
+`results.json` contract above — it never parses xunit, never calls
+Testing Farm, never writes a cache. `compare/engine.py` is pure (no I/O);
+`compare/loader.py` resolves manifests via the shared
+`resolve_manifests_for_invocation` and loads each matched run's
+`results.json`; `compare/__main__.py` renders. It replaced `enge report
+--compare`'s `build_table_comparison` (deleted) and `--unify` (deleted;
+no replacement — plan names in `results.json` are always verbatim).
+
+**Grouping**: `set` is never a grouping coordinate (display-only
+provenance). Tier is a hard partition — one table never spans two tiers.
+Consolidation mode groups by `(tier, arch, source, target)`, where
+`source`/`target` are the run-envelope upgrade-path values (e.g.
+`"9.9"`/`"10.3"`), not per-task `source_compose`/`target_compose` (which
+can change on a respin and are footer-only metadata). Flakiness mode
+(`--flakiness`) groups by tier only — arch/upgrade-path fold into columns
+within that one table instead of splitting into separate tables.
+
+**Consolidation policy** (per row, over its present columns only — a `-`
+absent cell never participates): any PASSED wins; otherwise the
+chronologically latest present column's verdict reports (so a fail→pass
+rerun history consolidates to PASSED). l0 (plan) rows consolidate on plan
+verdicts directly, never derived from rolled-up test verdicts. This
+policy is deliberately **not** the `results_parser`/`results_cache`
+Verdict severity-rank table (`ERROR > FAILED > CANCELED > PASSED >
+SKIPPED`, used for root-verdict derivation) — different contract, opposite
+direction; do not import or align the two.
+
+**Exit codes**: consolidation mode's retval is the worst mapped
+`ExitCode` across every table's consolidated verdicts (`PASSED`/`SKIPPED`
+→ `SUCCESS`, `FAILED` → `TEST_FAILURE`, `ERROR` → `TEST_ERROR`, `CANCELED`
+→ `MISSING_RESULTS`), reduced via the existing ExitCode-domain
+`worst_exit_code` — not the Verdict-domain severity table above. Flakiness
+mode always returns `SUCCESS` (report-only view; it has no consolidated
+verdicts to derive from). A selector resolving fewer than 2 runs with a
+usable `results.json` cache is a usage error: `ExitCode.CONFIG_ERROR`
+(99), the same "invocation cannot be serviced as given" code used
+elsewhere, since no result-grading has happened yet at that point. Each
+missing/corrupt cache logs an ERROR naming the run and the exact fix
+(`enge report --run <run_id>`).
+
+**Deprecation alias**: `enge report --compare` delegates to `enge compare`
+for one release, emitting a WARNING. Unlike every other manifest-backed
+`enge report` invocation, the alias does **not** gap-fill the results
+cache while delegating (maintainer ruling, 2026-07-17) — run `enge report
+--run <run_id>` first if the cache needs populating.
 
 ## Conventions
 
