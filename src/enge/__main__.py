@@ -135,6 +135,43 @@ def _handle_list_sets():
     return True
 
 
+def _dispatch_action(action, ctx):
+    """Route a parsed action to its subcommand main(). Kept separate from
+    main() so the action table doesn't push main()'s cyclomatic complexity
+    over the ruff C901 threshold."""
+    if action == "test":
+        from enge.dispatch.__main__ import main as dispatch_main
+
+        return dispatch_main(ctx)
+    elif action == "report":
+        from enge.report.__main__ import main as report_main
+
+        return report_main(ctx)
+    elif action == "compare":
+        from enge.compare.__main__ import main as compare_main
+
+        return compare_main(ctx)
+    elif action == "rerun":
+        from enge.rerun.__main__ import main as rerun_main
+
+        return rerun_main(ctx)
+    elif action == "cancel":
+        from enge.cancel.__main__ import main as cancel_main
+
+        return cancel_main(ctx)
+    elif action == "reportportal":
+        from enge.reportportal.__main__ import main as reportportal_main
+
+        return reportportal_main(ctx)
+    elif action == "migrate-archive":
+        from enge.migrate.__main__ import main as migrate_main
+
+        return migrate_main(ctx)
+    else:
+        logging.error("No valid action specified")
+        return EXIT_GENERAL_ERROR
+
+
 def main():
     """Main entry point for enge CLI."""
     setup_logging()
@@ -148,34 +185,7 @@ def main():
         po = ParsedOpts()
         ctx = AppContext.from_parsed_opts(po)
 
-        action = ctx.cli_args.action
-        if action == "test":
-            from enge.dispatch.__main__ import main as dispatch_main
-
-            return dispatch_main(ctx)
-        elif action == "report":
-            from enge.report.__main__ import main as report_main
-
-            return report_main(ctx)
-        elif action == "rerun":
-            from enge.rerun.__main__ import main as rerun_main
-
-            return rerun_main(ctx)
-        elif action == "cancel":
-            from enge.cancel.__main__ import main as cancel_main
-
-            return cancel_main(ctx)
-        elif action == "reportportal":
-            from enge.reportportal.__main__ import main as reportportal_main
-
-            return reportportal_main(ctx)
-        elif action == "migrate-archive":
-            from enge.migrate.__main__ import main as migrate_main
-
-            return migrate_main(ctx)
-        else:
-            logging.error("No valid action specified")
-            return EXIT_GENERAL_ERROR
+        return _dispatch_action(ctx.cli_args.action, ctx)
     except ConfigurationError as e:
         logging.critical(f"Configuration error: {e}")
         return EXIT_CONFIG_ERROR
