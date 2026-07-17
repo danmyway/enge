@@ -435,7 +435,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  enge report --run <run_id>                           # report specific run\n"
             "  enge report --tag regression --show-tests            # detailed test view\n"
             "  enge report -f tasks.txt -w                          # wait for completion\n"
-            "  enge report --get-tag v1 --get-tag v2 --compare      # compare runs (legacy)\n"
+            "  enge compare --tag v1 --tag v2                       # compare runs (see 'enge compare --help')\n"
         ),
     )
 
@@ -483,15 +483,8 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument(
         "--compare",
         action="store_true",
-        help="Build a comparison table for multiple run results.",
-    )
-
-    report.add_argument(
-        "--unify",
-        action="append",
-        metavar="PLAN1=PLAN2",
-        help="Treat plan names as equivalent in 'plan1=plan2' format. "
-        "Useful for comparing runs with renamed plans.",
+        help="Deprecated: delegates to 'enge compare' with a WARNING. "
+        "Will be removed in a future release; use 'enge compare' directly.",
     )
 
     report.add_argument(
