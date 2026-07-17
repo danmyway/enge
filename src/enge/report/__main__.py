@@ -51,126 +51,6 @@ def _split_name(name, index):
     return "/".join(name_raw[index:])
 
 
-def build_table_comparison(ctx):
-    tables_list = []
-
-    planname_split_index = 0
-    testname_split_index = 0
-    if ctx.cli_args.short:
-        planname_split_index = -1
-        testname_split_index = -1
-
-    parsed_dict, retval, task_results = _parse_request_xunit_with_retval(
-        ctx, skip_pass=ctx.cli_args.skip_pass
-    )
-    result_table = Table(box=box.ROUNDED)
-
-    # Sort UUIDs by architecture first, then by creation date within each architecture
-    def get_arch_and_timestamp(uuid):
-        data = parsed_dict[uuid]
-        arch = (
-            data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
-        )
-        created = data.get("created", "")
-        return (arch, created)
-
-    uuids = sorted(parsed_dict.keys(), key=get_arch_and_timestamp)
-
-    # Create headers with architecture and index, store mapping for later display
-    headers = []
-    uuid_mapping = {}
-
-    for i, uid in enumerate(uuids, 1):
-        data = parsed_dict[uid]
-        # Get architecture from first testsuite or default to Unknown
-        arch = (
-            data["testsuites"][0]["testsuite_arch"] if data["testsuites"] else "Unknown"
-        )
-        # Use format: "arch (index)" for cleaner headers
-        header = f"{arch} ({i})"
-        headers.append(header)
-        # Store mapping for display below table
-        result_url = f"{ctx.testing_farm_endpoint.log_artifact_baseurl}/{uid}"
-        uuid_mapping[i] = {"uuid": uid, "url": result_url, "arch": arch}
-
-    fields = ["Test Plan"] + headers
-    for field in fields:
-        result_table.add_column(field, justify="left")
-    # plan_name -> uuid run result for particular plan
-    regroup_results_plans = {}
-    # plan_name -> test_name -> uuid run result for particular test
-    regroup_results_tests = {}
-    unified_names_map = {}
-    for plan_name in getattr(ctx.cli_args, "unify", []) or []:
-        # Only split on the first '=' to support values containing '='
-        name1, name2 = plan_name.split("=", 1)
-        unified_names_map[name1] = plan_name
-        unified_names_map[name2] = plan_name
-
-    def _get_plan_key(testsuite_data):
-        plan_key = _split_name(testsuite_data["testsuite_name"], planname_split_index)
-        # check against unified map to combine results
-        return unified_names_map.get(plan_key) or plan_key
-
-    for task_uuid, data in parsed_dict.items():
-        for testsuite_data in data["testsuites"]:
-            res_uuid = {
-                "result": testsuite_data["testsuite_result"],
-                "testcases": sorted(
-                    (x for x in testsuite_data["testcases"]),
-                    key=lambda x: x["testcase_name"],
-                ),
-            }
-            plan_key = _get_plan_key(testsuite_data)
-            try:
-                regroup_results_plans[plan_key][task_uuid] = res_uuid
-            except KeyError:
-                regroup_results_plans[plan_key] = {task_uuid: res_uuid}
-            # Preparation for plans -> tests mapping
-            if plan_key not in regroup_results_tests:
-                regroup_results_tests[plan_key] = {}
-            # Now process testcases for easier level2 table processing
-            for testcase_data in testsuite_data["testcases"]:
-                plan_key = _get_plan_key(testsuite_data)
-                test_key = _split_name(
-                    testcase_data["testcase_name"], testname_split_index
-                )
-                if test_key not in regroup_results_tests[plan_key]:
-                    regroup_results_tests[plan_key][test_key] = {}
-                try:
-                    regroup_results_tests[plan_key][test_key][task_uuid] = (
-                        testcase_data["testcase_result"]
-                    )
-                except KeyError:
-                    regroup_results_tests[plan_key][test_key] = {
-                        task_uuid: testcase_data["testcase_result"]
-                    }
-
-    for plan_name, plan_data in regroup_results_plans.items():
-        if getattr(ctx.cli_args, "show_tests", False):
-            result_table.add_row(escape(plan_name), *[""] * len(uuids))
-            test_items = list(regroup_results_tests[plan_name].items())
-            for i, (test_name, test_data) in enumerate(test_items):
-                row_data = [f'{"*" * 4} {escape(test_name)}']
-                for uuid in uuids:
-                    row_data.append(colorize(test_data.get(uuid, "-")))
-                result_table.add_row(*row_data, end_section=(i == len(test_items) - 1))
-        else:
-            row_data = [plan_name]
-            for uuid in uuids:
-                # Report just plans
-                if uuid not in plan_data:
-                    # this plan has not been executed for this run
-                    row_data.append("-")
-                else:
-                    row_data.append(colorize(plan_data[uuid]["result"]))
-            result_table.add_row(*row_data)
-
-    tables_list.append((result_table, uuid_mapping))
-
-    return tables_list, retval, task_results
-
-
 def build_table(ctx):
     parsed_dict, retval, task_results = _parse_request_xunit_with_retval(
         ctx, skip_pass=ctx.cli_args.skip_pass
@@ -278,6 +158,10 @@ def _rich_style_for_result(result):
         return "bold red"
     elif result in ("ERROR", "UNDEFINED", "PENDING"):
         return "bold yellow"
+    elif result == "CANCELED":
+        return "yellow"
+    elif result == "SKIPPED":
+        return "dim"
     return ""
 
 
@@ -387,6 +271,21 @@ def _handle_list(ctx: AppContext) -> int:
     return ExitCode.SUCCESS
 
 
+def _handle_compare_alias(ctx: AppContext) -> int:
+    """Deprecation alias for ONE release: 'enge report --compare' delegates
+    to 'enge compare'. Read-only during the deprecation window (fire-time
+    maintainer ruling, Q7) -- unlike every other manifest-backed report
+    invocation, this path never writes/gap-fills results.json caches,
+    because it never calls build_table/cache_report_results at all."""
+    LOGGER.warning(
+        "'enge report --compare' is deprecated and will be removed in a "
+        "future release; use 'enge compare' instead."
+    )
+    from enge.compare.__main__ import main as compare_main
+
+    return compare_main(ctx)
+
+
 def main(ctx: AppContext, result_table=None):
     if getattr(ctx.cli_args, "list", False):
         return _handle_list(ctx)
@@ -401,12 +300,12 @@ def main(ctx: AppContext, result_table=None):
             LOGGER.info("No UUIDs found!")
         return ExitCode.SUCCESS
 
+    if getattr(ctx.cli_args, "compare", False):
+        return _handle_compare_alias(ctx)
+
     retval = None
     if result_table is None:
-        if ctx.cli_args.compare:
-            result_table, retval, task_results = build_table_comparison(ctx)
-        else:
-            result_table, retval, task_results = build_table(ctx)
+        result_table, retval, task_results = build_table(ctx)
 
         if task_results:
             try:
@@ -429,11 +328,10 @@ def main(ctx: AppContext, result_table=None):
             console.print()
             console.print("~~~ REQUEST METADATA ~~~~~~~~~~~~~~", style="dim")
 
-            if not ctx.cli_args.compare:
-                for title, value in metadata.items():
-                    if value is None:
-                        continue
-                    console.print(f"{title:<20}{value}", style="dim")
+            for title, value in metadata.items():
+                if value is None:
+                    continue
+                console.print(f"{title:<20}{value}", style="dim")
 
             output_fmt = getattr(ctx.cli_args, "output_format", "terminal")
             jira_mode = getattr(ctx.cli_args, "jira", False)
@@ -449,16 +347,6 @@ def main(ctx: AppContext, result_table=None):
                 print("```")
             else:
                 console.print(table)
-
-            if ctx.cli_args.compare:
-                console.print()
-                console.print("~~~ TASK REFERENCE ~~~~~~~~~~~~~~~~", style="dim")
-                for index, info in metadata.items():
-                    if isinstance(info, dict) and "uuid" in info:
-                        console.print(
-                            f"({index}) {info['arch']}: {info['url']}",
-                            style="dim",
-                        )
 
             has_content = True
 
