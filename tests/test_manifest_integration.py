@@ -747,5 +747,48 @@ class TestReportListDisplayOrder(unittest.TestCase):
         self.assertEqual(data_ids, list(reversed(self.ids)))
 
 
+class TestReportListMultiSetColumn(unittest.TestCase):
+    """report --list Set column shows every dispatched set, not just the first."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+        self.run_id = generate_ulid()
+        w = ManifestWriter(
+            run_id=self.run_id,
+            command="test",
+            argv=["enge", "test"],
+            context={"set": "alpha"},
+        )
+        w.add_request("uuid-1", set_name="alpha", tier="tier0", arch="x86_64")
+        w.add_request("uuid-2", set_name="beta", tier="tier0", arch="x86_64")
+        w.flush(self.runs, self.latest)
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_gitlab_output_shows_all_sets(self):
+        ctx = _make_ctx(self.runs, self.latest, output_format="gitlab")
+        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+            _handle_list(ctx)
+            lines = mock_out.getvalue().strip().split("\n")
+        data_lines = [row for row in lines if row.startswith(f"| {self.run_id}")]
+        self.assertEqual(len(data_lines), 1)
+        cells = [c.strip() for c in data_lines[0].split("|")]
+        # | run_id | created | command | set | tier(s) | arch(es) | tags | requests | origin |
+        self.assertEqual(cells[4], "alpha, beta")
+
+    def test_json_output_gains_additive_sets_key(self):
+        ctx = _make_ctx(self.runs, self.latest, output_format="json")
+        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+            _handle_list(ctx)
+            output = json.loads(mock_out.getvalue())
+        self.assertEqual(len(output), 1)
+        self.assertEqual(output[0]["sets"], ["alpha", "beta"])
+        self.assertEqual(output[0]["context"]["set"], "alpha")
+
+
 if __name__ == "__main__":
     unittest.main()
