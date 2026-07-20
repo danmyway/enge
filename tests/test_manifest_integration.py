@@ -789,6 +789,23 @@ class TestReportListMultiSetColumn(unittest.TestCase):
         self.assertEqual(output[0]["sets"], ["alpha", "beta"])
         self.assertEqual(output[0]["context"]["set"], "alpha")
 
+    def test_terminal_output_shows_all_sets(self):
+        import enge.utils.console as console_mod
+        from rich.console import Console
+
+        buf = StringIO()
+        saved = console_mod._current
+        try:
+            console_mod._current = Console(
+                file=buf, no_color=True, width=200, highlight=False
+            )
+            ctx = _make_ctx(self.runs, self.latest, output_format="terminal")
+            _handle_list(ctx)
+        finally:
+            console_mod._current = saved
+        output = buf.getvalue()
+        self.assertIn("alpha, beta", output)
+
 
 if __name__ == "__main__":
     unittest.main()
