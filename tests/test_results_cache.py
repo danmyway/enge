@@ -624,6 +624,44 @@ class TestCachingFailureDoesNotBreakReport(_CacheTestCase):
         entry_a = next(t for t in schema.results if t.task_id == task_a)
         self.assertEqual(entry_a.plans[0].verdict, "PASSED")
 
+    def test_finalized_run_reupsert_logs_debug_not_warning(self):
+        # Split target: re-reporting an already-finalized run is the
+        # expected steady state, not a data-drift signal -- every task's
+        # upsert hits the unconditional finalized-file guard regardless of
+        # content, so before the split this logged one WARNING per task on
+        # every single invocation, forever.
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDFFFFFFFFFFFFFFFFFFF"
+        task_a = "99999999-0000-0000-0000-00000000000f"
+        _write_manifest(runs_dir, run_id, [_request(task_a)])
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        result_a = _make_task_result(
+            request_uuid=task_a,
+            xunit_bytes=_xunit_bytes(
+                plan_result="passed", tests=[("/tests/a", "passed", "1.0", None, None)]
+            ),
+        )
+        cache_report_results(ctx, [result_a])
+        schema = parse_results_json(results_dir_path / f"{run_id}.json")
+        self.assertIsNotNone(schema.verdict)  # sanity: run is finalized
+
+        with self.assertLogs("enge.report.results_cache", level="DEBUG") as cm:
+            cache_report_results(ctx, [result_a])
+
+        levels = [record.levelname for record in cm.records]
+        self.assertNotIn("WARNING", levels)
+        self.assertIn("DEBUG", levels)
+        debug_messages = [
+            record.getMessage() for record in cm.records if record.levelname == "DEBUG"
+        ]
+        self.assertTrue(
+            any(run_id in msg for msg in debug_messages),
+            f"expected a DEBUG message naming the run, got: {debug_messages}",
+        )
+
 
 class TestVerbatimXunitBytes(_CacheTestCase):
     def test_write_xunit_stores_byte_identical_copy(self):
