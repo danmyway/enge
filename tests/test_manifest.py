@@ -139,6 +139,61 @@ class TestManifestReader(unittest.TestCase):
         self.assertEqual(summaries[0]["run_id"], ids[2])
         self.assertEqual(summaries[2]["run_id"], ids[0])
 
+    def test_list_runs_sets_multi_set_order(self):
+        w = self._write_manifest(context={"set": "alpha"})
+        w.add_request("uuid-1", set_name="alpha")
+        w.add_request("uuid-2", set_name="beta")
+        w.add_request("uuid-3", set_name="alpha")
+        w.flush(self.runs_dir, self.latest)
+
+        summaries = ManifestReader.list_runs(self.runs_dir)
+        self.assertEqual(summaries[0]["sets"], ["alpha", "beta"])
+
+    def test_list_runs_sets_single_set(self):
+        w = self._write_manifest(context={"set": "alpha"})
+        w.add_request("uuid-1", set_name="alpha")
+        w.flush(self.runs_dir, self.latest)
+
+        summaries = ManifestReader.list_runs(self.runs_dir)
+        self.assertEqual(summaries[0]["sets"], ["alpha"])
+
+    def test_list_runs_sets_fallback_and_empty(self):
+        migrated_id = generate_ulid()
+        migrated = {
+            "schema_version": 1,
+            "run_id": migrated_id,
+            "created_at": "2026-01-01T00:00:00Z",
+            "command": "test",
+            "argv": [],
+            "tags": [],
+            "parent_run_id": None,
+            "origin": "migrated",
+            "context": {"set": "alpha"},
+            "requests": [{"task_id": "old-uuid"}],
+        }
+        self.runs_dir.mkdir(parents=True, exist_ok=True)
+        (self.runs_dir / f"{migrated_id}.json").write_text(json.dumps(migrated))
+
+        no_set_id = generate_ulid()
+        no_set = {
+            "schema_version": 1,
+            "run_id": no_set_id,
+            "created_at": "2026-01-01T00:00:01Z",
+            "command": "test",
+            "argv": [],
+            "tags": [],
+            "parent_run_id": None,
+            "origin": "migrated",
+            "context": {},
+            "requests": [{"task_id": "old-uuid-2"}],
+        }
+        (self.runs_dir / f"{no_set_id}.json").write_text(json.dumps(no_set))
+
+        summaries = ManifestReader.list_runs(self.runs_dir)
+        by_id = {s["run_id"]: s for s in summaries}
+        self.assertEqual(by_id[migrated_id]["sets"], ["alpha"])
+        self.assertEqual(by_id[no_set_id]["sets"], [])
+
     def test_find_runs_by_set(self):
         w1 = self._write_manifest(context={"set": "smoke"})
         w1.add_request("uuid-1")
