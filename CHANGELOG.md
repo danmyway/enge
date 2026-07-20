@@ -95,3 +95,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `setup.cfg` `url` field had spurious quotes and trailing comma
 - Dryrun guard for latest-jobs file extracted to `maybe_clear_latest_jobs_file()` in tf_send_request; tests now verify the real production function
 - Bare-function tests in `test_auto_tagging`, `test_concurrent_parser`, `test_tf_send_request` converted to `unittest.TestCase` so `python -m unittest discover` collects them
+- `enge report` on an already-finalized run's `results.json` no longer logs a WARNING per task on every invocation; a new `AlreadyFinalizedError` (a `ConflictError` subclass) distinguishes the expected steady state of re-reporting a finalized run — now logged at DEBUG — from genuine cache content drift, which still logs at WARNING

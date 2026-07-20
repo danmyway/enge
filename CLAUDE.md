@@ -237,9 +237,12 @@ its table output or exit code.
   finished/updated timestamp to compute elapsed time from, and none of
   the code or fixtures in this repository confirm TF's API even carries
   one — inventing an estimate was rejected in favor of an honest zero.
-- **Caching failures never fail the report command.** A `ConflictError`
-  from a corrupted prior cache (or any other unexpected error) is caught
-  per-task/per-run inside `cache_report_results` and logged at WARNING;
+- **Caching failures never fail the report command.** Conflicts are
+  caught per-task/per-run inside `cache_report_results`, split by cause:
+  `AlreadyFinalizedError` (re-reporting an already-finalized run — the
+  expected steady state, not a data-drift signal) logs at DEBUG and
+  moves on; any other `ConflictError` (genuine content drift, e.g. a
+  corrupted prior cache) or unexpected error is logged at WARNING.
   `report/__main__.main()` additionally wraps the whole call in a
   broad backstop for defense in depth. The user's table/exit code always
   renders regardless of cache state.
@@ -423,7 +426,11 @@ arrive incrementally, one TF task at a time):
   Present with different content: raise `ConflictError` (new exception
   in `utils/errors.py`, alongside `ValidationError`) — the idempotency
   fence; never silently overwritten. File already finalized (non-null
-  root verdict): raise `ConflictError` regardless of content.
+  root verdict): raise `AlreadyFinalizedError` (a `ConflictError`
+  subclass) regardless of content — the expected steady state on every
+  re-report of a finalized run, not a data-drift signal; the cache layer
+  logs it at DEBUG instead of WARNING for this reason (see "Caching
+  failures never fail the report command" above).
 - `finalize_root_verdict(path, expected_count) -> Optional[str]` — see
   derivation rules above. Under count: no-op, `None`. Exact count:
   derive and write, return the value (idempotent on repeat calls once
