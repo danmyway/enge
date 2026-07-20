@@ -237,15 +237,16 @@ its table output or exit code.
   finished/updated timestamp to compute elapsed time from, and none of
   the code or fixtures in this repository confirm TF's API even carries
   one — inventing an estimate was rejected in favor of an honest zero.
-- **Caching failures never fail the report command.** Conflicts are
-  caught per-task/per-run inside `cache_report_results`, split by cause:
-  `AlreadyFinalizedError` (re-reporting an already-finalized run — the
-  expected steady state, not a data-drift signal) logs at DEBUG and
-  moves on; any other `ConflictError` (genuine content drift, e.g. a
-  corrupted prior cache) or unexpected error is logged at WARNING.
+- **Caching failures never fail the report command.** Re-reporting an
+  already-finalized run raises `AlreadyFinalizedError` (a
+  `ConflictError` subclass) per task, caught inside
+  `cache_report_results` and logged at DEBUG naming the run — the
+  expected steady state for finalized runs, not a drift signal. A
+  genuine content conflict from a corrupted prior cache (or any other
+  unexpected error) is caught per-task/per-run and logged at WARNING;
   `report/__main__.main()` additionally wraps the whole call in a
-  broad backstop for defense in depth. The user's table/exit code always
-  renders regardless of cache state.
+  broad backstop for defense in depth. The user's table/exit code
+  always renders regardless of cache state.
 - **Verbatim xunit bytes**: `report/concurrent_parser.py`'s `TaskResult`
   carries both `xunit_content` (decoded `str`, used by the existing
   table-rendering `XMLParser`) and `xunit_bytes` (raw `response.content`,
