@@ -227,11 +227,14 @@ def _handle_list(ctx: AppContext) -> int:
         print("|---|---|---|---|---|---|---|---|---|")
         for r in runs:
             ctx_data = r.get("context", {})
+            set_column = (
+                ", ".join(r["sets"]) if "sets" in r else ctx_data.get("set", "")
+            )
             print(
                 f"| {r['run_id']} "
                 f"| {r.get('created_at', '')} "
                 f"| {r.get('command', '')} "
-                f"| {ctx_data.get('set', '')} "
+                f"| {set_column} "
                 f"| {', '.join(ctx_data.get('tiers', []))} "
                 f"| {', '.join(ctx_data.get('architectures', []))} "
                 f"| {', '.join(r.get('tags', []))} "
@@ -255,11 +258,14 @@ def _handle_list(ctx: AppContext) -> int:
             created = r.get("created_at", "")
             tiers = ctx_data.get("tiers", [])
             archs = ctx_data.get("architectures", [])
+            set_column = (
+                ", ".join(r["sets"]) if "sets" in r else ctx_data.get("set", "")
+            )
             table.add_row(
                 r["run_id"],
                 created[:19].replace("T", " ") if created else "",
                 r.get("command", ""),
-                ctx_data.get("set", ""),
+                set_column,
                 ", ".join(tiers) if isinstance(tiers, list) else str(tiers),
                 ", ".join(archs) if isinstance(archs, list) else str(archs),
                 ", ".join(r.get("tags", [])),
