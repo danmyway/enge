@@ -102,6 +102,18 @@ class ManifestReader:
         return ManifestReader.load(manifest_path)
 
     @staticmethod
+    def _derive_sets(data: Dict[str, Any]) -> List[str]:
+        seen: List[str] = []
+        for r in data.get("requests", []):
+            set_name = r.get("set")
+            if set_name and set_name not in seen:
+                seen.append(set_name)
+        if seen:
+            return seen
+        context_set = data.get("context", {}).get("set")
+        return [context_set] if context_set else []
+
+    @staticmethod
     def list_runs(runs_dir: Path) -> List[Dict[str, Any]]:
         if not runs_dir.exists():
             return []
@@ -119,6 +131,7 @@ class ManifestReader:
                     "tags": data.get("tags", []),
                     "origin": data.get("origin", "native"),
                     "context": data.get("context", {}),
+                    "sets": ManifestReader._derive_sets(data),
                     "request_count": len(data.get("requests", [])),
                     "parent_run_id": data.get("parent_run_id"),
                     "path": str(p),
