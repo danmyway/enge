@@ -6,7 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from enge.utils.errors import ConflictError, ValidationError
+from enge.utils.errors import AlreadyFinalizedError, ConflictError, ValidationError
 
 
 class Verdict(str, Enum):
@@ -527,13 +527,15 @@ def upsert_task_result(
     - task_id present with different content -> raise ConflictError (the
       idempotency fence; never silently overwrite).
     - file already finalized (root verdict non-null) -> raise
-      ConflictError, regardless of content.
+      AlreadyFinalizedError (a ConflictError subclass), regardless of
+      content -- this is the expected steady state on every re-report of
+      a finalized run, not a data-drift signal.
     """
     path = Path(path)
     schema = parse_results_json(path)
 
     if schema.verdict is not None:
-        raise ConflictError(
+        raise AlreadyFinalizedError(
             f"{path}: results.json is already finalized (verdict="
             f"{schema.verdict!r}); cannot upsert further task results"
         )

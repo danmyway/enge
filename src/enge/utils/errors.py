@@ -21,6 +21,14 @@ class ConflictError(EngeError):
     never be silently overwritten."""
 
 
+class AlreadyFinalizedError(ConflictError):
+    """A write-once results.json gap-fill was attempted against a file
+    whose root verdict is already non-null. This is the expected steady
+    state for every re-report of a finalized run, NOT a data-drift signal
+    -- unlike the base ConflictError's same-task_id/differing-content
+    case, no incompatible content was ever compared here."""
+
+
 class NetworkError(EngeError):
     """Remote service is unreachable, timed out, or returned a fatal error."""
 
