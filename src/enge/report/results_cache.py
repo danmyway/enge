@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import lxml.etree  # type: ignore
 
-from enge.utils.errors import ConflictError, ValidationError
+from enge.utils.errors import AlreadyFinalizedError, ConflictError, ValidationError
 from enge.utils.manifest_resolution import (
     resolve_manifests_for_invocation as _resolve_manifests_for_report,
 )
@@ -227,6 +227,14 @@ def _cache_one_run(
         entry_dict = _build_task_entry(task_result, request_meta)
         try:
             upsert_task_result(results_path, entry_dict)
+        except AlreadyFinalizedError:
+            LOGGER.debug(
+                "results cache: run %s is already finalized; skipping "
+                "re-upsert of task %s (steady state, nothing rewritten)",
+                run_id,
+                task_id,
+            )
+            continue
         except ConflictError:
             LOGGER.warning(
                 "results cache: conflicting cached entry for task %s in run "
