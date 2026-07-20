@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from enge.utils.errors import ConflictError, ValidationError
+from enge.utils.errors import AlreadyFinalizedError, ConflictError, ValidationError
 from enge.utils.results_parser import XUNIT_RESULT_MAP
 from enge.utils.results_parser import PlanEntry
 from enge.utils.results_parser import ResultsJsonSchema
@@ -450,6 +450,40 @@ class TestUpsertTaskResult(_GapFillTestCase):
             finalize_root_verdict(path, expected_count=1)
             with self.assertRaises(ConflictError):
                 upsert_task_result(path, _task_payload(task_id="a-different-task-id"))
+
+    def test_upsert_after_finalize_raises_already_finalized_error(self):
+        # Split target: the finalized-file case is the expected steady
+        # state on every re-report of a finalized run, not a data-drift
+        # signal -- it must raise the more specific subclass so the cache
+        # layer can log it quietly instead of at WARNING.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(path, _task_payload())
+            finalize_root_verdict(path, expected_count=1)
+            with self.assertRaises(AlreadyFinalizedError) as cm:
+                upsert_task_result(path, _task_payload(task_id="a-different-task-id"))
+            # Compat fence: existing `except ConflictError` handlers must
+            # keep working unchanged.
+            self.assertIsInstance(cm.exception, ConflictError)
+
+    def test_upsert_content_drift_on_unfinalized_file_is_not_already_finalized_error(
+        self,
+    ):
+        # Split target: same task_id, different content, on a file that is
+        # NOT finalized is genuine data drift -- it must stay a plain
+        # ConflictError, never the finalized-file subclass.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._init(tmp)
+            upsert_task_result(path, _task_payload())
+            with self.assertRaises(ConflictError) as cm:
+                upsert_task_result(
+                    path,
+                    _task_payload(
+                        verdict="PASSED",
+                        plans=[_plan_payload(verdict="PASSED")],
+                    ),
+                )
+            self.assertNotIsInstance(cm.exception, AlreadyFinalizedError)
 
 
 class TestFinalizeRootVerdict(_GapFillTestCase):
