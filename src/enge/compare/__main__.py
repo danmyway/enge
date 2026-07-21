@@ -97,16 +97,22 @@ def _print_table(ctx: AppContext, rich_table: Table) -> None:
 
 
 def main(ctx: AppContext) -> int:
-    columns, error_code = load_columns(ctx)
-    if error_code is not None:
-        LOGGER.error(
-            "compare: fewer than 2 result sources with a usable results "
-            "cache for this selector; nothing to compare."
-        )
-        return error_code
-
     show_tests = getattr(ctx.cli_args, "show_tests", False)
     flakiness = getattr(ctx.cli_args, "flakiness", False)
+
+    columns, error_code = load_columns(ctx, flakiness=flakiness)
+    if error_code is not None:
+        if flakiness:
+            LOGGER.error(
+                "compare: no comparable result columns for this selector; "
+                "nothing to compare."
+            )
+        else:
+            LOGGER.error(
+                "compare: fewer than 2 result sources with a usable results "
+                "cache for this selector; nothing to compare."
+            )
+        return error_code
 
     if flakiness:
         tables = engine.build_flakiness_tables(columns, show_tests=show_tests)

@@ -535,12 +535,19 @@ tables, so this mapping is not to be casually remapped), reduced via the
 existing ExitCode-domain `worst_exit_code` — not the Verdict-domain
 severity table above. Flakiness
 mode always returns `SUCCESS` (report-only view; it has no consolidated
-verdicts to derive from). A selector resolving fewer than 2 runs with a
-usable `results.json` cache is a usage error: `ExitCode.CONFIG_ERROR`
-(99), the same "invocation cannot be serviced as given" code used
-elsewhere, since no result-grading has happened yet at that point. Each
-missing/corrupt cache logs an ERROR naming the run and the exact fix
-(`enge report --run <run_id>`).
+verdicts to derive from). Consolidation mode requires a selector to
+resolve >=2 matched runs with a usable results.json cache; fewer is a
+usage error: ExitCode.CONFIG_ERROR (99), the same "invocation cannot be
+serviced as given" code used elsewhere, since no result-grading has
+happened yet at that point. Flakiness mode's floor is instead >=1
+comparable column: a single column renders (no per-table emission
+threshold), and a single manifest fanned across multiple arches (one
+enge dispatch invocation) already carries multiple columns
+(maintainer-ratified 2026-07-21, AMENDMENT-1: the --run <id>
+single-manifest case). Zero comparable columns is the same
+CONFIG_ERROR (99) usage error. Either mode: each missing/corrupt
+cache logs an ERROR naming the run and the exact fix
+(enge report --run <run_id>).
 
 **Deprecation alias**: `enge report --compare` delegates to `enge compare`
 for one release, emitting a WARNING. Unlike every other manifest-backed

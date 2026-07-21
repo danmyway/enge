@@ -13,13 +13,23 @@ performs.
 
 Missing-cache policy (fire-time ruling, no override): a matched run with
 no results.json logs an ERROR naming the run and the exact fix command
-(`enge report --run <run_id>`), then is skipped. Compare proceeds if >=2
-matched runs still have a usable cache; otherwise it returns the
+(`enge report --run <run_id>`), then is skipped. Otherwise it returns the
 usage/data error code (`ExitCode.CONFIG_ERROR` -- the documented
 "universal floor" code for "this invocation cannot be serviced as given",
 as opposed to the report-specific result-grading codes TEST_ERROR/
 TEST_FAILURE/MISSING_RESULTS, which don't apply here since no grading has
 happened yet).
+
+Gating floor is mode-aware (AMENDMENT-1, 2026-07-21): one `enge dispatch`
+produces ONE manifest fanned across N requests (e.g. one per arch), so a
+single matched manifest can still carry multiple comparable columns.
+Consolidation mode compares the SAME coordinate over time, so it still
+requires >=2 matched MANIFESTS (`_MIN_CONSOLIDATION_MANIFESTS`) --
+unchanged, zero behavioral difference from before this amendment.
+Flakiness mode compares columns within one tier regardless of how many
+manifests they came from, so it only requires >=1 comparable COLUMN
+(`_MIN_FLAKINESS_COLUMNS`) -- the single-manifest/multi-arch `--run`
+case this amendment fixes.
 """
 
 import logging
@@ -37,15 +47,20 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
-_MIN_RESULT_SOURCES = 2
+_MIN_CONSOLIDATION_MANIFESTS = 2
+_MIN_FLAKINESS_COLUMNS = 1
 
 
-def load_columns(ctx: "AppContext") -> Tuple[List[ExecutionColumn], Optional[ExitCode]]:
+def load_columns(
+    ctx: "AppContext", *, flakiness: bool = False
+) -> Tuple[List[ExecutionColumn], Optional[ExitCode]]:
     """Resolve this invocation's manifests, load each one's results.json
     cache, and flatten every task entry into an ExecutionColumn.
 
     Returns (columns, None) on success, or ([], ExitCode.CONFIG_ERROR) if
-    fewer than 2 matched runs have a usable cache.
+    the mode-appropriate floor isn't met: fewer than 2 matched manifests
+    (consolidation, `flakiness=False`) or zero comparable columns
+    (flakiness, `flakiness=True`).
     """
     manifests = resolve_manifests_for_invocation(ctx)
     output_dir = results_dir(ctx.config)
@@ -98,7 +113,10 @@ def load_columns(ctx: "AppContext") -> Tuple[List[ExecutionColumn], Optional[Exi
                 )
             )
 
-    if valid_runs < _MIN_RESULT_SOURCES:
+    if flakiness:
+        if len(columns) < _MIN_FLAKINESS_COLUMNS:
+            return [], ExitCode.CONFIG_ERROR
+    elif valid_runs < _MIN_CONSOLIDATION_MANIFESTS:
         return [], ExitCode.CONFIG_ERROR
 
     return columns, None
