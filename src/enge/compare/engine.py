@@ -36,6 +36,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from enge.utils.globals import ExitCode, worst_exit_code
 
 ABSENT = "-"
+FLAKINESS_ABSENT = "—"  # em dash -- flakiness-mode absence marker
+# (AMENDMENT-2, 2026-07-21): arch-exclusive/excluded plans are structurally
+# absent, not SKIPPED/ERROR; maintainer-ratified for visual prominence,
+# distinct from consolidation mode's `-` ABSENT (unchanged, off-limits).
 
 _VERDICT_TO_EXIT_CODE: Dict[str, ExitCode] = {
     "PASSED": ExitCode.SUCCESS,
@@ -74,6 +78,7 @@ class RowResult:
     plan_label: Optional[str]
     per_column: Tuple[str, ...]
     consolidated: Optional[str]
+    flaky: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -154,43 +159,55 @@ def _plan_test_keys(columns: List[ExecutionColumn]) -> List[Tuple[str, str]]:
     return sorted(keys)
 
 
+def _row_is_flaky(per_column: Tuple[str, ...], absent: str) -> bool:
+    """Flakiness-mode flag (AMENDMENT-2, 2026-07-21): flagged iff >=2
+    present (non-absent) outcomes differ. A single present outcome is
+    never flagged; absence never contributes to nor suppresses a flag --
+    arch-exclusivity exempts nothing, only cell presence matters."""
+    present = {v for v in per_column if v != absent}
+    return len(present) > 1
+
+
 def build_rows(
     columns: List[ExecutionColumn], *, show_tests: bool, consolidate: bool
 ) -> List[RowResult]:
+    absent = ABSENT if consolidate else FLAKINESS_ABSENT
     if not show_tests:
-        return _build_plan_rows(columns, consolidate=consolidate)
-    return _build_test_rows(columns, consolidate=consolidate)
+        return _build_plan_rows(columns, consolidate=consolidate, absent=absent)
+    return _build_test_rows(columns, consolidate=consolidate, absent=absent)
 
 
 def _build_plan_rows(
-    columns: List[ExecutionColumn], *, consolidate: bool
+    columns: List[ExecutionColumn], *, consolidate: bool, absent: str
 ) -> List[RowResult]:
     rows = []
     for name in _plan_names(columns):
         per_column = tuple(
-            next((p.verdict for p in col.plans if p.name == name), ABSENT)
+            next((p.verdict for p in col.plans if p.name == name), absent)
             for col in columns
         )
         consolidated = consolidate_row(per_column) if consolidate else None
+        flaky = None if consolidate else _row_is_flaky(per_column, absent)
         rows.append(
             RowResult(
                 label=name,
                 plan_label=None,
                 per_column=per_column,
                 consolidated=consolidated,
+                flaky=flaky,
             )
         )
     return rows
 
 
 def _build_test_rows(
-    columns: List[ExecutionColumn], *, consolidate: bool
+    columns: List[ExecutionColumn], *, consolidate: bool, absent: str
 ) -> List[RowResult]:
     rows = []
     for plan_name, test_name in _plan_test_keys(columns):
         per_column_list = []
         for col in columns:
-            verdict = ABSENT
+            verdict = absent
             for plan in col.plans:
                 if plan.name != plan_name:
                     continue
@@ -201,12 +218,14 @@ def _build_test_rows(
             per_column_list.append(verdict)
         per_column = tuple(per_column_list)
         consolidated = consolidate_row(per_column) if consolidate else None
+        flaky = None if consolidate else _row_is_flaky(per_column, absent)
         rows.append(
             RowResult(
                 label=test_name,
                 plan_label=plan_name,
                 per_column=per_column,
                 consolidated=consolidated,
+                flaky=flaky,
             )
         )
     return rows
