@@ -348,6 +348,122 @@ class TestFlakinessMode(unittest.TestCase):
             self.assertEqual(len(t.columns), 2 if t.tier == "tier0" else 1)
 
 
+class TestFlakinessPlanMismatchAndFlagging(unittest.TestCase):
+    """AMENDMENT-2 (2026-07-21): arch-exclusive/excluded plans never
+    disqualify a manifest, column, or row from flakiness comparison
+    (union row-set -- already the case, see engine.py's set-comprehension
+    plan-name union, shared with consolidation mode). Absent cells render
+    the em dash `—` (distinct from consolidation's `-` ABSENT
+    marker, unchanged by this amendment). Flakiness is flagged per row
+    over PRESENT cells only: >=2 present outcomes that differ."""
+
+    def test_arch_exclusive_plan_row_renders_others_show_em_dash(self):
+        from enge.compare.engine import build_flakiness_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                arch="x86_64",
+                plans=[_plan("/plans/common", "PASSED")],
+            ),
+            _column(
+                task_id="t2",
+                arch="s390x",
+                plans=[
+                    _plan("/plans/common", "PASSED"),
+                    _plan("/plans/x86-only", "FAILED"),
+                ],
+            ),
+        ]
+
+        (table,) = build_flakiness_tables(cols, show_tests=False)
+
+        # group_by_tier orders columns by arch ascending: s390x, then x86_64.
+        self.assertEqual(len(table.columns), 2)
+        row = next(r for r in table.rows if r.label == "/plans/x86-only")
+        self.assertEqual(row.per_column, ("FAILED", "—"))
+
+    def test_row_with_one_present_outcome_is_not_flagged_flaky(self):
+        from enge.compare.engine import build_flakiness_tables
+
+        cols = [
+            _column(task_id="t1", arch="x86_64", plans=[_plan("/plans/p1", "PASSED")]),
+            _column(task_id="t2", arch="s390x", plans=[]),
+        ]
+
+        (table,) = build_flakiness_tables(cols, show_tests=False)
+
+        (row,) = table.rows
+        self.assertFalse(row.flaky)
+
+    def test_row_with_two_differing_present_outcomes_and_an_absence_is_flagged(self):
+        from enge.compare.engine import build_flakiness_tables
+
+        cols = [
+            _column(task_id="t1", arch="x86_64", plans=[_plan("/plans/p1", "PASSED")]),
+            _column(task_id="t2", arch="s390x", plans=[_plan("/plans/p1", "FAILED")]),
+            _column(task_id="t3", arch="aarch64", plans=[]),
+        ]
+
+        (table,) = build_flakiness_tables(cols, show_tests=False)
+
+        # group_by_tier orders columns by arch ascending: aarch64, s390x, x86_64.
+        (row,) = table.rows
+        self.assertEqual(row.per_column, ("—", "FAILED", "PASSED"))
+        self.assertTrue(row.flaky)
+
+    def test_single_arch_plan_flagged_flaky_across_rerun_columns(self):
+        from enge.compare.engine import build_flakiness_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                run_id="run-a",
+                arch="x86_64",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "FAILED")],
+            ),
+            _column(
+                task_id="t2",
+                run_id="run-b",
+                arch="x86_64",
+                dispatched_at="2026-07-02T00:00:00Z",
+                plans=[_plan("/plans/p1", "PASSED")],
+            ),
+        ]
+
+        (table,) = build_flakiness_tables(cols, show_tests=False)
+
+        (row,) = table.rows
+        self.assertTrue(row.flaky)
+
+    def test_consolidation_mode_absence_marker_and_flag_field_unchanged(self):
+        from enge.compare.engine import build_consolidation_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                arch="x86_64",
+                plans=[_plan("/plans/common", "PASSED")],
+            ),
+            _column(
+                task_id="t2",
+                arch="x86_64",
+                dispatched_at="2026-07-02T00:00:00Z",
+                plans=[
+                    _plan("/plans/common", "PASSED"),
+                    _plan("/plans/x86-only", "FAILED"),
+                ],
+            ),
+        ]
+
+        (table,) = build_consolidation_tables(cols, show_tests=False)
+
+        row = next(r for r in table.rows if r.label == "/plans/x86-only")
+        self.assertEqual(row.per_column, ("-", "FAILED"))
+        self.assertIsNone(row.flaky)
+
+
 class TestExitCodeDerivation(unittest.TestCase):
     def test_all_passed_yields_success(self):
         from enge.compare.engine import build_consolidation_tables, derive_exit_code
