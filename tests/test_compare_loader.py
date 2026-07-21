@@ -249,5 +249,99 @@ class TestMissingCachePolicy(unittest.TestCase):
         )
 
 
+class TestModeAwareGating(unittest.TestCase):
+    """AMENDMENT-1: a single manifest fanned across multiple arches (the
+    documented one-dispatch-N-requests shape) is exactly ONE matched run,
+    but carries multiple comparable columns. Flakiness mode must gate on
+    column count (>=1); consolidation mode's >=2-matched-run floor is
+    unchanged (see CLAUDE.md "Compare consolidation policy" -- untouched
+    by this amendment)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.runs_dir = Path(self.tmp.name) / "runs"
+        self.results_dir = Path(self.tmp.name) / "results"
+
+    def _ctx(self, run_id):
+        return make_app_context(
+            action="compare",
+            extra_cli={
+                "run": run_id,
+                "filter_set": None,
+                "filter_tier": None,
+                "filter_arch": None,
+                "filter_tag": None,
+            },
+            extra_config={"common": {"results_dir": str(self.results_dir)}},
+            manifest_runs_dir=str(self.runs_dir),
+        )
+
+    def _write_single_manifest_multi_arch(self, run_id, arches):
+        requests = [
+            _request(f"t{i}", arch=arch) for i, arch in enumerate(arches, start=1)
+        ]
+        _write_manifest(self.runs_dir, run_id, requests, context={"set": "setA"})
+        tasks = [
+            _task_entry(f"t{i}", arch=arch) for i, arch in enumerate(arches, start=1)
+        ]
+        _write_results_json(self.results_dir, run_id, tasks=tasks)
+
+    def test_flakiness_mode_renders_from_a_single_run_id_manifest(self):
+        from enge.compare.engine import build_flakiness_tables
+        from enge.compare.loader import load_columns
+
+        self._write_single_manifest_multi_arch(
+            "run1", ["x86_64", "aarch64", "s390x", "ppc64le"]
+        )
+
+        columns, error_code = load_columns(self._ctx("run1"), flakiness=True)
+
+        self.assertIsNone(error_code)
+        self.assertEqual(len(columns), 4)
+
+        (table,) = build_flakiness_tables(columns, show_tests=False)
+        self.assertEqual(len(table.columns), 4)
+
+    def test_consolidation_mode_still_refuses_a_single_run_id_manifest(self):
+        from enge.compare.loader import load_columns
+
+        self._write_single_manifest_multi_arch(
+            "run1", ["x86_64", "aarch64", "s390x", "ppc64le"]
+        )
+
+        columns, error_code = load_columns(self._ctx("run1"))
+
+        self.assertEqual(error_code, ExitCode.CONFIG_ERROR)
+        self.assertEqual(columns, [])
+
+    def test_flakiness_mode_zero_comparable_columns_returns_config_error(self):
+        """CLAUDE.md ruling-relay pin (2026-07-21): flakiness mode's floor
+        is >=1 comparable column, not >=0 -- a selector matching zero
+        manifests is still a usage error, same CONFIG_ERROR (99) as
+        consolidation mode's floor miss. Characterization pin: already
+        green under the AMENDMENT-1 implementation, disclosed per the
+        conditional-disclosure rule rather than forced red."""
+        from enge.compare.loader import load_columns
+
+        ctx = make_app_context(
+            action="compare",
+            extra_cli={
+                "run": None,
+                "filter_set": None,
+                "filter_tier": ["no-such-tier"],
+                "filter_arch": None,
+                "filter_tag": None,
+            },
+            extra_config={"common": {"results_dir": str(self.results_dir)}},
+            manifest_runs_dir=str(self.runs_dir),
+        )
+
+        columns, error_code = load_columns(ctx, flakiness=True)
+
+        self.assertEqual(error_code, ExitCode.CONFIG_ERROR)
+        self.assertEqual(columns, [])
+
+
 if __name__ == "__main__":
     unittest.main()
