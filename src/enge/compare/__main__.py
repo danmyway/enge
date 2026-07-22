@@ -1,12 +1,15 @@
-"""`enge compare` subcommand: consolidate or flakiness-compare results.json
-caches across runs.
+"""`enge compare` subcommand: unified comparison + consolidation view over
+results.json caches across runs.
 
 Read-only consumer of the results.json contract -- never parses xunit,
 never calls Testing Farm, never writes a cache (see CLAUDE.md "Results.json
 format"). Grouping/consolidation is delegated entirely to
 `enge.compare.engine` (pure) via `enge.compare.loader` (I/O); this module
 is display only: turning `engine.ComparisonTable` objects into rich
-tables/footers and deriving the process exit code.
+tables/footers. The exit code is always SUCCESS once the floor is met
+(R4) -- table content (FAILED/ERROR rows) never changes the retval;
+CONFIG_ERROR is reserved for the loader's floor failure, which is not a
+comparison result.
 """
 
 import logging
@@ -28,27 +31,44 @@ LOGGER = logging.getLogger(__name__)
 _UPGRADE_ARROW = "→"
 
 
+def _descriptor(value):
+    return value if value is not None else engine.ABSENT
+
+
+def _table_title(table: "engine.ComparisonTable") -> str:
+    parts = []
+    if table.arch is not None:
+        parts.append(table.arch)
+    if table.source is not None or table.target is not None:
+        parts.append(
+            f"{_descriptor(table.source)}{_UPGRADE_ARROW}{_descriptor(table.target)}"
+        )
+    parts.append(f"tier: {table.tier}")
+    return " | ".join(parts)
+
+
 def _column_header(table: "engine.ComparisonTable", index: int) -> str:
-    if table.mode == "flakiness":
-        col = table.columns[index]
-        return f"{col.arch} {col.source}{_UPGRADE_ARROW}{col.target} ({index + 1})"
-    return f"({index + 1})"
+    col = table.columns[index]
+    parts = []
+    if table.arch is None:
+        parts.append(col.arch)
+    if table.source is None and table.target is None:
+        parts.append(
+            f"{_descriptor(col.source)}{_UPGRADE_ARROW}{_descriptor(col.target)}"
+        )
+    parts.append(f"({index + 1})")
+    return " ".join(parts)
 
 
 def _render_table(table: "engine.ComparisonTable") -> Table:
-    title = f"tier: {table.tier}"
-    if table.mode == "consolidation":
-        title = f"{table.arch} {table.source}{_UPGRADE_ARROW}{table.target} | {title}"
-
-    rich_table = Table(box=box.ROUNDED, title=title)
+    rich_table = Table(box=box.ROUNDED, title=_table_title(table))
     rich_table.add_column("Name", justify="left")
     for i in range(len(table.columns)):
         rich_table.add_column(_column_header(table, i), justify="left")
-    if table.mode == "consolidation":
-        rich_table.add_column("Consolidated", justify="left")
+    rich_table.add_column("Consolidated", justify="left")
 
     current_plan = None
-    blank_padding = len(table.columns) + (1 if table.mode == "consolidation" else 0)
+    blank_padding = len(table.columns) + 1
     for row in table.rows:
         if row.plan_label is not None and row.plan_label != current_plan:
             current_plan = row.plan_label
@@ -58,9 +78,7 @@ def _render_table(table: "engine.ComparisonTable") -> Table:
         cells = [
             colorize(v) if v != engine.ABSENT else engine.ABSENT for v in row.per_column
         ]
-        row_cells = [escape(label), *cells]
-        if table.mode == "consolidation":
-            row_cells.append(colorize(row.consolidated) if row.consolidated else "")
+        row_cells = [escape(label), *cells, colorize(row.consolidated)]
         rich_table.add_row(*row_cells)
 
     return rich_table
@@ -73,7 +91,7 @@ def _footer_entries(table: "engine.ComparisonTable"):
             "run_id": col.run_id,
             "task_id": col.task_id,
             "arch": col.arch,
-            "path": f"{col.source}{_UPGRADE_ARROW}{col.target}",
+            "path": f"{_descriptor(col.source)}{_UPGRADE_ARROW}{_descriptor(col.target)}",
             "set": col.set,
             "artifacts_url": col.artifacts_url,
         }
@@ -98,28 +116,20 @@ def _print_table(ctx: AppContext, rich_table: Table) -> None:
 
 def main(ctx: AppContext) -> int:
     show_tests = getattr(ctx.cli_args, "show_tests", False)
-    flakiness = getattr(ctx.cli_args, "flakiness", False)
+    splitarch = getattr(ctx.cli_args, "splitarch", False)
+    splitpath = getattr(ctx.cli_args, "splitpath", False)
 
-    columns, error_code = load_columns(ctx, flakiness=flakiness)
+    columns, error_code = load_columns(ctx)
     if error_code is not None:
-        if flakiness:
-            LOGGER.error(
-                "compare: no comparable result columns for this selector; "
-                "nothing to compare."
-            )
-        else:
-            LOGGER.error(
-                "compare: fewer than 2 result sources with a usable results "
-                "cache for this selector; nothing to compare."
-            )
+        LOGGER.error(
+            "compare: no comparable result columns for this selector; "
+            "nothing to compare."
+        )
         return error_code
 
-    if flakiness:
-        tables = engine.build_flakiness_tables(columns, show_tests=show_tests)
-        retval = ExitCode.SUCCESS
-    else:
-        tables = engine.build_consolidation_tables(columns, show_tests=show_tests)
-        retval = engine.derive_exit_code(tables)
+    tables = engine.build_tables(
+        columns, show_tests=show_tests, splitarch=splitarch, splitpath=splitpath
+    )
 
     has_content = False
     for table in tables:
@@ -145,4 +155,4 @@ def main(ctx: AppContext) -> int:
     if not has_content:
         LOGGER.info("Nothing to compare!")
 
-    return retval
+    return ExitCode.SUCCESS

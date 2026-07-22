@@ -552,17 +552,19 @@ def build_parser() -> argparse.ArgumentParser:
     # ==================== COMPARE SUBCOMMAND ====================
     compare = subparsers.add_parser(
         "compare",
-        help="Compare and consolidate results.json caches across runs.",
+        help="Compare results.json caches across runs, with a consolidated column.",
         description="Read cached results.json data (see 'enge report') and "
-        "build consolidation or flakiness comparison tables across runs.",
+        "build a comparison table across runs, one column per execution "
+        "plus an always-present consolidated column.",
         parents=[common],
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=(
             "examples:\n"
-            "  enge compare --tag regression                       # consolidate all regression-tagged runs\n"
+            "  enge compare --tag regression                       # compare all regression-tagged runs, one table per tier\n"
             "  enge compare --set smoke --tier tier0 --show-tests   # detailed test view\n"
-            "  enge compare --run <run_id> --tier tier1             # single run, still needs a 2nd source\n"
-            "  enge compare --flakiness --tier tier1                # flakiness view (no consolidation)\n"
+            "  enge compare --run <run_id> --tier tier1             # single run is enough on its own\n"
+            "  enge compare --splitarch --tier tier1                # one table per (tier, arch)\n"
+            "  enge compare --splitpath --tier tier1                # one table per (tier, upgrade-path)\n"
         ),
     )
 
@@ -619,10 +621,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     compare.add_argument(
-        "--flakiness",
+        "--splitarch",
         action="store_true",
-        help="Flakiness view: one table per tier, arch/upgrade-path fold in as "
-        "columns. Comparison only -- no consolidated column, ever.",
+        help="One table per (tier, arch) instead of folding arch into columns. "
+        "Combinable with --splitpath.",
+    )
+
+    compare.add_argument(
+        "--splitpath",
+        action="store_true",
+        help="One table per (tier, upgrade-path) instead of folding the "
+        "upgrade-path into columns. Combinable with --splitarch.",
     )
 
     compare.add_argument(

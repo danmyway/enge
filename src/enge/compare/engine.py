@@ -1,53 +1,64 @@
-"""Pure consolidation/flakiness engine for `enge compare`.
+"""Pure engine for the unified `enge compare` view.
 
 No I/O here -- this module only groups and consolidates already-loaded
 `ExecutionColumn` records (see `enge.compare.loader` for how those get
 built from results.json caches). Kept import-free of manifest/results.json
 I/O so the ratified grouping and consolidation-policy contracts can be
-pinned by direct unit tests (see CLAUDE.md "Results.json format" and the
-fire-time compare-subcommand session log for the full ratified design).
+pinned by direct unit tests (see CLAUDE.md "Compare consolidation policy"
+and the fire-time compare-redesign session log for the full ratified
+design).
 
-Grouping contract:
+Unified view (C1): there is no more mode split. Every invocation produces
+a multi-column comparison table plus an always-present consolidated
+column; `enge.compare.__main__` always returns SUCCESS from the table
+content (R4) -- CONFIG_ERROR is reserved for the loader's floor failure,
+which is not a comparison result.
+
+Grouping contract (C2):
 - `set` is NEVER a grouping coordinate (sets are invocation wrappers).
-- Tier is a hard partition: both `group_by_coordinate` and `group_by_tier`
-  always include tier in their key, so no group can ever span two tiers.
-- Consolidation mode groups by (tier, arch, source, target) -- `source`/
-  `target` are the run-envelope upgrade-path values (e.g. "9.9"/"10.3"),
-  not the per-task `source_compose`/`target_compose` (which can change
-  run-to-run on a respin; those stay column/footer metadata only).
-- Flakiness mode groups by tier only; arch/source/target fold into columns
-  within that one table.
+- Tier is a hard partition: every grouping key includes tier, so no group
+  ever spans two tiers.
+- `--splitarch` adds arch to the key; `--splitpath` adds (source, target).
+  Neither flag folds every (arch, path) coordinate into one per-tier
+  table -- the default.
 
 Consolidation policy (fence-critical, do not "align" with the
 results_parser/results_cache Verdict severity-rank table -- that table
 ranks ERROR>FAILED>CANCELED>PASSED>SKIPPED for a different purpose
 (deriving ONE representative verdict for an entire run) and is explicitly
 off-limits here):
-- Per row, over its PRESENT columns only (`-` never participates): any
-  PASSED wins; otherwise the chronologically latest present column's
-  verdict reports.
-- l0 (plan) rows consolidate on plan verdicts directly, never derived from
-  rolled-up test verdicts.
+- TWO-STAGE (R1). Stage 1, within each (arch, source, target) coordinate
+  over its chronologically-ordered columns: any PASSED wins; otherwise
+  the latest REAL result wins. SKIPPED, CANCELED, and absent are all
+  excluded from this scan -- CANCELED is grouped with SKIPPED as an
+  absence-class verdict for consolidation purposes (fire-time ruling,
+  2026-07-22), not a real result. Stage 2, across the coordinates
+  present in a row: severity-max ERROR > FAILED > PASSED. A coordinate
+  with no real result contributes nothing to stage 2. This is the one
+  behavioral delta from the old single-stage rule: a PASS on one
+  coordinate no longer masks a FAIL/ERROR on another -- PASS-wins only
+  applies *within* a coordinate's own rerun history.
+- All-excluded rows (R3, generalized): if NO coordinate produces a real
+  result, the row falls back to SKIPPED when >=1 cell is literally
+  SKIPPED, else CANCELED when >=1 cell is literally CANCELED. The
+  verdict enum is exhaustive over {PASSED, FAILED, SKIPPED, ERROR,
+  CANCELED} and a row only exists because it appeared somewhere
+  (non-absent), so this fallback is exhaustive -- never fabricates a
+  PASSED/FAILED/ERROR that did not occur.
+- l0 (plan) rows consolidate on plan verdicts directly, never derived
+  from rolled-up test verdicts.
+- `flaky` (R5, AMENDMENT-2 semantics unchanged): flagged iff >=2 present
+  (non-absent) outcomes differ, over present cells only. Computed on
+  every row regardless of split flags; never rendered as a column.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from enge.utils.globals import ExitCode, worst_exit_code
+ABSENT = "—"  # em dash -- unified absence marker (C3)
 
-ABSENT = "-"
-FLAKINESS_ABSENT = "—"  # em dash -- flakiness-mode absence marker
-# (AMENDMENT-2, 2026-07-21): arch-exclusive/excluded plans are structurally
-# absent, not SKIPPED/ERROR; maintainer-ratified for visual prominence,
-# distinct from consolidation mode's `-` ABSENT (unchanged, off-limits).
-
-_VERDICT_TO_EXIT_CODE: Dict[str, ExitCode] = {
-    "PASSED": ExitCode.SUCCESS,
-    "SKIPPED": ExitCode.SUCCESS,
-    "FAILED": ExitCode.TEST_FAILURE,
-    "ERROR": ExitCode.TEST_ERROR,
-    "CANCELED": ExitCode.MISSING_RESULTS,
-}
+_STAGE1_EXCLUDED = {"SKIPPED", "CANCELED"}
+_STAGE2_RANK: Dict[str, int] = {"PASSED": 0, "FAILED": 1, "ERROR": 2}
 
 
 @dataclass(frozen=True)
@@ -60,8 +71,8 @@ class ExecutionColumn:
     set: str
     tier: str
     arch: str
-    source: str
-    target: str
+    source: Optional[str]
+    target: Optional[str]
     source_compose: Optional[str]
     target_compose: Optional[str]
     dispatched_at: str
@@ -77,14 +88,13 @@ class RowResult:
     label: str
     plan_label: Optional[str]
     per_column: Tuple[str, ...]
-    consolidated: Optional[str]
-    flaky: Optional[bool] = None
+    consolidated: str
+    flaky: bool
 
 
 @dataclass(frozen=True)
 class ComparisonTable:
     tier: str
-    mode: str  # "consolidation" | "flakiness"
     columns: Tuple[ExecutionColumn, ...]
     rows: Tuple[RowResult, ...]
     arch: Optional[str] = None
@@ -92,58 +102,44 @@ class ComparisonTable:
     target: Optional[str] = None
 
 
-def _chrono_key(col: ExecutionColumn) -> Tuple[str, str]:
-    return (col.dispatched_at, col.run_created_at)
+def _sortable(value: Optional[str]) -> Tuple[bool, str]:
+    """Comparable substitute for an Optional[str] sort key -- plain tuple
+    comparison raises TypeError comparing None to str, and a per-task
+    descriptor legitimately is None (multi-set legacy manifest, item 7)."""
+    return (value is None, value or "")
 
 
-def group_by_coordinate(
-    columns: List[ExecutionColumn],
-) -> Dict[Tuple[str, str, str, str], List[ExecutionColumn]]:
-    """Consolidation-mode grouping: (tier, arch, source, target), `set`
-    excluded. Each group's columns are sorted chronologically (ascending)
-    so `consolidate_row`'s "latest present wins" fallback can simply take
-    the last present entry."""
-    groups: Dict[Tuple[str, str, str, str], List[ExecutionColumn]] = {}
+def _column_sort_key(col: ExecutionColumn) -> Tuple[Any, ...]:
+    return (
+        col.arch,
+        _sortable(col.source),
+        _sortable(col.target),
+        col.dispatched_at,
+        col.run_created_at,
+    )
+
+
+def group_columns(
+    columns: List[ExecutionColumn], *, splitarch: bool, splitpath: bool
+) -> Dict[Tuple[Any, ...], List[ExecutionColumn]]:
+    """Table partitioning (C2). Tier is always in the key. `splitarch`
+    adds arch; `splitpath` adds (source, target). Neither flag means one
+    table per tier, with every (arch, path) coordinate folding in as
+    columns. `set` never participates. Columns within a group are sorted
+    by (arch, source, target, dispatched_at, run_created_at) so same-
+    coordinate reruns stay chronologically adjacent regardless of which
+    axes are actually split."""
+    groups: Dict[Tuple[Any, ...], List[ExecutionColumn]] = {}
     for col in columns:
-        key = (col.tier, col.arch, col.source, col.target)
-        groups.setdefault(key, []).append(col)
+        key: List[Any] = [col.tier]
+        if splitarch:
+            key.append(col.arch)
+        if splitpath:
+            key.append((col.source, col.target))
+        groups.setdefault(tuple(key), []).append(col)
     for cols in groups.values():
-        cols.sort(key=_chrono_key)
+        cols.sort(key=_column_sort_key)
     return groups
-
-
-def group_by_tier(columns: List[ExecutionColumn]) -> Dict[str, List[ExecutionColumn]]:
-    """Flakiness-mode grouping: tier only. Columns are ordered by
-    (arch, source, target, dispatched_at, run_created_at) so
-    same-coordinate executions stay visually adjacent."""
-    groups: Dict[str, List[ExecutionColumn]] = {}
-    for col in columns:
-        groups.setdefault(col.tier, []).append(col)
-    for cols in groups.values():
-        cols.sort(
-            key=lambda c: (
-                c.arch,
-                c.source,
-                c.target,
-                c.dispatched_at,
-                c.run_created_at,
-            )
-        )
-    return groups
-
-
-def consolidate_row(per_column: Tuple[str, ...]) -> Optional[str]:
-    """PASS-wins, else latest-present-wins. `per_column` must already be in
-    chronological column order (as produced by group_by_coordinate).
-    Returns None if the row has no present column at all (should not
-    happen structurally -- a row only exists because it appeared
-    somewhere)."""
-    present = [v for v in per_column if v != ABSENT]
-    if not present:
-        return None
-    if "PASSED" in present:
-        return "PASSED"
-    return present[-1]
 
 
 def _plan_names(columns: List[ExecutionColumn]) -> List[str]:
@@ -159,55 +155,75 @@ def _plan_test_keys(columns: List[ExecutionColumn]) -> List[Tuple[str, str]]:
     return sorted(keys)
 
 
-def _row_is_flaky(per_column: Tuple[str, ...], absent: str) -> bool:
-    """Flakiness-mode flag (AMENDMENT-2, 2026-07-21): flagged iff >=2
-    present (non-absent) outcomes differ. A single present outcome is
-    never flagged; absence never contributes to nor suppresses a flag --
-    arch-exclusivity exempts nothing, only cell presence matters."""
-    present = {v for v in per_column if v != absent}
+def _row_is_flaky(per_column: Tuple[str, ...]) -> bool:
+    """AMENDMENT-2, 2026-07-21 (R5: unchanged, kept on the unified view):
+    flagged iff >=2 present (non-absent) outcomes differ. A single
+    present outcome is never flagged; absence never contributes to nor
+    suppresses a flag."""
+    present = {v for v in per_column if v != ABSENT}
     return len(present) > 1
 
 
-def build_rows(
-    columns: List[ExecutionColumn], *, show_tests: bool, consolidate: bool
-) -> List[RowResult]:
-    absent = ABSENT if consolidate else FLAKINESS_ABSENT
-    if not show_tests:
-        return _build_plan_rows(columns, consolidate=consolidate, absent=absent)
-    return _build_test_rows(columns, consolidate=consolidate, absent=absent)
+def consolidate_row(
+    cols: Tuple[ExecutionColumn, ...], per_column: Tuple[str, ...]
+) -> str:
+    """Two-stage consolidation (R1). `cols`/`per_column` must be the same
+    length and in the same (already chronologically-sorted) order."""
+    by_coordinate: Dict[Tuple[str, Optional[str], Optional[str]], List[str]] = {}
+    for col, verdict in zip(cols, per_column):
+        by_coordinate.setdefault((col.arch, col.source, col.target), []).append(verdict)
+
+    stage1_results: List[str] = []
+    any_skipped = False
+    any_canceled = False
+    for values in by_coordinate.values():
+        if "SKIPPED" in values:
+            any_skipped = True
+        if "CANCELED" in values:
+            any_canceled = True
+        real = [v for v in values if v != ABSENT and v not in _STAGE1_EXCLUDED]
+        if not real:
+            continue
+        stage1_results.append("PASSED" if "PASSED" in real else real[-1])
+
+    if stage1_results:
+        return max(stage1_results, key=lambda v: _STAGE2_RANK[v])
+    if any_skipped:
+        return "SKIPPED"
+    if any_canceled:
+        return "CANCELED"
+    raise AssertionError(
+        "unreachable: a row only exists because it appeared somewhere, and "
+        "PASSED/FAILED/ERROR would have produced a stage1 result -- every "
+        "other verdict (SKIPPED, CANCELED) is handled above"
+    )
 
 
-def _build_plan_rows(
-    columns: List[ExecutionColumn], *, consolidate: bool, absent: str
-) -> List[RowResult]:
+def _build_plan_rows(columns: List[ExecutionColumn]) -> List[RowResult]:
     rows = []
     for name in _plan_names(columns):
         per_column = tuple(
-            next((p.verdict for p in col.plans if p.name == name), absent)
+            next((p.verdict for p in col.plans if p.name == name), ABSENT)
             for col in columns
         )
-        consolidated = consolidate_row(per_column) if consolidate else None
-        flaky = None if consolidate else _row_is_flaky(per_column, absent)
         rows.append(
             RowResult(
                 label=name,
                 plan_label=None,
                 per_column=per_column,
-                consolidated=consolidated,
-                flaky=flaky,
+                consolidated=consolidate_row(tuple(columns), per_column),
+                flaky=_row_is_flaky(per_column),
             )
         )
     return rows
 
 
-def _build_test_rows(
-    columns: List[ExecutionColumn], *, consolidate: bool, absent: str
-) -> List[RowResult]:
+def _build_test_rows(columns: List[ExecutionColumn]) -> List[RowResult]:
     rows = []
     for plan_name, test_name in _plan_test_keys(columns):
         per_column_list = []
         for col in columns:
-            verdict = absent
+            verdict = ABSENT
             for plan in col.plans:
                 if plan.name != plan_name:
                     continue
@@ -217,69 +233,48 @@ def _build_test_rows(
                 break
             per_column_list.append(verdict)
         per_column = tuple(per_column_list)
-        consolidated = consolidate_row(per_column) if consolidate else None
-        flaky = None if consolidate else _row_is_flaky(per_column, absent)
         rows.append(
             RowResult(
                 label=test_name,
                 plan_label=plan_name,
                 per_column=per_column,
-                consolidated=consolidated,
-                flaky=flaky,
+                consolidated=consolidate_row(tuple(columns), per_column),
+                flaky=_row_is_flaky(per_column),
             )
         )
     return rows
 
 
-def build_consolidation_tables(
-    columns: List[ExecutionColumn], *, show_tests: bool
+def build_rows(columns: List[ExecutionColumn], *, show_tests: bool) -> List[RowResult]:
+    if not show_tests:
+        return _build_plan_rows(columns)
+    return _build_test_rows(columns)
+
+
+def _safe(value: Optional[str]) -> Tuple[bool, str]:
+    return _sortable(value)
+
+
+def build_tables(
+    columns: List[ExecutionColumn],
+    *,
+    show_tests: bool,
+    splitarch: bool,
+    splitpath: bool,
 ) -> List[ComparisonTable]:
-    groups = group_by_coordinate(columns)
+    groups = group_columns(columns, splitarch=splitarch, splitpath=splitpath)
     tables = []
-    for (tier, arch, source, target), cols in sorted(groups.items()):
-        rows = build_rows(cols, show_tests=show_tests, consolidate=True)
+    for cols in groups.values():
+        rows = build_rows(cols, show_tests=show_tests)
         tables.append(
             ComparisonTable(
-                tier=tier,
-                mode="consolidation",
-                arch=arch,
-                source=source,
-                target=target,
+                tier=cols[0].tier,
+                arch=cols[0].arch if splitarch else None,
+                source=cols[0].source if splitpath else None,
+                target=cols[0].target if splitpath else None,
                 columns=tuple(cols),
                 rows=tuple(rows),
             )
         )
+    tables.sort(key=lambda t: (t.tier, _safe(t.arch), _safe(t.source), _safe(t.target)))
     return tables
-
-
-def build_flakiness_tables(
-    columns: List[ExecutionColumn], *, show_tests: bool
-) -> List[ComparisonTable]:
-    groups = group_by_tier(columns)
-    tables = []
-    for tier, cols in sorted(groups.items()):
-        rows = build_rows(cols, show_tests=show_tests, consolidate=False)
-        tables.append(
-            ComparisonTable(
-                tier=tier,
-                mode="flakiness",
-                columns=tuple(cols),
-                rows=tuple(rows),
-            )
-        )
-    return tables
-
-
-def derive_exit_code(tables: List[ComparisonTable]) -> ExitCode:
-    """Consolidation-mode only: worst mapped ExitCode across every table's
-    every row's consolidated verdict, reduced via the existing
-    ExitCode-domain `worst_exit_code` (TEST_ERROR > TEST_FAILURE >
-    MISSING_RESULTS > SUCCESS) -- not the Verdict-domain severity table."""
-    worst: Optional[ExitCode] = None
-    for table in tables:
-        for row in table.rows:
-            if not row.consolidated:
-                continue
-            code = _VERDICT_TO_EXIT_CODE[row.consolidated]
-            worst = worst_exit_code(worst, code)
-    return worst if worst is not None else ExitCode.SUCCESS
