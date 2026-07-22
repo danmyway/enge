@@ -489,5 +489,208 @@ class TestRerunManifestFieldInheritance(unittest.TestCase):
         self.assertEqual(entry["rerun_of"], TASK_UUID)
 
 
+def _mock_tf_response_with_context(
+    *,
+    git_ref="main",
+    event="preliminary",
+    source_release="9.9",
+    target_release="10.3",
+    artifact_ids=None,
+):
+    """Refetched TF request body carrying full dispatch context, mirroring
+    what a real dispatch-created request actually looks like on the wire:
+    test.fmf.ref (git_ref), tmt.context.event (event),
+    variables.SOURCE_RELEASE/TARGET_RELEASE (source/target, already in the
+    manifest's bare {major}.{minor} format -- see
+    generate_environment_variables._format_release), and artifacts[].id
+    (build_references)."""
+    variables = {}
+    if source_release is not None:
+        variables["SOURCE_RELEASE"] = source_release
+    if target_release is not None:
+        variables["TARGET_RELEASE"] = target_release
+
+    environment = {"os": {"compose": "RHEL-9.9.0"}, "arch": "x86_64"}
+    if variables:
+        environment["variables"] = variables
+    if artifact_ids is not None:
+        environment["artifacts"] = [
+            {"id": aid, "type": "fedora-koji-build", "packages": ["leapp"]}
+            for aid in artifact_ids
+        ]
+    tmt_context = {}
+    if event is not None:
+        tmt_context["event"] = event
+    if tmt_context:
+        environment["tmt"] = {"context": tmt_context}
+
+    resp = MagicMock()
+    resp.json.return_value = {
+        "id": TASK_UUID,
+        "environments_requested": [environment],
+        "test": (
+            {"fmf": {"name": "/plan/tier0", "ref": git_ref}}
+            if git_ref is not None
+            else {"fmf": {"name": "/plan/tier0"}}
+        ),
+    }
+    return resp
+
+
+class TestRerunDispatchContextFromPayload(unittest.TestCase):
+    """Rerun-written manifest entries must carry source/target/git_ref/
+    event/build_references derived directly from the refetched TF payload
+    -- never from _build_parent_request_index, which has no data for these
+    fields on any manifest predating this schema (i.e. every real parent
+    manifest today). See Step-0 item 5 in the dispatch-context-schema
+    session: the payload's variables.SOURCE_RELEASE/TARGET_RELEASE are
+    already in the exact bare format the schema needs; parent-index
+    lookup is a dead end for this specific data."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _find_child_manifest(self, exclude_id):
+        manifests = [m for m in self.runs_dir.glob("*.json") if m.stem != exclude_id]
+        self.assertEqual(
+            len(manifests), 1, f"Expected 1 child manifest, got {len(manifests)}"
+        )
+        return json.loads(manifests[0].read_text())
+
+    def _run_rerun(self, tf_response, parent_request_kwargs=None):
+        """Build a parent manifest with NO dispatch-context fields on its
+        request (matching every real manifest today, since this branch is
+        what introduces them), run rerun main(), return the child's single
+        request entry."""
+        parent_id = generate_ulid()
+        parent = ManifestWriter(
+            run_id=parent_id, command="test", argv=["enge", "test"], tags=[]
+        )
+        parent.add_request(TASK_UUID, **(parent_request_kwargs or {"tier": "tier0"}))
+        parent.flush(self.runs_dir, self.latest)
+
+        api_url = f"https://tf.example.com/api/{TASK_UUID}"
+
+        with (
+            patch(
+                "enge.rerun.__main__._create_rerun_launch_for_payload",
+                return_value=None,
+            ),
+            patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c),
+            patch("enge.rerun.__main__.http_get", return_value=tf_response),
+            patch("enge.rerun.__main__.SubmitTest") as mock_submit_cls,
+            patch(
+                "enge.rerun.__main__.parse_request_xunit",
+                return_value=_parsed_dict(),
+            ),
+            patch(
+                "enge.rerun.__main__.parse_tasks_with_map",
+                return_value=(
+                    [api_url],
+                    f"manifest:{parent_id}",
+                    {TASK_UUID: None, api_url: None},
+                ),
+            ),
+        ):
+            mock_submit = MagicMock()
+            mock_submit.set_tag = []
+            mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+            mock_submit_cls.return_value = mock_submit
+
+            ctx = make_app_context(
+                action="rerun",
+                extra_cli={"error": False, "fail": False, "dryrun": False},
+                manifest_runs_dir=str(self.runs_dir),
+                manifest_latest=str(self.latest),
+            )
+
+            from enge.rerun.__main__ import main
+
+            main(ctx)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        return child["requests"][0]
+
+    def test_entry_carries_full_context_from_payload(self):
+        tf_response = _mock_tf_response_with_context(
+            git_ref="rhsm-branch",
+            event="preliminary",
+            source_release="9.9",
+            target_release="10.3",
+            artifact_ids=["12345:centos-stream9-x86_64"],
+        )
+        entry = self._run_rerun(tf_response)
+
+        self.assertEqual(entry["git_ref"], "rhsm-branch")
+        self.assertEqual(entry["event"], "preliminary")
+        self.assertEqual(entry["source"], "9.9")
+        self.assertEqual(entry["target"], "10.3")
+        self.assertEqual(entry["build_references"], ["12345:centos-stream9-x86_64"])
+
+    def test_entry_emit_always_defaults_when_payload_lacks_context(self):
+        tf_response = _mock_tf_response_with_context(
+            git_ref=None,
+            event=None,
+            source_release=None,
+            target_release=None,
+            artifact_ids=None,
+        )
+        entry = self._run_rerun(tf_response)
+
+        self.assertIn("git_ref", entry)
+        self.assertIsNone(entry["git_ref"])
+        self.assertIn("event", entry)
+        self.assertIsNone(entry["event"])
+        self.assertIn("source", entry)
+        self.assertIsNone(entry["source"])
+        self.assertIn("target", entry)
+        self.assertIsNone(entry["target"])
+        self.assertIn("build_references", entry)
+        self.assertEqual(entry["build_references"], [])
+
+    def test_entry_ignores_parent_index_which_lacks_these_fields(self):
+        """The parent manifest's request entry (built by the CURRENT
+        add_request, pre-dating this branch's fields) has no source/
+        target/git_ref/event/build_references at all. The rerun-written
+        child entry must still get correct values -- from the payload,
+        never from the (data-less) parent index."""
+        tf_response = _mock_tf_response_with_context(
+            git_ref="main",
+            event="ctc1",
+            source_release="8.10",
+            target_release="9.4",
+            artifact_ids=["pkg-x"],
+        )
+        entry = self._run_rerun(
+            tf_response,
+            parent_request_kwargs={
+                "set_name": "alpha",
+                "tier": "tier0",
+                "target_compose": "RHEL-9.4.0",
+            },
+        )
+
+        # Sanity: the parent entry truly has none of the new fields.
+        found_parent = next(
+            r
+            for m in self.runs_dir.glob("*.json")
+            for r in json.loads(m.read_text())["requests"]
+            if r.get("task_id") == TASK_UUID and r.get("set") == "alpha"
+        )
+        self.assertNotIn("source", found_parent)
+
+        self.assertEqual(entry["source"], "8.10")
+        self.assertEqual(entry["target"], "9.4")
+        self.assertEqual(entry["git_ref"], "main")
+        self.assertEqual(entry["event"], "ctc1")
+        self.assertEqual(entry["build_references"], ["pkg-x"])
+
+
 if __name__ == "__main__":
     unittest.main()
