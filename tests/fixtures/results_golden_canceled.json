@@ -22,7 +22,7 @@
       "target": "10.3",
       "git_ref": "main",
       "event": "preliminary",
-      "build_references": []
+      "build_ids": []
     },
     {
       "task_id": "16fabf6a-b495-4b86-9948-be2a62262f27",
@@ -53,7 +53,7 @@
       "target": "10.3",
       "git_ref": "main",
       "event": "preliminary",
-      "build_references": [
+      "build_ids": [
         "12345:centos-stream9-x86_64"
       ]
     }

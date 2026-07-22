@@ -50,7 +50,7 @@ def _request(
     **dispatch_context,
 ):
     """`**dispatch_context` accepts any of source/target/git_ref/event/
-    build_references -- omitted entirely by default, matching every real
+    build_ids -- omitted entirely by default, matching every real
     manifest request entry written before this schema existed."""
     request = {
         "task_id": task_id,
@@ -530,7 +530,7 @@ class TestMetadataFromManifest(_CacheTestCase):
                     target="10.0",
                     git_ref="rhsm-branch",
                     event="ctc1",
-                    build_references=["pkg-per-task"],
+                    build_ids=["pkg-per-task"],
                 )
             ],
             context={"event": "candidate", "source": "9.9", "target": "10.3"},
@@ -547,7 +547,7 @@ class TestMetadataFromManifest(_CacheTestCase):
         self.assertEqual(entry.target, "10.0")
         self.assertEqual(entry.git_ref, "rhsm-branch")
         self.assertEqual(entry.event, "ctc1")
-        self.assertEqual(entry.build_references, ["pkg-per-task"])
+        self.assertEqual(entry.build_ids, ["pkg-per-task"])
 
     def test_legacy_single_set_manifest_falls_back_to_envelope(self):
         """A manifest predating this schema (request has none of the 5
@@ -578,7 +578,7 @@ class TestMetadataFromManifest(_CacheTestCase):
         self.assertEqual(entry.target, "10.3")
         self.assertEqual(entry.event, "candidate")
         self.assertIsNone(entry.git_ref)
-        self.assertEqual(entry.build_references, [])
+        self.assertEqual(entry.build_ids, [])
 
     def test_legacy_multi_set_manifest_does_not_fall_back(self):
         """A manifest predating this schema with MORE THAN ONE set across
@@ -612,7 +612,7 @@ class TestMetadataFromManifest(_CacheTestCase):
         self.assertIsNone(entry.source)
         self.assertIsNone(entry.target)
         self.assertIsNone(entry.event)
-        self.assertEqual(entry.build_references, [])
+        self.assertEqual(entry.build_ids, [])
 
 
 class TestUnknownTaskIdSkip(_CacheTestCase):

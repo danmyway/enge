@@ -680,7 +680,7 @@ class TestArtifactApiDictMerge(unittest.TestCase):
 
 class TestManifestDispatchContextNonCollapse(unittest.TestCase):
     """Regression: manifest entries must record each request's own
-    source/target/git_ref/event/build_references, never a collapse to
+    source/target/git_ref/event/build_ids, never a collapse to
     the first test set in a multi-set dispatch."""
 
     def _make_ctx(self, tmp_path):
@@ -838,17 +838,15 @@ class TestManifestDispatchContextNonCollapse(unittest.TestCase):
             self.assertEqual(alpha_entry["source"], "8.10")
             self.assertEqual(alpha_entry["target"], "9.4")
             self.assertEqual(alpha_entry["event"], "nightly-alpha")
-            self.assertEqual(alpha_entry["build_references"], ["pkg-alpha-1.0"])
+            self.assertEqual(alpha_entry["build_ids"], ["pkg-alpha-1.0"])
 
             self.assertEqual(beta_entry["source"], "9.2")
             self.assertEqual(beta_entry["target"], "10.0")
             self.assertEqual(beta_entry["event"], "nightly-beta")
-            self.assertEqual(beta_entry["build_references"], ["pkg-beta-2.0"])
+            self.assertEqual(beta_entry["build_ids"], ["pkg-beta-2.0"])
 
             self.assertNotEqual(alpha_entry["source"], beta_entry["source"])
-            self.assertNotEqual(
-                alpha_entry["build_references"], beta_entry["build_references"]
-            )
+            self.assertNotEqual(alpha_entry["build_ids"], beta_entry["build_ids"])
 
 
 if __name__ == "__main__":

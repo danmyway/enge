@@ -36,7 +36,7 @@
       "target": "10.3",
       "git_ref": "main",
       "event": "preliminary",
-      "build_references": [
+      "build_ids": [
         "12345:centos-stream9-x86_64"
       ]
     },
@@ -74,7 +74,7 @@
       "target": "10.3",
       "git_ref": "main",
       "event": "preliminary",
-      "build_references": [
+      "build_ids": [
         "12345:centos-stream9-x86_64"
       ]
     },
@@ -93,7 +93,7 @@
       "target": "10.3",
       "git_ref": "main",
       "event": "preliminary",
-      "build_references": []
+      "build_ids": []
     }
   ]
 }

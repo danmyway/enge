@@ -196,7 +196,7 @@ def _build_task_entry(
         if value is None and is_single_set:
             value = context.get(key)
         dispatch_context[key] = value
-    dispatch_context["build_references"] = request_meta.get("build_references") or []
+    dispatch_context["build_ids"] = request_meta.get("build_ids") or []
 
     return {
         "task_id": task_result.request_uuid,

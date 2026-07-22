@@ -503,7 +503,7 @@ def _mock_tf_response_with_context(
     variables.SOURCE_RELEASE/TARGET_RELEASE (source/target, already in the
     manifest's bare {major}.{minor} format -- see
     generate_environment_variables._format_release), and artifacts[].id
-    (build_references)."""
+    (build_ids)."""
     variables = {}
     if source_release is not None:
         variables["SOURCE_RELEASE"] = source_release
@@ -539,7 +539,7 @@ def _mock_tf_response_with_context(
 
 class TestRerunDispatchContextFromPayload(unittest.TestCase):
     """Rerun-written manifest entries must carry source/target/git_ref/
-    event/build_references derived directly from the refetched TF payload
+    event/build_ids derived directly from the refetched TF payload
     -- never from _build_parent_request_index, which has no data for these
     fields on any manifest predating this schema (i.e. every real parent
     manifest today). See Step-0 item 5 in the dispatch-context-schema
@@ -631,7 +631,7 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
         self.assertEqual(entry["event"], "preliminary")
         self.assertEqual(entry["source"], "9.9")
         self.assertEqual(entry["target"], "10.3")
-        self.assertEqual(entry["build_references"], ["12345:centos-stream9-x86_64"])
+        self.assertEqual(entry["build_ids"], ["12345:centos-stream9-x86_64"])
 
     def test_entry_emit_always_defaults_when_payload_lacks_context(self):
         tf_response = _mock_tf_response_with_context(
@@ -651,13 +651,13 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
         self.assertIsNone(entry["source"])
         self.assertIn("target", entry)
         self.assertIsNone(entry["target"])
-        self.assertIn("build_references", entry)
-        self.assertEqual(entry["build_references"], [])
+        self.assertIn("build_ids", entry)
+        self.assertEqual(entry["build_ids"], [])
 
     def test_entry_ignores_parent_index_which_lacks_these_fields(self):
         """The parent manifest's request entry (built by the CURRENT
         add_request, pre-dating this branch's fields) has no source/
-        target/git_ref/event/build_references at all. The rerun-written
+        target/git_ref/event/build_ids at all. The rerun-written
         child entry must still get correct values -- from the payload,
         never from the (data-less) parent index."""
         tf_response = _mock_tf_response_with_context(
@@ -684,13 +684,13 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
         found_parent = parent_manifest["requests"][0]
         self.assertEqual(found_parent["task_id"], TASK_UUID)
         self.assertIsNone(found_parent.get("source"))
-        self.assertEqual(found_parent.get("build_references"), [])
+        self.assertEqual(found_parent.get("build_ids"), [])
 
         self.assertEqual(entry["source"], "8.10")
         self.assertEqual(entry["target"], "9.4")
         self.assertEqual(entry["git_ref"], "main")
         self.assertEqual(entry["event"], "ctc1")
-        self.assertEqual(entry["build_references"], ["pkg-x"])
+        self.assertEqual(entry["build_ids"], ["pkg-x"])
 
 
 if __name__ == "__main__":

@@ -277,7 +277,7 @@ class TaskEntry:
     target: Optional[str] = None
     git_ref: Optional[str] = None
     event: Optional[str] = None
-    build_references: List[str] = field(default_factory=list)
+    build_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -295,7 +295,7 @@ class TaskEntry:
             "target": self.target,
             "git_ref": self.git_ref,
             "event": self.event,
-            "build_references": list(self.build_references),
+            "build_ids": list(self.build_ids),
         }
 
     @classmethod
@@ -343,13 +343,13 @@ class TaskEntry:
         )
         event = _validate_optional_string(data.get("event"), "event", context=context)
 
-        raw_build_references = data.get("build_references") or []
-        if not isinstance(raw_build_references, list) or not all(
-            isinstance(ref, str) for ref in raw_build_references
+        raw_build_ids = data.get("build_ids") or []
+        if not isinstance(raw_build_ids, list) or not all(
+            isinstance(ref, str) for ref in raw_build_ids
         ):
             raise ValidationError(
-                f"{context}: 'build_references' must be an array of strings, "
-                f"got {raw_build_references!r}"
+                f"{context}: 'build_ids' must be an array of strings, "
+                f"got {raw_build_ids!r}"
             )
 
         return cls(
@@ -367,7 +367,7 @@ class TaskEntry:
             target=target,
             git_ref=git_ref,
             event=event,
-            build_references=list(raw_build_references),
+            build_ids=list(raw_build_ids),
         )
 
 
