@@ -530,57 +530,106 @@ Testing Farm, never writes a cache. `compare/engine.py` is pure (no I/O);
 --compare`'s `build_table_comparison` (deleted) and `--unify` (deleted;
 no replacement — plan names in `results.json` are always verbatim).
 
+**Unified view** (compare-redesign, 2026-07-22): there is no mode split.
+Every invocation renders one or more tables, each with one column per
+matching execution plus an always-present `Consolidated` column. The
+prior `--flakiness` flag and its separate no-consolidation table shape
+are gone outright — there is nothing left called "flakiness mode."
+`flaky` is still computed per row (AMENDMENT-2 semantics: flagged iff
+>=2 present, non-absent outcomes differ) but is never rendered as a
+column; it exists for future consumers, not for this branch's UI.
+
 **Grouping**: `set` is never a grouping coordinate (display-only
 provenance). Tier is a hard partition — one table never spans two tiers.
-Consolidation mode groups by `(tier, arch, source, target)`, where
-`source`/`target` are the run-envelope upgrade-path values (e.g.
-`"9.9"`/`"10.3"`), not per-task `source_compose`/`target_compose` (which
-can change on a respin and are footer-only metadata). Flakiness mode
-(`--flakiness`) groups by tier only — arch/upgrade-path fold into columns
-within that one table instead of splitting into separate tables.
+By default arch and upgrade-path (`source`/`target`, the run-envelope-
+or-per-task upgrade-path values, e.g. `"9.9"`/`"10.3"` — see "Descriptor
+sourcing" below) fold into columns within one table per tier.
+`--splitarch` adds arch to the table key (one table per `(tier, arch)`,
+columns per upgrade-path); `--splitpath` adds `(source, target)` (one
+table per `(tier, source, target)`, columns per arch); both together
+yield one table per `(tier, arch, source, target)` — the old
+consolidation-mode grouping, now reachable via explicit flags rather
+than being the only shape available.
 
-**Consolidation policy** (per row, over its present columns only — a `-`
-absent cell never participates): any PASSED wins; otherwise the
-chronologically latest present column's verdict reports (so a fail→pass
-rerun history consolidates to PASSED). l0 (plan) rows consolidate on plan
-verdicts directly, never derived from rolled-up test verdicts. This
-policy is deliberately **not** the `results_parser`/`results_cache`
-Verdict severity-rank table (`ERROR > FAILED > CANCELED > PASSED >
-SKIPPED`, used for root-verdict derivation) — different contract, opposite
-direction; do not import or align the two.
+**Consolidation policy is TWO-STAGE** (R1, replaces the old single-stage
+PASS-wins-else-latest-wins rule; fence-critical, do not "align" with the
+`results_parser`/`results_cache` Verdict severity-rank table — that table
+ranks `ERROR > FAILED > CANCELED > PASSED > SKIPPED` for a different
+purpose (deriving ONE representative verdict for an entire run) and is
+explicitly off-limits here):
+- **Stage 1**, within each `(arch, source, target)` coordinate present in
+  a row, over that coordinate's chronologically-ordered columns: any
+  `PASSED` wins; otherwise the latest REAL result wins. `SKIPPED`,
+  `CANCELED`, and absent (`—`, the em dash — the sole absence marker
+  after this branch; the old consolidation-only `-` marker is gone) are
+  all excluded from this scan. `CANCELED` is grouped with `SKIPPED` as an
+  absence-class verdict for consolidation purposes only (maintainer
+  ruling, 2026-07-22 — the ratified R1 stage-2 rank only defined three
+  tiers, `ERROR > FAILED > PASSED`, and was silent on `CANCELED`, which
+  is a schema-legal plan/test-level verdict per this file's own
+  "documented gaps"; excluding it from both stages was the ruling, so it
+  is excluded from stage 1's scan too, not just stage 2's rank).
+- **Stage 2**, across the coordinates present in that row: severity-max
+  `ERROR > FAILED > PASSED`. A coordinate with no real result (stage 1
+  found nothing to report) contributes nothing to stage 2.
+- This is the one behavioral delta from the old rule: a `PASSED` on one
+  coordinate no longer masks a `FAILED`/`ERROR` on another — PASS-wins
+  only applies *within* a coordinate's own rerun history, not across
+  different architectures or upgrade paths sharing a row.
+- **All-excluded rows**: if no coordinate in a row produces a real
+  result (every cell is `SKIPPED`, `CANCELED`, or absent), the row
+  consolidates to `SKIPPED` when >=1 cell is literally `SKIPPED`, else
+  to `CANCELED` when >=1 cell is literally `CANCELED`. The verdict enum
+  is exhaustive over `{PASSED, FAILED, SKIPPED, ERROR, CANCELED}` and a
+  row only exists because it appeared somewhere (non-absent), so this
+  fallback always resolves — it never fabricates a `PASSED`/`FAILED`/
+  `ERROR` that did not occur.
+- l0 (plan) rows consolidate on plan verdicts directly, never derived
+  from rolled-up test verdicts (unchanged).
 
-**Exit codes**: consolidation mode's retval is the worst mapped
-`ExitCode` across every table's consolidated verdicts (`PASSED`/`SKIPPED`
-→ `SUCCESS`(0), `FAILED` → `TEST_FAILURE`(2), `ERROR` → `TEST_ERROR`(3),
-`CANCELED` → `MISSING_RESULTS`(4) — maintainer-ratified 2026-07-17
-("yes, ratify"): rerun-candidate semantics, mirroring
-`report/concurrent_parser.py`'s existing canceled/non-terminal-task →
-`MISSING_RESULTS` mapping (no results exist to grade — a rerun
-candidate, not an error-family verdict); the ExitCode
-severity rank guarantees it never masks a FAILED/ERROR row from the same
-tables, so this mapping is not to be casually remapped), reduced via the
-existing ExitCode-domain `worst_exit_code` — not the Verdict-domain
-severity table above. Flakiness
-mode always returns `SUCCESS` (report-only view; it has no consolidated
-verdicts to derive from). Consolidation mode requires a selector to
-resolve >=2 matched runs with a usable results.json cache; fewer is a
-usage error: ExitCode.CONFIG_ERROR (99), the same "invocation cannot be
-serviced as given" code used elsewhere, since no result-grading has
-happened yet at that point. Flakiness mode's floor is instead >=1
-comparable column: a single column renders (no per-table emission
-threshold), and a single manifest fanned across multiple arches (one
-enge dispatch invocation) already carries multiple columns
-(maintainer-ratified 2026-07-21, AMENDMENT-1: the --run <id>
-single-manifest case). Zero comparable columns is the same
-CONFIG_ERROR (99) usage error. Either mode: each missing/corrupt
-cache logs an ERROR naming the run and the exact fix
-(enge report --run <run_id>).
+**Exit codes**: `enge compare` always returns `ExitCode.SUCCESS` once the
+floor below is met (R4, maintainer-ratified 2026-07-22) — it is a
+comparison/reporting view, not a grading command, so table content
+(including `FAILED`/`ERROR` consolidated rows) never changes the retval.
+The old consolidation-mode worst-mapped-`ExitCode` reduction (and its
+2026-07-17 `CANCELED`→`MISSING_RESULTS` ratification) is deleted along
+with the mode it governed — that ruling applied to a retval that no
+longer exists, not to anything table-content-derived that survives. The
+floor itself is unified to >=1 comparable column (the old mode-aware
+split — consolidation's >=2-matched-manifest floor vs flakiness's
+>=1-column floor, AMENDMENT-1 — is gone along with the two-mode split);
+fewer is a usage error: `ExitCode.CONFIG_ERROR` (99), the same
+"invocation cannot be serviced as given" code used elsewhere, since no
+result-grading has happened yet at that point. A single manifest fanned
+across multiple arches (one `enge dispatch` invocation) is always
+sufficient on its own, regardless of table partitioning. Either way,
+each missing/corrupt cache logs an ERROR naming the run and the exact
+fix (`enge report --run <run_id>`).
+
+**Descriptor sourcing**: `ExecutionColumn.source`/`.target` (the
+upgrade-path values used for grouping, column headers, and table
+titles) come from the PER-TASK `TaskEntry.source`/`.target` fields
+(`utils/results_parser.py`, populated by the dispatch-context-schema
+harvest), not unconditionally from the run envelope — the read-side half
+of the M4 multi-set descriptor fix. Fallback to the envelope's
+`source`/`target` applies ONLY when the per-task value is `None` AND the
+manifest is single-set (`len({r.get("set") for r in
+manifest["requests"]}) <= 1`), mirroring `report/results_cache.py`'s own
+`is_single_set` harvest-time fallback exactly. A multi-set manifest with
+no per-task value gets no fallback and stays `None`; `compare/__main__.py`
+renders a `None` descriptor as the em dash, never the literal string
+"None" — the em dash is always a render-time substitution, never a
+stored value.
 
 **Deprecation alias**: `enge report --compare` delegates to `enge compare`
 for one release, emitting a WARNING. Unlike every other manifest-backed
 `enge report` invocation, the alias does **not** gap-fill the results
 cache while delegating (maintainer ruling, 2026-07-17) — run `enge report
---run <run_id>` first if the cache needs populating.
+--run <run_id>` first if the cache needs populating. `--splitarch`/
+`--splitpath` are compare-only flags; the alias path's `report` action
+parser doesn't define them, so `getattr(ctx.cli_args, "splitarch",
+False)` (and the `splitpath` equivalent) default the alias to the
+unsplit, one-table-per-tier shape.
 
 ## Conventions
 
