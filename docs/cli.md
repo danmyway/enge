@@ -12,7 +12,7 @@ Send requests to and get results back from Testing Farm conveniently.
 
 - `test` — Dispatch a job to the Testing Farm API endpoint.
 - `report` — Report results for requested tasks.
-- `compare` — Compare and consolidate results.json caches across runs.
+- `compare` — Compare results.json caches across runs, with a consolidated column.
 - `rerun` — Parse given tasks and rerun specified jobs.
 - `reportportal` — Manage ReportPortal launches.
 - `cancel` — Cancel Testing Farm tasks.
@@ -122,7 +122,7 @@ examples:
 
 ## compare
 
-Read cached results.json data (see 'enge report') and build consolidation or flakiness comparison tables across runs.
+Read cached results.json data (see 'enge report') and build a comparison table across runs, one column per execution plus an always-present consolidated column.
 
 ### Options
 
@@ -136,17 +136,19 @@ Read cached results.json data (see 'enge report') and build consolidation or fla
 - `--tag TAG` — Filter runs by tag (repeatable, OR within).
 - `-s, --short` — Display shortened test and plan names.
 - `--show-tests` — Display detailed test view. By default, only plan view is shown.
-- `--flakiness` — Flakiness view: one table per tier, arch/upgrade-path fold in as columns. Comparison only -- no consolidated column, ever.
+- `--splitarch` — One table per (tier, arch) instead of folding arch into columns. Combinable with --splitpath.
+- `--splitpath` — One table per (tier, upgrade-path) instead of folding the upgrade-path into columns. Combinable with --splitarch.
 - `-o, --format {terminal,gitlab,json}` — Output format. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks and tables. 'json': machine-readable JSON to stdout (suppresses other output). (default: `terminal`)
 
 ### Examples
 
 ```
 examples:
-  enge compare --tag regression                       # consolidate all regression-tagged runs
+  enge compare --tag regression                       # compare all regression-tagged runs, one table per tier
   enge compare --set smoke --tier tier0 --show-tests   # detailed test view
-  enge compare --run <run_id> --tier tier1             # single run, still needs a 2nd source
-  enge compare --flakiness --tier tier1                # flakiness view (no consolidation)
+  enge compare --run <run_id> --tier tier1             # single run is enough on its own
+  enge compare --splitarch --tier tier1                # one table per (tier, arch)
+  enge compare --splitpath --tier tier1                # one table per (tier, upgrade-path)
 ```
 
 ## rerun
