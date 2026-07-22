@@ -678,5 +678,170 @@ class TestArtifactApiDictMerge(unittest.TestCase):
         self.assertEqual(resolved.brew_references, ["pkg-x"])
 
 
+class TestManifestDispatchContextNonCollapse(unittest.TestCase):
+    """Regression: manifest entries must record each request's own
+    source/target/git_ref/event/build_references, never a collapse to
+    the first test set in a multi-set dispatch."""
+
+    def _make_ctx(self, tmp_path):
+        po = MagicMock()
+        po.testing_farm = {"api_key": "token"}
+        po.testing_farm_endpoint = MagicMock(
+            log_artifact_baseurl="https://artifacts.example.com",
+            api_endpoint_url="https://api.tf.example/v0.1/requests",
+        )
+        po.tests = {
+            "git_url": "https://git.example/repo",
+            "git_ref": "main",
+            "parallel_limit": 5,
+            "tier": {},
+        }
+        po.project = {"repo_url": "https://git.example/repo", "name": "pkg"}
+        po.cli_args = MagicMock()
+        po.cli_args.dryrun = False
+        po.cli_args.testfilter = None
+        po.cli_args.test = None
+        po.cli_args.planfilter = None
+        po.cli_args.environment = None
+        po.cli_args.context = None
+        po.cli_args.git_url = None
+        po.cli_args.git_ref = None
+        po.cli_args.event = None
+        po.cli_args.only_rhsm_mock_cdn = False
+        po.cli_args.no_rhsm = False
+        po.cli_args.only_rhsm_stage_cdn = False
+        po.cli_args.auto_tag = False
+        po.cli_args.set_tag = None
+        po.cli_args.wait = False
+        po.cli_args.action = "test"
+        po.config = {}
+        po.archive_tasks_latest = str(tmp_path / "latest")
+        po.archive_tasks_default = str(tmp_path / "archive") + "/"
+        po.manifest_runs_dir = str(tmp_path / "runs")
+        po.manifest_latest = str(tmp_path / "manifest_latest")
+        po.pool = None
+        po.architectures = []
+        po.environment_variables = {}
+        po.tmt_context = {}
+        return po
+
+    def _make_spec(self, *, set_name, source_spec, target_spec, event, brew_ref):
+        return RequestSpec(
+            set_name=set_name,
+            tier="tier0",
+            plan="/plans/p1",
+            arch="x86_64",
+            source_spec=source_spec,
+            target_spec=target_spec,
+            upgrade_path=f"{source_spec['major']}to{target_spec['major']}",
+            effective_values={
+                "event": event,
+                "brew_api": {"package": "leapp", "build_references": [brew_ref]},
+                "copr_api": {},
+            },
+        )
+
+    def _resolver_stub(self):
+        def resolve_builds(compose_name, ctx):
+            brew_refs = getattr(ctx, "brew_references", [])
+            ref = brew_refs[0] if brew_refs else "none"
+            return [
+                {
+                    "compose": compose_name,
+                    "distro": "rhel",
+                    "build_id": ref,
+                    "packages": [ref],
+                    "nvr": ref,
+                }
+            ]
+
+        stub = MagicMock()
+        stub.resolve_builds = resolve_builds
+        return stub
+
+    def test_two_sets_carry_their_own_context_not_set_zeros(self):
+        import tempfile
+        from pathlib import Path
+        from enge.utils.manifest import ManifestWriter
+        from enge.utils.ulid import generate_ulid
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            po = self._make_ctx(tmp_path)
+
+            spec_alpha = self._make_spec(
+                set_name="alpha",
+                source_spec={"major": 8, "minor": 10, "compose_name": "RHEL-8.10.0"},
+                target_spec={"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"},
+                event="nightly-alpha",
+                brew_ref="pkg-alpha-1.0",
+            )
+            spec_beta = self._make_spec(
+                set_name="beta",
+                source_spec={"major": 9, "minor": 2, "compose_name": "RHEL-9.2.0"},
+                target_spec={"major": 10, "minor": 0, "compose_name": "RHEL-10.0.0"},
+                event="nightly-beta",
+                brew_ref="pkg-beta-2.0",
+            )
+
+            manifest_writer = ManifestWriter(
+                run_id=generate_ulid(),
+                command="test",
+                argv=["enge", "test"],
+            )
+
+            resolver = self._resolver_stub()
+            responses = [
+                MagicMock(json=lambda: {"id": "task-alpha"}),
+                MagicMock(json=lambda: {"id": "task-beta"}),
+            ]
+
+            with (
+                patch(
+                    "enge.dispatch.set_flow.generate_tier_plan_filter",
+                    return_value="name: /plans/.*",
+                ),
+                patch(
+                    "enge.dispatch.tf_send_request.http_post",
+                    side_effect=responses,
+                ),
+            ):
+                for idx, spec in enumerate((spec_alpha, spec_beta), start=1):
+                    result = process_request_spec(
+                        idx=idx,
+                        total_expected_requests=2,
+                        spec=spec,
+                        artifact_type="fedora-koji-build",
+                        artifact_resolver=resolver,
+                        ctx=po,
+                        manifest_writer=manifest_writer,
+                    )
+                    self.assertEqual(
+                        result.get("status"),
+                        "submitted",
+                        f"spec {spec.set_name} did not submit: {result}",
+                    )
+
+            requests = manifest_writer.to_dict()["requests"]
+            self.assertEqual(len(requests), 2)
+            alpha_entry = requests[0]
+            beta_entry = requests[1]
+
+            self.assertEqual(alpha_entry["source"], "8.10")
+            self.assertEqual(alpha_entry["target"], "9.4")
+            self.assertEqual(alpha_entry["event"], "nightly-alpha")
+            self.assertEqual(alpha_entry["build_references"], ["pkg-alpha-1.0"])
+
+            self.assertEqual(beta_entry["source"], "9.2")
+            self.assertEqual(beta_entry["target"], "10.0")
+            self.assertEqual(beta_entry["event"], "nightly-beta")
+            self.assertEqual(beta_entry["build_references"], ["pkg-beta-2.0"])
+
+            self.assertNotEqual(alpha_entry["source"], beta_entry["source"])
+            self.assertNotEqual(
+                alpha_entry["build_references"], beta_entry["build_references"]
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

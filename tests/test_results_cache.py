@@ -47,8 +47,12 @@ def _request(
     source_compose="RHEL-9.9.0-20260629.0",
     target_compose=None,
     dispatched_at="2026-07-07T10:35:13Z",
+    **dispatch_context,
 ):
-    return {
+    """`**dispatch_context` accepts any of source/target/git_ref/event/
+    build_references -- omitted entirely by default, matching every real
+    manifest request entry written before this schema existed."""
+    request = {
         "task_id": task_id,
         "set": set_name,
         "tier": tier,
@@ -60,6 +64,8 @@ def _request(
         "dispatched_at": dispatched_at,
         "launch_uuid": None,
     }
+    request.update(dispatch_context)
+    return request
 
 
 def _write_manifest(runs_dir, run_id, requests, context=None, created_at=None):
@@ -503,6 +509,110 @@ class TestMetadataFromManifest(_CacheTestCase):
         self.assertEqual(schema.event, "candidate")
         self.assertEqual(schema.source, "9.9")
         self.assertEqual(schema.target, "10.3")
+
+    def test_dispatch_context_copied_from_per_task_manifest_request(self):
+        """When the manifest request entry itself carries the 5 new
+        fields (post-branch dispatch), the harvested task entry must copy
+        them verbatim -- never fall back to the envelope, even though the
+        envelope also happens to have matching-looking values here."""
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDLLLLLLLLLLLLLLLLLLL"
+        task_id = "55555555-0000-0000-0000-000000000001"
+        _write_manifest(
+            runs_dir,
+            run_id,
+            [
+                _request(
+                    task_id,
+                    source="9.2",
+                    target="10.0",
+                    git_ref="rhsm-branch",
+                    event="ctc1",
+                    build_references=["pkg-per-task"],
+                )
+            ],
+            context={"event": "candidate", "source": "9.9", "target": "10.3"},
+        )
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result = _make_task_result(
+            request_uuid=task_id, xunit_bytes=_xunit_bytes()
+        )
+        cache_report_results(ctx, [task_result])
+
+        entry = parse_results_json(results_dir_path / f"{run_id}.json").results[0]
+        self.assertEqual(entry.source, "9.2")
+        self.assertEqual(entry.target, "10.0")
+        self.assertEqual(entry.git_ref, "rhsm-branch")
+        self.assertEqual(entry.event, "ctc1")
+        self.assertEqual(entry.build_references, ["pkg-per-task"])
+
+    def test_legacy_single_set_manifest_falls_back_to_envelope(self):
+        """A manifest predating this schema (request has none of the 5
+        new keys) with exactly one set across all its requests: source/
+        target/event fall back to the envelope context. git_ref has no
+        envelope equivalent (never existed at the envelope level either)
+        so it stays None -- not a bug, just nothing to fall back to."""
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDMMMMMMMMMMMMMMMMMMM"
+        task_id = "66666666-0000-0000-0000-000000000001"
+        _write_manifest(
+            runs_dir,
+            run_id,
+            [_request(task_id, set_name="onlyset")],
+            context={"event": "candidate", "source": "9.9", "target": "10.3"},
+        )
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result = _make_task_result(
+            request_uuid=task_id, xunit_bytes=_xunit_bytes()
+        )
+        cache_report_results(ctx, [task_result])
+
+        entry = parse_results_json(results_dir_path / f"{run_id}.json").results[0]
+        self.assertEqual(entry.source, "9.9")
+        self.assertEqual(entry.target, "10.3")
+        self.assertEqual(entry.event, "candidate")
+        self.assertIsNone(entry.git_ref)
+        self.assertEqual(entry.build_references, [])
+
+    def test_legacy_multi_set_manifest_does_not_fall_back(self):
+        """A manifest predating this schema with MORE THAN ONE set across
+        its requests: the envelope's single source/target/event cannot be
+        trusted to belong to any particular request (the exact collapse
+        bug this branch exists to fix elsewhere) -- no fallback, fields
+        stay None/[]."""
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDNNNNNNNNNNNNNNNNNNN"
+        task_id_a = "77777777-0000-0000-0000-000000000001"
+        task_id_b = "77777777-0000-0000-0000-000000000002"
+        _write_manifest(
+            runs_dir,
+            run_id,
+            [
+                _request(task_id_a, set_name="alpha"),
+                _request(task_id_b, set_name="beta"),
+            ],
+            context={"event": "candidate", "source": "9.9", "target": "10.3"},
+        )
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result_a = _make_task_result(
+            request_uuid=task_id_a, xunit_bytes=_xunit_bytes()
+        )
+        cache_report_results(ctx, [task_result_a])
+
+        entry = parse_results_json(results_dir_path / f"{run_id}.json").results[0]
+        self.assertIsNone(entry.source)
+        self.assertIsNone(entry.target)
+        self.assertIsNone(entry.event)
+        self.assertEqual(entry.build_references, [])
 
 
 class TestUnknownTaskIdSkip(_CacheTestCase):

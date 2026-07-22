@@ -52,6 +52,36 @@ class TestManifestWriter(unittest.TestCase):
         entry = w.to_dict()["requests"][0]
         self.assertEqual(entry["rerun_of"], "parent-uuid")
 
+    def test_add_request_emits_dispatch_context_keys_default_when_absent(self):
+        """source/target/git_ref/event default to None, build_references to []."""
+        w = self._writer()
+        w.add_request("uuid-1", tier="tier0", arch="x86_64")
+        entry = w.to_dict()["requests"][0]
+        for key in ("source", "target", "git_ref", "event"):
+            self.assertIn(key, entry)
+            self.assertIsNone(entry[key])
+        self.assertIn("build_references", entry)
+        self.assertEqual(entry["build_references"], [])
+
+    def test_add_request_emits_dispatch_context_keys_when_provided(self):
+        w = self._writer()
+        w.add_request(
+            "uuid-1",
+            tier="tier0",
+            arch="x86_64",
+            source="9.9",
+            target="10.3",
+            git_ref="main",
+            event="preliminary",
+            build_references=["12345:centos-stream9-x86_64"],
+        )
+        entry = w.to_dict()["requests"][0]
+        self.assertEqual(entry["source"], "9.9")
+        self.assertEqual(entry["target"], "10.3")
+        self.assertEqual(entry["git_ref"], "main")
+        self.assertEqual(entry["event"], "preliminary")
+        self.assertEqual(entry["build_references"], ["12345:centos-stream9-x86_64"])
+
     def test_flush_creates_valid_json(self):
         w = self._writer()
         for i in range(3):

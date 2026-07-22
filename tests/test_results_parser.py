@@ -242,6 +242,55 @@ class TestTaskEntryValidation(unittest.TestCase):
         with self.assertRaises(ValidationError):
             TaskEntry.from_dict(_task_payload(verdict="RUNNING"))
 
+    def test_dispatch_context_fields_absent_default_to_none_and_empty_list(self):
+        """A pre-existing (pre-branch) cached task entry has none of the 5
+        new keys. These are optional, not required -- from_dict() must not
+        raise, and must default source/target/git_ref/event to None and
+        build_references to []."""
+        payload = _task_payload()
+        self.assertNotIn("source", payload)
+        task = TaskEntry.from_dict(payload)
+        self.assertIsNone(task.source)
+        self.assertIsNone(task.target)
+        self.assertIsNone(task.git_ref)
+        self.assertIsNone(task.event)
+        self.assertEqual(task.build_references, [])
+
+    def test_dispatch_context_fields_round_trip(self):
+        task = TaskEntry.from_dict(
+            _task_payload(
+                source="9.9",
+                target="10.3",
+                git_ref="rhsm-branch",
+                event="preliminary",
+                build_references=["12345:centos-stream9-x86_64"],
+            )
+        )
+        self.assertEqual(task.source, "9.9")
+        self.assertEqual(task.target, "10.3")
+        self.assertEqual(task.git_ref, "rhsm-branch")
+        self.assertEqual(task.event, "preliminary")
+        self.assertEqual(task.build_references, ["12345:centos-stream9-x86_64"])
+
+        d = task.to_dict()
+        self.assertEqual(d["source"], "9.9")
+        self.assertEqual(d["target"], "10.3")
+        self.assertEqual(d["git_ref"], "rhsm-branch")
+        self.assertEqual(d["event"], "preliminary")
+        self.assertEqual(d["build_references"], ["12345:centos-stream9-x86_64"])
+
+    def test_to_dict_always_emits_dispatch_context_keys_even_when_absent(self):
+        """Freshly round-tripped entries must always carry all 5 keys, even
+        when their values are the None/[] defaults -- emit-always applies
+        to results.json task entries too, not just manifest requests."""
+        task = TaskEntry.from_dict(_task_payload())
+        d = task.to_dict()
+        for key in ("source", "target", "git_ref", "event"):
+            self.assertIn(key, d)
+            self.assertIsNone(d[key])
+        self.assertIn("build_references", d)
+        self.assertEqual(d["build_references"], [])
+
 
 class TestResultsJsonSchemaValidation(unittest.TestCase):
     def test_valid_root_payload_parses(self):
