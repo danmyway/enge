@@ -127,10 +127,12 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   partial failure" for dispatch (some requests failed), report
   (test failures), and cancel (some cancellations failed).
   Report is the ONLY subcommand that returns codes 3
-  (errors in parsed results) and 4 (missing/partial results), and the only
-  one requiring severity precedence (3 > 2 > 4 > 0, error-dominates —
-  missing results are rerun candidates and must not mask a real error),
-  because it is the only command that grades multi-plan result sets.
+  (errors in parsed results) and 4 (missing/partial results, including
+  unrecognized TF overall values — rerun candidates, maintainer-ratified
+  2026-07-17), and the only one requiring severity precedence
+  (3 > 2 > 4 > 0, error-dominates — missing results are rerun candidates
+  and must not mask a real error), because it is the only command that
+  grades multi-plan result sets.
 - **State files**: JSON manifests under `~/.local/share/enge/runs/<run_id>.json`
   (XDG_DATA_HOME respected; config-overridable). Each dispatch/rerun writes
   one versioned manifest (schema_version=1) with structured per-request
@@ -229,7 +231,10 @@ its table output or exit code.
   WARNING naming the value (report-layer policy, not a schema concern).
   Task-level verdict prefers TF's own per-task overall result when it is
   a real, recognized value; otherwise it falls back to severity-max over
-  that task's plan verdicts.
+  that task's plan verdicts. This fallback is intentional and distinct
+  from the exit-code dispatch's unrecognized-overall → MISSING_RESULTS
+  mapping in concurrent_parser.py — verdict layer and exit-code layer are
+  separate contracts; do not align the two.
 - **`total_duration_seconds`** is the sum of per-test durations when
   xunit is present. For `CANCELED` and terminal-no-xunit `ERROR` entries
   it is the `0.0` sentinel (maintainer ruling, 2026-07-15/16): the TF

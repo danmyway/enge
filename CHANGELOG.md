@@ -64,6 +64,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `setup.cfg`, including its embedded `[tox:tox]`/`[testenv]` block (unused — CI invokes `pytest` directly, not `tox`)
 
 ### Fixed
+- `enge report` now maps an unrecognized Testing Farm overall result (anything outside `passed`/`failed`/`error`) to exit code 4 (`MISSING_RESULTS`) instead of 99 (`CONFIG_ERROR`), and logs the condition at ERROR naming the task and the raw value. An unrecognized overall is an indeterminate TF response — a rerun candidate, not a configuration problem — and the old `CONFIG_ERROR` mapping had a masking hazard: the severity-precedence table has no entry for `CONFIG_ERROR`, so it fell back to its raw value (99), which outranked `TEST_ERROR` (3) when aggregating a multi-task report and could hide a real test error behind a spurious "config error" exit code
 - Report run filters (`--set`/`--tier`/`--arch`/`--tag`) now accept multiple values (OR within a filter, AND across filters); previously repeated flags silently kept only the last value (`enge report --list --set A --set B` dropped A). Empty-string filter values are treated as unset
 - Partial cancellation failures now exit 2 (partial failure) as documented; previously the cancel module's broad `except Exception` handler re-wrapped the internal `ValidationError` as an unmapped `EngeError`, producing exit 1
 - Multi-set runs are now found by `--set <name>` for every dispatched set, not only the first; `find_runs` matches per-request set fields in addition to the run's context
