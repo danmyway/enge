@@ -39,6 +39,19 @@ class TestManifestWriter(unittest.TestCase):
         self.assertEqual(len(d["requests"]), 1)
         self.assertEqual(d["requests"][0]["task_id"], "uuid-1")
 
+    def test_add_request_emits_rerun_of_key_null_by_default(self):
+        w = self._writer()
+        w.add_request("uuid-1", tier="tier0", arch="x86_64")
+        entry = w.to_dict()["requests"][0]
+        self.assertIn("rerun_of", entry)
+        self.assertIsNone(entry["rerun_of"])
+
+    def test_add_request_emits_rerun_of_value_when_provided(self):
+        w = self._writer()
+        w.add_request("uuid-1", tier="tier0", arch="x86_64", rerun_of="parent-uuid")
+        entry = w.to_dict()["requests"][0]
+        self.assertEqual(entry["rerun_of"], "parent-uuid")
+
     def test_flush_creates_valid_json(self):
         w = self._writer()
         for i in range(3):

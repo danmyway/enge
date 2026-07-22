@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from tests._helpers import make_app_context
 
 from enge.rerun.__main__ import (
+    _build_parent_request_index,
     _extract_tags_from_filename,
     _get_next_rerun_tag,
     _unique_preserve,
@@ -32,6 +33,56 @@ class TestLegacyRerunTagInheritance(unittest.TestCase):
         current_tags = ["rerun", "tier0"]
         result = _unique_preserve([*base_tags, *current_tags])
         self.assertEqual(result, ["enge", "automated", "rerun", "tier0"])
+
+
+class TestBuildParentRequestIndex(unittest.TestCase):
+    """Unit tests for the parent-manifest request index used for rerun
+    field inheritance (set/tier/target_compose)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_indexes_parent_requests_by_task_id(self):
+        parent_id = generate_ulid()
+        parent = ManifestWriter(
+            run_id=parent_id, command="test", argv=["enge", "test"], tags=[]
+        )
+        parent.add_request(
+            "task-a",
+            set_name="alpha",
+            tier="tier0",
+            arch="ppc64le",
+            target_compose="RHEL-10.0",
+        )
+        parent.flush(self.runs_dir, self.latest)
+
+        index = _build_parent_request_index(parent_id, str(self.runs_dir))
+
+        self.assertEqual(index["task-a"]["set"], "alpha")
+        self.assertEqual(index["task-a"]["tier"], "tier0")
+        self.assertEqual(index["task-a"]["target_compose"], "RHEL-10.0")
+
+    @patch("enge.rerun.__main__.ManifestReader.get_run")
+    def test_no_parent_run_id_skips_manifest_load(self, mock_get_run):
+        index = _build_parent_request_index(None, str(self.runs_dir))
+
+        self.assertEqual(index, {})
+        mock_get_run.assert_not_called()
+
+    def test_load_failure_returns_empty_index_and_logs_debug(self):
+        missing_parent_id = generate_ulid()  # no manifest file ever written
+
+        with self.assertLogs("enge.rerun.__main__", level="DEBUG") as log_ctx:
+            index = _build_parent_request_index(missing_parent_id, str(self.runs_dir))
+
+        self.assertEqual(index, {})
+        self.assertTrue(any("parent manifest" in msg.lower() for msg in log_ctx.output))
 
 
 TASK_UUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -249,6 +300,193 @@ class TestRerunManifestLineageWiring(unittest.TestCase):
 
         self.assertEqual(child["parent_run_id"], parent_id)
         self.assertEqual(child["tags"], ["nightly", "milestone-x", "cli-tag", "rerun"])
+
+
+class TestRerunManifestFieldInheritance(unittest.TestCase):
+    """Wiring-level tests: rerun request entries inherit set/tier/target_compose
+    from the parent manifest's matching request entry, and always record
+    rerun_of (the original task uuid)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _find_child_manifest(self, exclude_id):
+        manifests = [m for m in self.runs_dir.glob("*.json") if m.stem != exclude_id]
+        self.assertEqual(
+            len(manifests), 1, f"Expected 1 child manifest, got {len(manifests)}"
+        )
+        return json.loads(manifests[0].read_text())
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_inherits_set_tier_target_compose_and_rerun_of(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _mock_repin, _mock_rp
+    ):
+        parent_id = generate_ulid()
+        parent = ManifestWriter(
+            run_id=parent_id, command="test", argv=["enge", "test"], tags=[]
+        )
+        # Parent's arch ("ppc64le") deliberately differs from the TF payload's
+        # arch ("x86_64", set in _mock_tf_response) to pin that arch is always
+        # payload-derived, never inherited from the parent.
+        parent.add_request(
+            TASK_UUID,
+            set_name="alpha",
+            tier="tier0",
+            arch="ppc64le",
+            target_compose="RHEL-10.0",
+        )
+        parent.flush(self.runs_dir, self.latest)
+
+        api_url = f"https://tf.example.com/api/{TASK_UUID}"
+        mock_parse.return_value = (
+            [api_url],
+            f"manifest:{parent_id}",
+            {TASK_UUID: None, api_url: None},
+        )
+        mock_xunit.return_value = _parsed_dict()
+        mock_http.return_value = _mock_tf_response()
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = []
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        main(ctx)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        entry = child["requests"][0]
+
+        self.assertEqual(entry["set"], "alpha")
+        self.assertEqual(entry["tier"], "tier0")
+        self.assertEqual(entry["target_compose"], "RHEL-10.0")
+        self.assertEqual(entry["arch"], "x86_64")
+        self.assertEqual(entry["rerun_of"], TASK_UUID)
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_original_uuid_absent_from_parent_yields_none_fields(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _mock_repin, _mock_rp
+    ):
+        parent_id = generate_ulid()
+        parent = ManifestWriter(
+            run_id=parent_id, command="test", argv=["enge", "test"], tags=[]
+        )
+        parent.add_request(
+            "some-other-task-uuid",
+            set_name="alpha",
+            tier="tier0",
+            target_compose="RHEL-10.0",
+        )
+        parent.flush(self.runs_dir, self.latest)
+
+        api_url = f"https://tf.example.com/api/{TASK_UUID}"
+        mock_parse.return_value = (
+            [api_url],
+            f"manifest:{parent_id}",
+            {TASK_UUID: None, api_url: None},
+        )
+        mock_xunit.return_value = _parsed_dict()
+        mock_http.return_value = _mock_tf_response()
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = []
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        main(ctx)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        entry = child["requests"][0]
+
+        self.assertIsNone(entry["set"])
+        self.assertIsNone(entry["tier"])
+        self.assertIsNone(entry["target_compose"])
+        self.assertEqual(entry["rerun_of"], TASK_UUID)
+
+    @patch("enge.rerun.__main__.ManifestReader.get_run")
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_raw_input_source_skips_parent_load_and_fields_are_none(
+        self,
+        mock_parse,
+        mock_xunit,
+        mock_submit_cls,
+        mock_http,
+        _mock_repin,
+        _mock_rp,
+        mock_get_run,
+    ):
+        api_url = f"https://tf.example.com/api/{TASK_UUID}"
+        mock_parse.return_value = (
+            [api_url],
+            None,
+            {TASK_UUID: None, api_url: None},
+        )
+        mock_xunit.return_value = _parsed_dict()
+        mock_http.return_value = _mock_tf_response()
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = []
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        main(ctx)
+
+        mock_get_run.assert_not_called()
+
+        child = self._find_child_manifest(exclude_id=None)
+        entry = child["requests"][0]
+
+        self.assertIsNone(entry["set"])
+        self.assertIsNone(entry["tier"])
+        self.assertIsNone(entry["target_compose"])
+        self.assertEqual(entry["rerun_of"], TASK_UUID)
 
 
 if __name__ == "__main__":
