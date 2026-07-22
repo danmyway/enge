@@ -593,7 +593,13 @@ class XMLParser:
                         "error": "Pipeline error detected",
                     }
             else:
-                _raise_retval(task_result, ExitCode.CONFIG_ERROR)
+                LOGGER.error(
+                    "task %s: unknown TF overall result %r; mapping to "
+                    "MISSING_RESULTS",
+                    task_result.request_uuid,
+                    job_result_overall,
+                )
+                _raise_retval(task_result, ExitCode.MISSING_RESULTS)
 
             # Skip if overall result is passed and skip_pass is enabled
             if skip_pass and job_result_overall.upper() == "PASSED":
