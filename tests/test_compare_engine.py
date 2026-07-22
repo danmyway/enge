@@ -1,22 +1,35 @@
-"""RED tests for the enge compare consolidation engine
-(enge.compare.engine).
+"""RED tests for the unified `enge compare` engine (enge.compare.engine).
 
-Pure, I/O-free contract tests for the ratified design (see CLAUDE.md
-"Results.json format" and the fire-time compare-subcommand session log):
+Ratified redesign (compare-redesign-contract-v3 C1/C2/C3/R1/R3/R5, fired
+2026-07-22 -- see CLAUDE.md "Compare consolidation policy" pending
+rewrite): the old two-mode split (`--flakiness` flag selecting flakiness
+vs consolidation tables) is gone. There is now ONE view: a multi-column
+comparison table plus an always-present consolidated column.
 
-- Grouping: `set` is never a grouping coordinate; tier is a hard partition
-  (group_by_coordinate's key always includes tier, so no group ever spans
-  two tiers); consolidation-mode groups are keyed by
-  (tier, arch, source, target).
-- Consolidation policy: any PASSED among a row's present columns wins;
-  otherwise the chronologically latest present column's verdict reports;
-  a `-` (absent) cell never participates; l0 (plan) rows consolidate on
-  plan verdicts directly, never derived from test-level consolidation.
-- Flakiness mode: one group per tier only (arch/source/target fold into
-  columns); rows never carry a consolidated value.
-- Exit-code derivation: worst mapped ExitCode across all consolidated
-  values, using ExitCode-domain `worst_exit_code` -- NOT the
-  results_parser/results_cache Verdict severity-rank table.
+- Grouping (C2): `set` is never a grouping coordinate. Tier is always a
+  hard partition. `--splitarch`/`--splitpath` add arch/path to the table
+  key; neither flag folds every (arch, path) coordinate into one
+  per-tier table.
+- Consolidation (R1): TWO-STAGE. Stage 1, within each (arch, source,
+  target) coordinate over its chronological columns: any PASSED wins;
+  otherwise the latest REAL result wins. SKIPPED, CANCELED (fire-time
+  ruling, 2026-07-22: grouped with SKIPPED as an absence-class verdict
+  for consolidation purposes, not a real result), and absent are all
+  excluded from this scan. Stage 2, across the coordinates present in a
+  row: severity-max ERROR > FAILED > PASSED. A coordinate with no real
+  result contributes nothing to stage 2. This is the behavioral delta
+  from the old single-stage policy: a PASS on one coordinate no longer
+  masks a FAIL/ERROR on another -- only PASS-wins *within* a coordinate's
+  own rerun history.
+- All-excluded rows (R3, generalized): if NO coordinate produces a real
+  result, the row falls back to SKIPPED when >=1 cell is literally
+  SKIPPED, else CANCELED when >=1 cell is literally CANCELED (never
+  fabricates a PASSED/FAILED/ERROR that did not occur).
+- Flakiness (R5): `flaky` stays computed on every row (present cells
+  only, AMENDMENT-2 semantics), regardless of split flags; never
+  rendered as a column (see test_compare_main.py).
+- Absent marker (C3): unified to the em dash `—` everywhere (the old
+  consolidation-only `-` marker is gone).
 
 Fixtures are inline builder functions in this module (not files under
 tests/fixtures/compare/) -- these are test inputs, not pinned contracts,
@@ -25,7 +38,6 @@ matching the precedent set by tests/test_results_cache.py.
 
 import unittest
 
-from enge.utils.globals import ExitCode
 from enge.utils.results_parser import PlanEntry, TestEntry
 
 
@@ -72,126 +84,190 @@ def _column(
     )
 
 
-class TestGroupByCoordinate(unittest.TestCase):
-    """Consolidation-mode grouping contract."""
+class TestGroupColumns(unittest.TestCase):
+    """Table partitioning contract (C2)."""
 
-    def test_set_is_excluded_from_the_coordinate_key(self):
-        from enge.compare.engine import group_by_coordinate
+    def test_set_is_excluded_from_every_grouping_key(self):
+        from enge.compare.engine import group_columns
 
-        col_a = _column(
-            task_id="t1", set_name="setA", dispatched_at="2026-07-01T00:00:00Z"
-        )
-        col_b = _column(
-            task_id="t2", set_name="setB", dispatched_at="2026-07-02T00:00:00Z"
-        )
+        col_a = _column(task_id="t1", set_name="setA")
+        col_b = _column(task_id="t2", set_name="setB")
 
-        groups = group_by_coordinate([col_a, col_b])
+        groups = group_columns([col_a, col_b], splitarch=True, splitpath=True)
 
-        # Same (tier, arch, source, target) but different `set` names must
-        # land in the SAME group -- set is never part of the key.
         self.assertEqual(len(groups), 1)
         (only_group,) = groups.values()
         self.assertEqual({c.task_id for c in only_group}, {"t1", "t2"})
 
-    def test_tier_is_a_hard_partition(self):
-        from enge.compare.engine import group_by_coordinate
-
-        col_tier0 = _column(task_id="t1", tier="tier0")
-        col_tier1 = _column(task_id="t2", tier="tier1")
-
-        groups = group_by_coordinate([col_tier0, col_tier1])
-
-        self.assertEqual(len(groups), 2)
-        for key, cols in groups.items():
-            tiers_in_group = {c.tier for c in cols}
-            self.assertEqual(
-                len(tiers_in_group),
-                1,
-                "a single coordinate group must never span two tiers",
-            )
-
-    def test_distinct_arch_source_target_produce_distinct_groups(self):
-        from enge.compare.engine import group_by_coordinate
+    def test_default_folds_arch_and_path_into_one_table_per_tier(self):
+        from enge.compare.engine import group_columns
 
         col_a = _column(task_id="t1", arch="x86_64")
         col_b = _column(task_id="t2", arch="s390x")
         col_c = _column(task_id="t3", source="10.3", target="10.4")
 
-        groups = group_by_coordinate([col_a, col_b, col_c])
-
-        self.assertEqual(len(groups), 3)
-
-    def test_columns_within_a_group_are_sorted_chronologically(self):
-        from enge.compare.engine import group_by_coordinate
-
-        later = _column(task_id="later", dispatched_at="2026-07-05T00:00:00Z")
-        earlier = _column(task_id="earlier", dispatched_at="2026-07-01T00:00:00Z")
-
-        groups = group_by_coordinate([later, earlier])
-        (cols,) = groups.values()
-
-        self.assertEqual([c.task_id for c in cols], ["earlier", "later"])
-
-
-class TestGroupByTier(unittest.TestCase):
-    """Flakiness-mode grouping contract: tier only."""
-
-    def test_arch_and_upgrade_path_fold_into_one_table_per_tier(self):
-        from enge.compare.engine import group_by_tier
-
-        col_a = _column(task_id="t1", tier="tier1", arch="x86_64")
-        col_b = _column(task_id="t2", tier="tier1", arch="s390x")
-        col_c = _column(task_id="t3", tier="tier1", source="10.3", target="10.4")
-
-        groups = group_by_tier([col_a, col_b, col_c])
+        groups = group_columns([col_a, col_b, col_c], splitarch=False, splitpath=False)
 
         self.assertEqual(len(groups), 1)
         (cols,) = groups.values()
         self.assertEqual({c.task_id for c in cols}, {"t1", "t2", "t3"})
 
-    def test_still_partitions_across_tiers(self):
-        from enge.compare.engine import group_by_tier
+    def test_splitarch_partitions_by_tier_and_arch(self):
+        from enge.compare.engine import group_columns
+
+        col_a = _column(task_id="t1", arch="x86_64")
+        col_b = _column(task_id="t2", arch="s390x")
+        col_c = _column(task_id="t3", arch="x86_64", source="10.3", target="10.4")
+
+        groups = group_columns([col_a, col_b, col_c], splitarch=True, splitpath=False)
+
+        # x86_64 group folds the two paths together; s390x is separate.
+        self.assertEqual(len(groups), 2)
+        sizes = sorted(len(cols) for cols in groups.values())
+        self.assertEqual(sizes, [1, 2])
+
+    def test_splitpath_partitions_by_tier_and_path(self):
+        from enge.compare.engine import group_columns
+
+        col_a = _column(task_id="t1", source="9.9", target="10.3", arch="x86_64")
+        col_b = _column(task_id="t2", source="9.9", target="10.3", arch="s390x")
+        col_c = _column(task_id="t3", source="10.3", target="10.4", arch="x86_64")
+
+        groups = group_columns([col_a, col_b, col_c], splitarch=False, splitpath=True)
+
+        self.assertEqual(len(groups), 2)
+        sizes = sorted(len(cols) for cols in groups.values())
+        self.assertEqual(sizes, [1, 2])
+
+    def test_both_flags_partition_by_tier_arch_and_path(self):
+        from enge.compare.engine import group_columns
+
+        col_a = _column(task_id="t1", arch="x86_64", source="9.9", target="10.3")
+        col_b = _column(task_id="t2", arch="s390x", source="9.9", target="10.3")
+        col_c = _column(task_id="t3", arch="x86_64", source="10.3", target="10.4")
+
+        groups = group_columns([col_a, col_b, col_c], splitarch=True, splitpath=True)
+
+        self.assertEqual(len(groups), 3)
+
+    def test_tier_is_always_a_hard_partition_regardless_of_flags(self):
+        from enge.compare.engine import group_columns
 
         col_tier0 = _column(task_id="t1", tier="tier0")
         col_tier1 = _column(task_id="t2", tier="tier1")
 
-        groups = group_by_tier([col_tier0, col_tier1])
+        for splitarch in (False, True):
+            for splitpath in (False, True):
+                groups = group_columns(
+                    [col_tier0, col_tier1], splitarch=splitarch, splitpath=splitpath
+                )
+                self.assertEqual(len(groups), 2)
+                for cols in groups.values():
+                    self.assertEqual(len({c.tier for c in cols}), 1)
 
-        self.assertEqual(set(groups.keys()), {"tier0", "tier1"})
+    def test_columns_within_a_group_are_sorted_chronologically(self):
+        from enge.compare.engine import group_columns
+
+        later = _column(task_id="later", dispatched_at="2026-07-05T00:00:00Z")
+        earlier = _column(task_id="earlier", dispatched_at="2026-07-01T00:00:00Z")
+
+        groups = group_columns([later, earlier], splitarch=True, splitpath=True)
+        (cols,) = groups.values()
+
+        self.assertEqual([c.task_id for c in cols], ["earlier", "later"])
 
 
-class TestConsolidationPolicy(unittest.TestCase):
-    """Per-row consolidation policy: PASS-wins, else latest-wins; `-` never
-    participates; l0 uses plan verdicts directly."""
+class TestTwoStageConsolidation(unittest.TestCase):
+    """R1: stage 1 (per coordinate, PASS-wins else latest-real-wins,
+    SKIPPED/CANCELED/absent excluded) then stage 2 (severity-max across
+    coordinates present in the row)."""
 
-    def test_any_passed_among_present_columns_wins(self):
-        from enge.compare.engine import build_consolidation_tables
+    def test_any_passed_within_a_coordinate_wins_stage1(self):
+        from enge.compare.engine import build_tables
 
         cols = [
             _column(
                 task_id="t1",
                 dispatched_at="2026-07-01T00:00:00Z",
-                plans=[_plan("/plans/p1", "FAILED", [_test("/tests/x", "FAILED")])],
+                plans=[_plan("/plans/p1", "FAILED")],
             ),
             _column(
                 task_id="t2",
                 dispatched_at="2026-07-02T00:00:00Z",
-                plans=[_plan("/plans/p1", "PASSED", [_test("/tests/x", "PASSED")])],
+                plans=[_plan("/plans/p1", "PASSED")],
             ),
             _column(
                 task_id="t3",
                 dispatched_at="2026-07-03T00:00:00Z",
-                plans=[_plan("/plans/p1", "ERROR", [_test("/tests/x", "ERROR")])],
+                plans=[_plan("/plans/p1", "ERROR")],
             ),
         ]
 
-        (table,) = build_consolidation_tables(cols, show_tests=False)
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
         (row,) = table.rows
 
         self.assertEqual(row.consolidated, "PASSED")
 
-    def test_latest_wins_when_no_passed_present(self):
-        from enge.compare.engine import build_consolidation_tables
+    def test_skipped_excluded_from_stage1_scan_fail_then_skip_consolidates_to_fail(
+        self,
+    ):
+        """The one ratified behavioral delta from the old single-stage
+        policy: a rerun that came back SKIPPED must not erase a prior
+        FAILED -- SKIPPED is excluded from the "latest real" scan
+        entirely, so FAILED (the latest *real* result) still wins."""
+        from enge.compare.engine import build_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "FAILED")],
+            ),
+            _column(
+                task_id="t2",
+                dispatched_at="2026-07-02T00:00:00Z",
+                plans=[_plan("/plans/p1", "SKIPPED")],
+            ),
+        ]
+
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
+
+        self.assertEqual(row.per_column, ("FAILED", "SKIPPED"))
+        self.assertEqual(row.consolidated, "FAILED")
+
+    def test_canceled_excluded_from_stage1_scan_same_as_skipped(self):
+        """Fire-time ruling (2026-07-22): CANCELED is grouped with
+        SKIPPED as an absence-class verdict for consolidation, so it must
+        not erase a prior FAILED either."""
+        from enge.compare.engine import build_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "FAILED")],
+            ),
+            _column(
+                task_id="t2",
+                dispatched_at="2026-07-02T00:00:00Z",
+                plans=[_plan("/plans/p1", "CANCELED")],
+            ),
+        ]
+
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
+
+        self.assertEqual(row.consolidated, "FAILED")
+
+    def test_latest_real_wins_within_a_coordinate_when_no_passed(self):
+        from enge.compare.engine import build_tables
 
         cols = [
             _column(
@@ -206,39 +282,16 @@ class TestConsolidationPolicy(unittest.TestCase):
             ),
         ]
 
-        (table,) = build_consolidation_tables(cols, show_tests=False)
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
         (row,) = table.rows
 
         self.assertEqual(row.consolidated, "FAILED")
 
-    def test_latest_present_wins_when_entity_absent_from_the_newest_column(self):
-        from enge.compare.engine import build_consolidation_tables
+    def test_absent_cell_never_participates_in_stage1(self):
+        from enge.compare.engine import build_tables
 
-        cols = [
-            _column(
-                task_id="t1",
-                dispatched_at="2026-07-01T00:00:00Z",
-                plans=[_plan("/plans/p1", "FAILED")],
-            ),
-            _column(
-                task_id="t2",
-                dispatched_at="2026-07-02T00:00:00Z",
-                plans=[],  # plan filter changed; /plans/p1 absent here
-            ),
-        ]
-
-        (table,) = build_consolidation_tables(cols, show_tests=False)
-        (row,) = table.rows
-
-        self.assertEqual(row.per_column[1], "-")
-        self.assertEqual(row.consolidated, "FAILED")
-
-    def test_absent_cell_never_participates_in_pass_wins_check(self):
-        from enge.compare.engine import build_consolidation_tables
-
-        # Column 2 has no /plans/p1 at all ("-"); if "-" ever leaked into
-        # the PASS-wins check as a truthy/comparable verdict this would
-        # corrupt the row's consolidated value.
         cols = [
             _column(
                 task_id="t1",
@@ -253,19 +306,102 @@ class TestConsolidationPolicy(unittest.TestCase):
             ),
         ]
 
-        (table,) = build_consolidation_tables(cols, show_tests=False)
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
         (row,) = table.rows
 
-        self.assertEqual(row.per_column, ("ERROR", "-", "FAILED"))
+        self.assertEqual(row.per_column, ("ERROR", "—", "FAILED"))
         self.assertEqual(row.consolidated, "FAILED")
 
-    def test_l0_consolidates_on_plan_verdicts_directly_not_from_tests(self):
-        from enge.compare.engine import build_consolidation_tables
+    def test_stage2_severity_max_error_beats_failed_beats_passed(self):
+        from enge.compare.engine import build_tables
 
-        # Plan-level verdict is FAILED even though the (only) test under it
-        # PASSED -- e.g. a plan-level infra hiccup after tests completed.
-        # l0 must report the plan's own verdict, not something derived by
-        # rolling up test verdicts.
+        cols = [
+            _column(
+                task_id="t1",
+                arch="x86_64",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "PASSED")],
+            ),
+            _column(
+                task_id="t2",
+                arch="s390x",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "FAILED")],
+            ),
+            _column(
+                task_id="t3",
+                arch="aarch64",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "ERROR")],
+            ),
+        ]
+
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
+
+        self.assertEqual(row.consolidated, "ERROR")
+
+    def test_pass_on_one_coordinate_does_not_mask_failure_on_another(self):
+        """The core semantic fix R1 exists for: a PASS on x86_64 must not
+        make a row look all-clear when s390x actually failed."""
+        from enge.compare.engine import build_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                arch="x86_64",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "PASSED")],
+            ),
+            _column(
+                task_id="t2",
+                arch="s390x",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "FAILED")],
+            ),
+        ]
+
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
+
+        self.assertEqual(row.consolidated, "FAILED")
+
+    def test_a_coordinates_rerun_history_can_still_resolve_to_passed(self):
+        """Within ONE coordinate's own time series, PASS-wins still
+        applies -- a fail-then-pass rerun consolidates that coordinate to
+        PASSED, which then correctly wins stage 2 if it's the only
+        coordinate in the row."""
+        from enge.compare.engine import build_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "FAILED")],
+            ),
+            _column(
+                task_id="t2",
+                dispatched_at="2026-07-02T00:00:00Z",
+                plans=[_plan("/plans/p1", "PASSED")],
+            ),
+        ]
+
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
+
+        self.assertEqual(row.consolidated, "PASSED")
+
+    def test_l0_consolidates_on_plan_verdicts_directly_not_from_tests(self):
+        from enge.compare.engine import build_tables
+
         cols = [
             _column(
                 task_id="t1",
@@ -274,13 +410,15 @@ class TestConsolidationPolicy(unittest.TestCase):
             ),
         ]
 
-        (table,) = build_consolidation_tables(cols, show_tests=False)
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
         (row,) = table.rows
 
         self.assertEqual(row.consolidated, "FAILED")
 
     def test_show_tests_rows_are_keyed_by_plan_and_test_name(self):
-        from enge.compare.engine import build_consolidation_tables
+        from enge.compare.engine import build_tables
 
         cols = [
             _column(
@@ -296,7 +434,7 @@ class TestConsolidationPolicy(unittest.TestCase):
             ),
         ]
 
-        (table,) = build_consolidation_tables(cols, show_tests=True)
+        (table,) = build_tables(cols, show_tests=True, splitarch=False, splitpath=False)
         rows_by_label = {(r.plan_label, r.label): r for r in table.rows}
 
         self.assertEqual(
@@ -307,113 +445,117 @@ class TestConsolidationPolicy(unittest.TestCase):
         )
 
 
-class TestFlakinessMode(unittest.TestCase):
-    def test_flakiness_rows_never_carry_a_consolidated_value(self):
-        from enge.compare.engine import build_flakiness_tables
+class TestAllExcludedRowFallback(unittest.TestCase):
+    """R3, generalized: when no coordinate produces a real result, the
+    row falls back to SKIPPED (>=1 literal SKIPPED) else CANCELED (>=1
+    literal CANCELED) -- never fabricates PASSED/FAILED/ERROR."""
+
+    def test_all_skipped_or_absent_with_one_skipped_consolidates_to_skipped(self):
+        from enge.compare.engine import build_tables
 
         cols = [
             _column(
                 task_id="t1",
-                arch="x86_64",
                 dispatched_at="2026-07-01T00:00:00Z",
-                plans=[_plan("/plans/p1", "PASSED")],
+                plans=[_plan("/plans/p1", "SKIPPED")],
             ),
-            _column(
-                task_id="t2",
-                arch="s390x",
-                dispatched_at="2026-07-02T00:00:00Z",
-                plans=[_plan("/plans/p1", "FAILED")],
-            ),
+            _column(task_id="t2", dispatched_at="2026-07-02T00:00:00Z", plans=[]),
         ]
 
-        (table,) = build_flakiness_tables(cols, show_tests=False)
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
 
-        self.assertEqual(table.mode, "flakiness")
-        for row in table.rows:
-            self.assertIsNone(row.consolidated)
+        self.assertEqual(row.consolidated, "SKIPPED")
 
-    def test_flakiness_produces_one_table_per_tier_only(self):
-        from enge.compare.engine import build_flakiness_tables
-
-        cols = [
-            _column(task_id="t1", tier="tier0", arch="x86_64"),
-            _column(task_id="t2", tier="tier0", arch="s390x"),
-            _column(task_id="t3", tier="tier1", arch="x86_64"),
-        ]
-
-        tables = build_flakiness_tables(cols, show_tests=False)
-
-        self.assertEqual({t.tier for t in tables}, {"tier0", "tier1"})
-        for t in tables:
-            self.assertEqual(len(t.columns), 2 if t.tier == "tier0" else 1)
-
-
-class TestFlakinessPlanMismatchAndFlagging(unittest.TestCase):
-    """AMENDMENT-2 (2026-07-21): arch-exclusive/excluded plans never
-    disqualify a manifest, column, or row from flakiness comparison
-    (union row-set -- already the case, see engine.py's set-comprehension
-    plan-name union, shared with consolidation mode). Absent cells render
-    the em dash `—` (distinct from consolidation's `-` ABSENT
-    marker, unchanged by this amendment). Flakiness is flagged per row
-    over PRESENT cells only: >=2 present outcomes that differ."""
-
-    def test_arch_exclusive_plan_row_renders_others_show_em_dash(self):
-        from enge.compare.engine import build_flakiness_tables
+    def test_skipped_and_canceled_mixed_with_no_real_result_prefers_skipped(self):
+        from enge.compare.engine import build_tables
 
         cols = [
             _column(
                 task_id="t1",
-                arch="x86_64",
-                plans=[_plan("/plans/common", "PASSED")],
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "SKIPPED")],
             ),
             _column(
                 task_id="t2",
-                arch="s390x",
-                plans=[
-                    _plan("/plans/common", "PASSED"),
-                    _plan("/plans/x86-only", "FAILED"),
-                ],
+                dispatched_at="2026-07-02T00:00:00Z",
+                plans=[_plan("/plans/p1", "CANCELED")],
             ),
         ]
 
-        (table,) = build_flakiness_tables(cols, show_tests=False)
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
 
-        # group_by_tier orders columns by arch ascending: s390x, then x86_64.
-        self.assertEqual(len(table.columns), 2)
-        row = next(r for r in table.rows if r.label == "/plans/x86-only")
-        self.assertEqual(row.per_column, ("FAILED", "—"))
+        self.assertEqual(row.consolidated, "SKIPPED")
 
-    def test_row_with_one_present_outcome_is_not_flagged_flaky(self):
-        from enge.compare.engine import build_flakiness_tables
+    def test_all_canceled_with_no_skipped_consolidates_to_canceled(self):
+        from enge.compare.engine import build_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "CANCELED")],
+            ),
+        ]
+
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
+
+        self.assertEqual(row.consolidated, "CANCELED")
+
+
+class TestFlakiness(unittest.TestCase):
+    """R5: `flaky` stays computed on every row regardless of split flags;
+    AMENDMENT-2 semantics (present cells only) are unchanged."""
+
+    def test_flagged_when_two_present_outcomes_differ(self):
+        from enge.compare.engine import build_tables
+
+        cols = [
+            _column(task_id="t1", arch="x86_64", plans=[_plan("/plans/p1", "PASSED")]),
+            _column(task_id="t2", arch="s390x", plans=[_plan("/plans/p1", "FAILED")]),
+        ]
+
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
+
+        self.assertTrue(row.flaky)
+
+    def test_not_flagged_with_a_single_present_outcome(self):
+        from enge.compare.engine import build_tables
 
         cols = [
             _column(task_id="t1", arch="x86_64", plans=[_plan("/plans/p1", "PASSED")]),
             _column(task_id="t2", arch="s390x", plans=[]),
         ]
 
-        (table,) = build_flakiness_tables(cols, show_tests=False)
-
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
         (row,) = table.rows
+
         self.assertFalse(row.flaky)
 
-    def test_row_with_two_differing_present_outcomes_and_an_absence_is_flagged(self):
-        from enge.compare.engine import build_flakiness_tables
-
-        cols = [
-            _column(task_id="t1", arch="x86_64", plans=[_plan("/plans/p1", "PASSED")]),
-            _column(task_id="t2", arch="s390x", plans=[_plan("/plans/p1", "FAILED")]),
-            _column(task_id="t3", arch="aarch64", plans=[]),
-        ]
-
-        (table,) = build_flakiness_tables(cols, show_tests=False)
-
-        # group_by_tier orders columns by arch ascending: aarch64, s390x, x86_64.
-        (row,) = table.rows
-        self.assertEqual(row.per_column, ("—", "FAILED", "PASSED"))
-        self.assertTrue(row.flaky)
-
-    def test_single_arch_plan_flagged_flaky_across_rerun_columns(self):
-        from enge.compare.engine import build_flakiness_tables
+    def test_flaky_uses_the_same_formula_under_a_split_table(self):
+        """Flakiness is inherently about the columns present WITHIN a
+        table, so it is not invariant to table partitioning -- splitting
+        by arch isolates each arch into its own single-column table,
+        where a row can never be flagged (a single present outcome is
+        never flaky). What must stay constant across split flags is the
+        formula itself (>=2 differing present outcomes), not the
+        resulting value. This pins flakiness working correctly within a
+        split table: two reruns of the SAME arch that disagree are still
+        flagged once splitarch isolates that arch's own table."""
+        from enge.compare.engine import build_tables
 
         cols = [
             _column(
@@ -430,26 +572,29 @@ class TestFlakinessPlanMismatchAndFlagging(unittest.TestCase):
                 dispatched_at="2026-07-02T00:00:00Z",
                 plans=[_plan("/plans/p1", "PASSED")],
             ),
+            _column(task_id="t3", arch="s390x", plans=[_plan("/plans/p1", "PASSED")]),
         ]
 
-        (table,) = build_flakiness_tables(cols, show_tests=False)
+        split = build_tables(cols, show_tests=False, splitarch=True, splitpath=False)
 
-        (row,) = table.rows
-        self.assertTrue(row.flaky)
+        x86_table = next(t for t in split if t.arch == "x86_64")
+        s390_table = next(t for t in split if t.arch == "s390x")
+        (x86_row,) = x86_table.rows
+        (s390_row,) = s390_table.rows
 
-    def test_consolidation_mode_absence_marker_and_flag_field_unchanged(self):
-        from enge.compare.engine import build_consolidation_tables
+        self.assertTrue(x86_row.flaky)
+        self.assertFalse(s390_row.flaky)
+
+    def test_arch_exclusive_plan_row_renders_others_as_em_dash(self):
+        from enge.compare.engine import build_tables
 
         cols = [
             _column(
-                task_id="t1",
-                arch="x86_64",
-                plans=[_plan("/plans/common", "PASSED")],
+                task_id="t1", arch="x86_64", plans=[_plan("/plans/common", "PASSED")]
             ),
             _column(
                 task_id="t2",
-                arch="x86_64",
-                dispatched_at="2026-07-02T00:00:00Z",
+                arch="s390x",
                 plans=[
                     _plan("/plans/common", "PASSED"),
                     _plan("/plans/x86-only", "FAILED"),
@@ -457,108 +602,55 @@ class TestFlakinessPlanMismatchAndFlagging(unittest.TestCase):
             ),
         ]
 
-        (table,) = build_consolidation_tables(cols, show_tests=False)
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
 
         row = next(r for r in table.rows if r.label == "/plans/x86-only")
-        self.assertEqual(row.per_column, ("-", "FAILED"))
-        self.assertIsNone(row.flaky)
+        self.assertIn("—", row.per_column)
+        self.assertIn("FAILED", row.per_column)
 
 
-class TestExitCodeDerivation(unittest.TestCase):
-    def test_all_passed_yields_success(self):
-        from enge.compare.engine import build_consolidation_tables, derive_exit_code
+class TestUnifiedViewShape(unittest.TestCase):
+    """C1: no more mode split -- every row always carries both a
+    consolidated verdict and a flaky flag."""
 
-        cols = [
-            _column(
-                task_id="t1",
-                dispatched_at="2026-07-01T00:00:00Z",
-                plans=[_plan("/plans/p1", "PASSED")],
-            ),
-            _column(
-                task_id="t2",
-                dispatched_at="2026-07-02T00:00:00Z",
-                plans=[_plan("/plans/p1", "PASSED")],
-            ),
-        ]
-        tables = build_consolidation_tables(cols, show_tests=False)
-
-        self.assertEqual(derive_exit_code(tables), ExitCode.SUCCESS)
-
-    def test_fail_then_pass_rerun_history_exits_success(self):
-        """A row that failed and then passed later must consolidate to
-        PASSED (PASS-wins policy) and therefore exit SUCCESS overall."""
-        from enge.compare.engine import build_consolidation_tables, derive_exit_code
+    def test_every_row_has_a_non_none_consolidated_value(self):
+        from enge.compare.engine import build_tables
 
         cols = [
-            _column(
-                task_id="t1",
-                dispatched_at="2026-07-01T00:00:00Z",
-                plans=[_plan("/plans/p1", "FAILED")],
-            ),
-            _column(
-                task_id="t2",
-                dispatched_at="2026-07-02T00:00:00Z",
-                plans=[_plan("/plans/p1", "PASSED")],
-            ),
+            _column(task_id="t1", plans=[_plan("/plans/p1", "PASSED")]),
+            _column(task_id="t2", arch="s390x", plans=[_plan("/plans/p1", "FAILED")]),
         ]
-        tables = build_consolidation_tables(cols, show_tests=False)
 
-        self.assertEqual(derive_exit_code(tables), ExitCode.SUCCESS)
+        tables = build_tables(cols, show_tests=False, splitarch=False, splitpath=False)
 
-    def test_error_outranks_failed(self):
-        from enge.compare.engine import build_consolidation_tables, derive_exit_code
+        for table in tables:
+            for row in table.rows:
+                self.assertIsNotNone(row.consolidated)
+
+    def test_every_row_has_a_bool_flaky_value(self):
+        from enge.compare.engine import build_tables
 
         cols = [
-            _column(
-                task_id="t1",
-                arch="x86_64",
-                dispatched_at="2026-07-01T00:00:00Z",
-                plans=[_plan("/plans/failing", "FAILED")],
-            ),
-            _column(
-                task_id="t2",
-                arch="s390x",
-                dispatched_at="2026-07-01T00:00:00Z",
-                plans=[_plan("/plans/erroring", "ERROR")],
-            ),
+            _column(task_id="t1", plans=[_plan("/plans/p1", "PASSED")]),
         ]
-        tables = build_consolidation_tables(cols, show_tests=False)
 
-        self.assertEqual(derive_exit_code(tables), ExitCode.TEST_ERROR)
+        tables = build_tables(cols, show_tests=False, splitarch=False, splitpath=False)
 
-    def test_canceled_only_yields_missing_results(self):
-        from enge.compare.engine import build_consolidation_tables, derive_exit_code
+        for table in tables:
+            for row in table.rows:
+                self.assertIsInstance(row.flaky, bool)
 
-        cols = [
-            _column(
-                task_id="t1",
-                dispatched_at="2026-07-01T00:00:00Z",
-                plans=[_plan("/plans/p1", "CANCELED")],
-            ),
-        ]
-        tables = build_consolidation_tables(cols, show_tests=False)
+    def test_comparison_table_no_longer_carries_a_mode_field(self):
+        from enge.compare.engine import ComparisonTable
 
-        self.assertEqual(derive_exit_code(tables), ExitCode.MISSING_RESULTS)
+        self.assertNotIn("mode", ComparisonTable.__dataclass_fields__)
 
-    def test_flakiness_mode_always_reports_success_at_the_engine_level(self):
-        """Flakiness mode's SUCCESS-unless-usage/data-error default is
-        applied by the caller (no consolidated verdicts to derive from at
-        all here); the engine simply never computes retval for it."""
-        from enge.compare.engine import build_flakiness_tables
+    def test_absent_marker_is_the_em_dash(self):
+        from enge.compare.engine import ABSENT
 
-        cols = [
-            _column(
-                task_id="t1",
-                dispatched_at="2026-07-01T00:00:00Z",
-                plans=[_plan("/plans/p1", "ERROR")],
-            ),
-        ]
-        tables = build_flakiness_tables(cols, show_tests=False)
-        # No API to derive an exit code from flakiness tables exists --
-        # asserting the shape instead: no row carries a consolidated verdict.
-        for t in tables:
-            for row in t.rows:
-                self.assertIsNone(row.consolidated)
+        self.assertEqual(ABSENT, "—")
 
 
 if __name__ == "__main__":

@@ -141,11 +141,27 @@ class TestCompareSubcommandRegistered(unittest.TestCase):
         with self.assertRaises(SystemExit):
             get_arguments(["compare", "--unify", "a=b"])
 
-    def test_compare_flakiness_flag_exists(self):
+    def test_compare_flakiness_flag_is_gone(self):
+        """C1: the two-mode split is dead -- there is one unified view,
+        so --flakiness no longer exists on the compare parser."""
         from enge.utils.arg_parser import get_arguments
 
-        args = get_arguments(["compare", "--flakiness"])
-        self.assertTrue(args.flakiness)
+        with self.assertRaises(SystemExit):
+            get_arguments(["compare", "--flakiness"])
+
+    def test_compare_splitarch_and_splitpath_flags_exist(self):
+        from enge.utils.arg_parser import get_arguments
+
+        args = get_arguments(["compare", "--splitarch", "--splitpath"])
+        self.assertTrue(args.splitarch)
+        self.assertTrue(args.splitpath)
+
+    def test_compare_split_flags_default_to_false(self):
+        from enge.utils.arg_parser import get_arguments
+
+        args = get_arguments(["compare"])
+        self.assertFalse(args.splitarch)
+        self.assertFalse(args.splitpath)
 
     def test_compare_dispatches_from_top_level_main(self):
         import enge.__main__ as enge_main
