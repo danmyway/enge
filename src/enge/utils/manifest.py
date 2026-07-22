@@ -45,7 +45,7 @@ class ManifestWriter:
         target: Optional[str] = None,
         git_ref: Optional[str] = None,
         event: Optional[str] = None,
-        build_references: Optional[List[str]] = None,
+        build_ids: Optional[List[str]] = None,
     ) -> None:
         self._requests.append(
             {
@@ -65,9 +65,7 @@ class ManifestWriter:
                 "target": target,
                 "git_ref": git_ref,
                 "event": event,
-                "build_references": (
-                    list(build_references) if build_references else []
-                ),
+                "build_ids": (list(build_ids) if build_ids else []),
             }
         )
 

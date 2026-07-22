@@ -246,7 +246,7 @@ class TestTaskEntryValidation(unittest.TestCase):
         """A pre-existing (pre-branch) cached task entry has none of the 5
         new keys. These are optional, not required -- from_dict() must not
         raise, and must default source/target/git_ref/event to None and
-        build_references to []."""
+        build_ids to []."""
         payload = _task_payload()
         self.assertNotIn("source", payload)
         task = TaskEntry.from_dict(payload)
@@ -254,7 +254,7 @@ class TestTaskEntryValidation(unittest.TestCase):
         self.assertIsNone(task.target)
         self.assertIsNone(task.git_ref)
         self.assertIsNone(task.event)
-        self.assertEqual(task.build_references, [])
+        self.assertEqual(task.build_ids, [])
 
     def test_dispatch_context_fields_round_trip(self):
         task = TaskEntry.from_dict(
@@ -263,21 +263,21 @@ class TestTaskEntryValidation(unittest.TestCase):
                 target="10.3",
                 git_ref="rhsm-branch",
                 event="preliminary",
-                build_references=["12345:centos-stream9-x86_64"],
+                build_ids=["12345:centos-stream9-x86_64"],
             )
         )
         self.assertEqual(task.source, "9.9")
         self.assertEqual(task.target, "10.3")
         self.assertEqual(task.git_ref, "rhsm-branch")
         self.assertEqual(task.event, "preliminary")
-        self.assertEqual(task.build_references, ["12345:centos-stream9-x86_64"])
+        self.assertEqual(task.build_ids, ["12345:centos-stream9-x86_64"])
 
         d = task.to_dict()
         self.assertEqual(d["source"], "9.9")
         self.assertEqual(d["target"], "10.3")
         self.assertEqual(d["git_ref"], "rhsm-branch")
         self.assertEqual(d["event"], "preliminary")
-        self.assertEqual(d["build_references"], ["12345:centos-stream9-x86_64"])
+        self.assertEqual(d["build_ids"], ["12345:centos-stream9-x86_64"])
 
     def test_to_dict_always_emits_dispatch_context_keys_even_when_absent(self):
         """Freshly round-tripped entries must always carry all 5 keys, even
@@ -288,8 +288,8 @@ class TestTaskEntryValidation(unittest.TestCase):
         for key in ("source", "target", "git_ref", "event"):
             self.assertIn(key, d)
             self.assertIsNone(d[key])
-        self.assertIn("build_references", d)
-        self.assertEqual(d["build_references"], [])
+        self.assertIn("build_ids", d)
+        self.assertEqual(d["build_ids"], [])
 
 
 class TestResultsJsonSchemaValidation(unittest.TestCase):

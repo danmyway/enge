@@ -304,7 +304,7 @@ envelope -> per-task results -> per-plan -> per-test.
       "target": "10.3",
       "git_ref": "main",
       "event": "preliminary",
-      "build_references": ["12345:centos-stream9-x86_64"],
+      "build_ids": ["12345:centos-stream9-x86_64"],
       "plans": [
         {
           "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
@@ -355,7 +355,7 @@ manifest request), `verdict` (task-level, non-null), `total_duration_seconds`
 (float; for CANCELED/no-xunit ERROR: elapsed time before terminal
 state), `plans` (list; see validity rules below). `source`, `target`
 (upgrade-path values, same format as the envelope fields above), `git_ref`,
-`event` (nullable strings) and `build_references` (list of strings, `[]`
+`event` (nullable strings) and `build_ids` (list of strings, `[]`
 default) are **optional** — unlike every other field in this entry, a
 missing key is tolerated rather than rejected by `TaskEntry.from_dict`,
 so that `results.json` caches written before these fields existed keep
@@ -368,7 +368,7 @@ manifest gets no fallback, since the envelope's single value can't be
 trusted to belong to any particular request. `git_ref` has no envelope
 equivalent to fall back to (the envelope never carried it, before or
 after this schema revision), so it stays `null` on every legacy entry.
-`build_references` never backfills.
+`build_ids` never backfills.
 
 **Plan — all required**: `name` (str, verbatim `testsuite@name` from
 xunit), `verdict` (enum), `tests` (list).
@@ -502,19 +502,19 @@ plus `run_id`/`task_id` — no field for this exists or is planned here.
 
 **Golden fixture MD5s** (`tests/fixtures/`; updated when the
 dispatch-context-schema fields — `source`/`target`/`git_ref`/`event`/
-`build_references` — were added to every task entry below):
+`build_ids` — were added to every task entry below):
 - `results_golden.json` (finalized multi-task run; 3 task entries —
   PASSED, FAILED-with-a-SKIPPED-plan, and an ERROR task with
   `plans: []`; root `verdict` = `"ERROR"`, the severity-max of
-  PASSED/FAILED/ERROR): `1d4c9853bf1120deaa028d372c3e496b`
+  PASSED/FAILED/ERROR): `84b1b1df080ba4d9fad2245916bbaf2f`
 - `results_golden_partial.json` (unfinalized run; root `verdict: null`,
   2 task entries against an assumed `expected_count=3` — a third
   tier1/aarch64 task has not reported in yet):
-  `4c50399411dff53ea55d918cf6131b2d`
+  `84d144aa484cbad87be5c077d40990f7`
 - `results_golden_canceled.json` (finalized run mixing a CANCELED task,
   `plans: []`, `total_duration_seconds: 32.4`, with a PASSED task; root
   `verdict` = `"CANCELED"`, demonstrating CANCELED outranking PASSED in
-  the severity ranking): `a77b7fd7743e8adcfdaea3d90be48279`
+  the severity ranking): `a2458afdbee5b16a42087d60291ca063`
 
 This schema is contract-pinned as of 2026-07-14. Cross-cutting contract:
 schema changes require maintainer sign-off.

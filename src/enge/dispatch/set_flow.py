@@ -523,7 +523,7 @@ def _send_and_collect(
             target=target,
             git_ref=submit_test.tests_git_ref,
             event=event,
-            build_references=[a["id"] for a in submit_test.artifacts],
+            build_ids=[a["id"] for a in submit_test.artifacts],
         )
         manifest_writer.flush(Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest))
 

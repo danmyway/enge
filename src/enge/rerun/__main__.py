@@ -971,7 +971,7 @@ def main(ctx: AppContext):
                 target=env_vars.get("TARGET_RELEASE"),
                 git_ref=request_data.get("tests_git_ref"),
                 event=request_data.get("event"),
-                build_references=[a["id"] for a in artifacts if a.get("id")],
+                build_ids=[a["id"] for a in artifacts if a.get("id")],
             )
             manifest_writer.flush(
                 Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest)
