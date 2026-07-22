@@ -300,6 +300,11 @@ envelope -> per-task results -> per-plan -> per-test.
       "dispatched_at": "2026-07-07T10:35:13Z",
       "verdict": "ERROR",
       "total_duration_seconds": 349.0,
+      "source": "9.9",
+      "target": "10.3",
+      "git_ref": "main",
+      "event": "preliminary",
+      "build_references": ["12345:centos-stream9-x86_64"],
       "plans": [
         {
           "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
@@ -348,7 +353,22 @@ key), `set`, `tier`, `arch`, `source_compose`/`target_compose` (required
 keys, nullable values — manifest parity), `dispatched_at` (ISO 8601, from
 manifest request), `verdict` (task-level, non-null), `total_duration_seconds`
 (float; for CANCELED/no-xunit ERROR: elapsed time before terminal
-state), `plans` (list; see validity rules below).
+state), `plans` (list; see validity rules below). `source`, `target`
+(upgrade-path values, same format as the envelope fields above), `git_ref`,
+`event` (nullable strings) and `build_references` (list of strings, `[]`
+default) are **optional** — unlike every other field in this entry, a
+missing key is tolerated rather than rejected by `TaskEntry.from_dict`,
+so that `results.json` caches written before these fields existed keep
+parsing. Copied verbatim from the manifest's matching `requests[]` entry
+at harvest time (`report/results_cache.py`); for a manifest predating
+this schema (no per-request values to copy) the harvest falls back to
+the run envelope's `source`/`target`/`event` **only** when the manifest
+has exactly one test set across all its requests — a multi-set legacy
+manifest gets no fallback, since the envelope's single value can't be
+trusted to belong to any particular request. `git_ref` has no envelope
+equivalent to fall back to (the envelope never carried it, before or
+after this schema revision), so it stays `null` on every legacy entry.
+`build_references` never backfills.
 
 **Plan — all required**: `name` (str, verbatim `testsuite@name` from
 xunit), `verdict` (enum), `tests` (list).
@@ -480,19 +500,21 @@ explicitly rather than sharing one central flush step.
 hyperlink will be constructed externally later from the TF result URL
 plus `run_id`/`task_id` — no field for this exists or is planned here.
 
-**Golden fixture MD5s** (`tests/fixtures/`):
+**Golden fixture MD5s** (`tests/fixtures/`; updated when the
+dispatch-context-schema fields — `source`/`target`/`git_ref`/`event`/
+`build_references` — were added to every task entry below):
 - `results_golden.json` (finalized multi-task run; 3 task entries —
   PASSED, FAILED-with-a-SKIPPED-plan, and an ERROR task with
   `plans: []`; root `verdict` = `"ERROR"`, the severity-max of
-  PASSED/FAILED/ERROR): `eada98dd3a5dcc69d013ee6933dc84b5`
+  PASSED/FAILED/ERROR): `1d4c9853bf1120deaa028d372c3e496b`
 - `results_golden_partial.json` (unfinalized run; root `verdict: null`,
   2 task entries against an assumed `expected_count=3` — a third
   tier1/aarch64 task has not reported in yet):
-  `72f3de4443d0aefea8354dfd018bdc9b`
+  `4c50399411dff53ea55d918cf6131b2d`
 - `results_golden_canceled.json` (finalized run mixing a CANCELED task,
   `plans: []`, `total_duration_seconds: 32.4`, with a PASSED task; root
   `verdict` = `"CANCELED"`, demonstrating CANCELED outranking PASSED in
-  the severity ranking): `725f997c0ce9c0d33321754fd68e506c`
+  the severity ranking): `a77b7fd7743e8adcfdaea3d90be48279`
 
 This schema is contract-pinned as of 2026-07-14. Cross-cutting contract:
 schema changes require maintainer sign-off.
