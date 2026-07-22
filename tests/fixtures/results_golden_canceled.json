@@ -17,7 +17,12 @@
       "dispatched_at": "2026-07-09T14:00:05Z",
       "verdict": "CANCELED",
       "total_duration_seconds": 32.4,
-      "plans": []
+      "plans": [],
+      "source": "9.9",
+      "target": "10.3",
+      "git_ref": "main",
+      "event": "preliminary",
+      "build_references": []
     },
     {
       "task_id": "16fabf6a-b495-4b86-9948-be2a62262f27",
@@ -43,6 +48,13 @@
             }
           ]
         }
+      ],
+      "source": "9.9",
+      "target": "10.3",
+      "git_ref": "main",
+      "event": "preliminary",
+      "build_references": [
+        "12345:centos-stream9-x86_64"
       ]
     }
   ]

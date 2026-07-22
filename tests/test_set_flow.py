@@ -714,6 +714,8 @@ class TestManifestDispatchContextNonCollapse(unittest.TestCase):
         po.cli_args.set_tag = None
         po.cli_args.wait = False
         po.cli_args.action = "test"
+        po.cli_args.copr = None
+        po.cli_args.brew = None
         po.config = {}
         po.archive_tasks_latest = str(tmp_path / "latest")
         po.archive_tasks_default = str(tmp_path / "archive") + "/"
@@ -723,6 +725,12 @@ class TestManifestDispatchContextNonCollapse(unittest.TestCase):
         po.architectures = []
         po.environment_variables = {}
         po.tmt_context = {}
+        po.copr_reference = None
+        po.copr_references = []
+        po.copr_api = {}
+        po.brew_reference = None
+        po.brew_references = []
+        po.brew_api = {}
         return po
 
     def _make_spec(self, *, set_name, source_spec, target_spec, event, brew_ref):

@@ -939,6 +939,7 @@ def main(ctx: AppContext):
             if tmt:
                 request_data["tmt_context"] = tmt.get("context", {})
                 request_data["environment_variables"] = env.get("variables", {})
+                request_data["event"] = tmt.get("context", {}).get("event")
 
         submit.populate_from_request_data(request_data)
 
@@ -949,6 +950,8 @@ def main(ctx: AppContext):
             task_id = submit.log_artifact_url.rsplit("/", 1)[-1]
         if task_id and not is_dryrun:
             parent_entry = parent_request_index.get(original_uuid, {})
+            env_vars = request_data.get("environment_variables") or {}
+            artifacts = request_data.get("artifacts") or []
             manifest_writer.add_request(
                 task_id,
                 set_name=parent_entry.get("set"),
@@ -964,6 +967,11 @@ def main(ctx: AppContext):
                 artifacts_url=submit.log_artifact_url,
                 launch_uuid=launch_uuid,
                 rerun_of=original_uuid,
+                source=env_vars.get("SOURCE_RELEASE"),
+                target=env_vars.get("TARGET_RELEASE"),
+                git_ref=request_data.get("tests_git_ref"),
+                event=request_data.get("event"),
+                build_references=[a["id"] for a in artifacts if a.get("id")],
             )
             manifest_writer.flush(
                 Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest)
