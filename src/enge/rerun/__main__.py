@@ -893,7 +893,7 @@ def main(ctx: AppContext):
 
         payload.pop("_enge_source_path", None)
 
-        request_data = {}
+        request_data: Dict[str, Any] = {}
 
         test_fmf = payload.get("test", {}).get("fmf", {})
         if test_fmf:
