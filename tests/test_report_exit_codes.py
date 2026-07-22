@@ -53,6 +53,15 @@ _XML_PIPELINE_ERROR = """\
 </testsuites>
 """
 
+_XML_UNKNOWN = """\
+<testsuites overall-result="unknown">
+  <testsuite name="/plans/smoke" result="unknown">
+    <testing-environment><property name="arch" value="x86_64"/></testing-environment>
+    <testcase name="/tests/basic" result="unknown"/>
+  </testsuite>
+</testsuites>
+"""
+
 
 def _make_task_result(xunit_content=None, state="COMPLETE", **overrides):
     defaults = dict(
@@ -162,6 +171,27 @@ class TestExitCodeFromXMLParser(unittest.TestCase):
         XMLParser.parse_xml_results(task, ctx=_report_ctx())
         self.assertIsNone(task.retval)
 
+    def test_unknown_overall_xml_yields_missing_results(self):
+        """An unrecognized overall-result is an indeterminate TF response --
+        a rerun candidate (MISSING_RESULTS), not a configuration error."""
+        task = _make_task_result(xunit_content=_XML_UNKNOWN)
+        with self.assertLogs("enge.report.concurrent_parser", level="ERROR"):
+            XMLParser.parse_xml_results(task, ctx=_report_ctx())
+        self.assertEqual(task.retval, ExitCode.MISSING_RESULTS)
+        self.assertNotEqual(task.retval, ExitCode.CONFIG_ERROR)
+
+    def test_unknown_overall_logs_error_naming_task_and_value(self):
+        task = _make_task_result(xunit_content=_XML_UNKNOWN)
+        with self.assertLogs("enge.report.concurrent_parser", level="ERROR") as cm:
+            XMLParser.parse_xml_results(task, ctx=_report_ctx())
+        self.assertTrue(
+            any(
+                task.request_uuid in message and "unknown" in message
+                for message in cm.output
+            ),
+            cm.output,
+        )
+
 
 # ── Task-state exit-code tests ──────────────────────────────────────
 
@@ -265,6 +295,28 @@ class TestMixedSetSeverityPrecedence(unittest.TestCase):
         parser._process_task_state(task_missing)
 
         agg = worst_exit_code(task_fail.retval, task_missing.retval)
+        self.assertEqual(agg, ExitCode.TEST_FAILURE)
+
+    def test_mixed_set_failure_dominates_unknown_overall(self):
+        """FAILURE + unknown-overall (-> MISSING_RESULTS) -> TEST_FAILURE,
+        NOT MISSING_RESULTS. Proves the unknown-overall remap participates
+        correctly in severity precedence rather than masking a real
+        failure from the same report."""
+        task_fail = _make_task_result(
+            xunit_content=_XML_FAILED,
+            request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+        )
+        task_unknown = _make_task_result(
+            xunit_content=_XML_UNKNOWN,
+            request_uuid="dddddddd-0000-0000-0000-000000000004",
+        )
+        ctx = _report_ctx()
+        XMLParser.parse_xml_results(task_fail, ctx=ctx)
+        with self.assertLogs("enge.report.concurrent_parser", level="ERROR"):
+            XMLParser.parse_xml_results(task_unknown, ctx=ctx)
+
+        self.assertEqual(task_unknown.retval, ExitCode.MISSING_RESULTS)
+        agg = worst_exit_code(task_fail.retval, task_unknown.retval)
         self.assertEqual(agg, ExitCode.TEST_FAILURE)
 
 
