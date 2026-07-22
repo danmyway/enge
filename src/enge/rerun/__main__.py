@@ -1,4 +1,5 @@
 import copy
+import json
 import logging
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ from enge.dispatch.pin_compose import repin_compose
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_request_xunit
 from enge.utils.task_resolver import parse_tasks_with_map
+from enge.utils.errors import ValidationError
 from enge.utils.manifest import ManifestReader
 from enge.utils.app_context import AppContext
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
@@ -102,6 +104,34 @@ def _resolve_parent_lineage(
         return None, []
 
     return manifest.get("run_id", source_id), manifest.get("tags", [])
+
+
+def _build_parent_request_index(
+    parent_run_id: Optional[str], runs_dir: str
+) -> Dict[str, Dict[str, Any]]:
+    """Index the parent manifest's requests by task_id, for inheriting
+    set/tier/target_compose onto rerun request entries.
+
+    Returns an empty index whenever inheritance cannot proceed (no parent,
+    or the parent manifest cannot be loaded) so callers fall back to None
+    for those fields, matching current behavior.
+    """
+    if not parent_run_id:
+        return {}
+    try:
+        manifest = ManifestReader.get_run(Path(runs_dir), parent_run_id)
+    except (ValidationError, OSError, json.JSONDecodeError) as e:
+        logger.debug(
+            "Could not load parent manifest %s for rerun field inheritance: %s",
+            parent_run_id,
+            e,
+        )
+        return {}
+    return {
+        req["task_id"]: req
+        for req in manifest.get("requests", [])
+        if req.get("task_id")
+    }
 
 
 class RerunJobs:
@@ -795,6 +825,9 @@ def main(ctx: AppContext):
     parent_run_id, inherited_tags = _resolve_parent_lineage(
         jobs.task_source, ctx.manifest_runs_dir
     )
+    parent_request_index = _build_parent_request_index(
+        parent_run_id, ctx.manifest_runs_dir
+    )
 
     manifest_writer = ManifestWriter(
         run_id=generate_ulid(),
@@ -915,10 +948,11 @@ def main(ctx: AppContext):
         if submit.log_artifact_url:
             task_id = submit.log_artifact_url.rsplit("/", 1)[-1]
         if task_id and not is_dryrun:
+            parent_entry = parent_request_index.get(original_uuid, {})
             manifest_writer.add_request(
                 task_id,
-                set_name=None,
-                tier=None,
+                set_name=parent_entry.get("set"),
+                tier=parent_entry.get("tier"),
                 arch=(
                     request_data.get("architectures", [None])[0]
                     if request_data.get("architectures")
@@ -926,9 +960,10 @@ def main(ctx: AppContext):
                 ),
                 plan=request_data.get("plan"),
                 source_compose=request_data.get("compose"),
-                target_compose=None,
+                target_compose=parent_entry.get("target_compose"),
                 artifacts_url=submit.log_artifact_url,
                 launch_uuid=launch_uuid,
+                rerun_of=original_uuid,
             )
             manifest_writer.flush(
                 Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest)
