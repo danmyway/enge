@@ -615,7 +615,7 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
             main(ctx)
 
         child = self._find_child_manifest(exclude_id=parent_id)
-        return child["requests"][0]
+        return child["requests"][0], parent_id
 
     def test_entry_carries_full_context_from_payload(self):
         tf_response = _mock_tf_response_with_context(
@@ -625,7 +625,7 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
             target_release="10.3",
             artifact_ids=["12345:centos-stream9-x86_64"],
         )
-        entry = self._run_rerun(tf_response)
+        entry, _parent_id = self._run_rerun(tf_response)
 
         self.assertEqual(entry["git_ref"], "rhsm-branch")
         self.assertEqual(entry["event"], "preliminary")
@@ -641,7 +641,7 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
             target_release=None,
             artifact_ids=None,
         )
-        entry = self._run_rerun(tf_response)
+        entry, _parent_id = self._run_rerun(tf_response)
 
         self.assertIn("git_ref", entry)
         self.assertIsNone(entry["git_ref"])
@@ -667,7 +667,7 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
             target_release="9.4",
             artifact_ids=["pkg-x"],
         )
-        entry = self._run_rerun(
+        entry, parent_id = self._run_rerun(
             tf_response,
             parent_request_kwargs={
                 "set_name": "alpha",
@@ -676,14 +676,15 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
             },
         )
 
-        # Sanity: the parent entry truly has none of the new fields.
-        found_parent = next(
-            r
-            for m in self.runs_dir.glob("*.json")
-            for r in json.loads(m.read_text())["requests"]
-            if r.get("task_id") == TASK_UUID and r.get("set") == "alpha"
-        )
-        self.assertNotIn("source", found_parent)
+        # Sanity: the parent entry carries no real value for these fields
+        # (None/[] -- add_request's own emit-always defaults, not a value
+        # this test set up), proving the child's values below cannot have
+        # been inherited from the parent index.
+        parent_manifest = json.loads((self.runs_dir / f"{parent_id}.json").read_text())
+        found_parent = parent_manifest["requests"][0]
+        self.assertEqual(found_parent["task_id"], TASK_UUID)
+        self.assertIsNone(found_parent.get("source"))
+        self.assertEqual(found_parent.get("build_references"), [])
 
         self.assertEqual(entry["source"], "8.10")
         self.assertEqual(entry["target"], "9.4")

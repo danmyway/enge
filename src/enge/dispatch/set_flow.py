@@ -485,7 +485,16 @@ def _build_request_context(spec, per_set_event, ctx, artifact_type):
     )
 
 
-def _send_and_collect(submit_test, ctx, spec, manifest_writer=None, launch_uuid=None):
+def _send_and_collect(
+    submit_test,
+    ctx,
+    spec,
+    manifest_writer=None,
+    launch_uuid=None,
+    source=None,
+    target=None,
+    event=None,
+):
     """Send the TF request and assemble the result dict."""
     output_format = getattr(ctx.cli_args, "output_format", "terminal")
     submit_test.compact_output = output_format != "json"
@@ -510,6 +519,11 @@ def _send_and_collect(submit_test, ctx, spec, manifest_writer=None, launch_uuid=
             target_compose=submit_test.target_compose,
             artifacts_url=submit_test.log_artifact_url,
             launch_uuid=launch_uuid,
+            source=source,
+            target=target,
+            git_ref=submit_test.tests_git_ref,
+            event=event,
+            build_references=[a["id"] for a in submit_test.artifacts],
         )
         manifest_writer.flush(Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest))
 
@@ -590,4 +604,7 @@ def process_request_spec(
         spec,
         manifest_writer=manifest_writer,
         launch_uuid=launch_result,
+        source=req_ctx.auto_env_vars.get("SOURCE_RELEASE"),
+        target=req_ctx.auto_env_vars.get("TARGET_RELEASE"),
+        event=per_set_event,
     )

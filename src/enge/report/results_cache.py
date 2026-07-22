@@ -148,7 +148,10 @@ def _task_level_verdict(task_result: "TaskResult", plans: List[Dict[str, Any]]) 
 
 
 def _build_task_entry(
-    task_result: "TaskResult", request_meta: Dict[str, Any]
+    task_result: "TaskResult",
+    request_meta: Dict[str, Any],
+    context: Optional[Dict[str, Any]] = None,
+    is_single_set: bool = False,
 ) -> Dict[str, Any]:
     state = task_result.request_state.upper()
     xunit_bytes = getattr(task_result, "xunit_bytes", None)
@@ -186,6 +189,15 @@ def _build_task_entry(
         plans = []
         total_duration = 0.0
 
+    context = context or {}
+    dispatch_context = {}
+    for key in ("source", "target", "git_ref", "event"):
+        value = request_meta.get(key)
+        if value is None and is_single_set:
+            value = context.get(key)
+        dispatch_context[key] = value
+    dispatch_context["build_references"] = request_meta.get("build_references") or []
+
     return {
         "task_id": task_result.request_uuid,
         "set": request_meta.get("set"),
@@ -197,6 +209,7 @@ def _build_task_entry(
         "verdict": verdict,
         "total_duration_seconds": total_duration,
         "plans": plans,
+        **dispatch_context,
     }
 
 
@@ -208,6 +221,8 @@ def _cache_one_run(
     run_id = manifest["run_id"]
     results_path = output_dir / f"{run_id}.json"
     context = manifest.get("context") or {}
+    request_sets = {r.get("set") for r in manifest.get("requests", [])}
+    is_single_set = len(request_sets) <= 1
 
     if not results_path.exists():
         try:
@@ -224,7 +239,9 @@ def _cache_one_run(
 
     for task_result, request_meta in matched_task_results:
         task_id = task_result.request_uuid
-        entry_dict = _build_task_entry(task_result, request_meta)
+        entry_dict = _build_task_entry(
+            task_result, request_meta, context=context, is_single_set=is_single_set
+        )
         try:
             upsert_task_result(results_path, entry_dict)
         except AlreadyFinalizedError:

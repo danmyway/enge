@@ -273,6 +273,11 @@ class TaskEntry:
     verdict: str
     total_duration_seconds: float
     plans: List[PlanEntry] = field(default_factory=list)
+    source: Optional[str] = None
+    target: Optional[str] = None
+    git_ref: Optional[str] = None
+    event: Optional[str] = None
+    build_references: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -286,6 +291,11 @@ class TaskEntry:
             "verdict": self.verdict,
             "total_duration_seconds": self.total_duration_seconds,
             "plans": [p.to_dict() for p in self.plans],
+            "source": self.source,
+            "target": self.target,
+            "git_ref": self.git_ref,
+            "event": self.event,
+            "build_references": list(self.build_references),
         }
 
     @classmethod
@@ -322,6 +332,26 @@ class TaskEntry:
 
         _validate_task_plans_arity(verdict, plans, context=context)
 
+        source = _validate_optional_string(
+            data.get("source"), "source", context=context
+        )
+        target = _validate_optional_string(
+            data.get("target"), "target", context=context
+        )
+        git_ref = _validate_optional_string(
+            data.get("git_ref"), "git_ref", context=context
+        )
+        event = _validate_optional_string(data.get("event"), "event", context=context)
+
+        raw_build_references = data.get("build_references") or []
+        if not isinstance(raw_build_references, list) or not all(
+            isinstance(ref, str) for ref in raw_build_references
+        ):
+            raise ValidationError(
+                f"{context}: 'build_references' must be an array of strings, "
+                f"got {raw_build_references!r}"
+            )
+
         return cls(
             task_id=task_id,
             set=set_name,
@@ -333,6 +363,11 @@ class TaskEntry:
             verdict=verdict,
             total_duration_seconds=total_duration_seconds,
             plans=plans,
+            source=source,
+            target=target,
+            git_ref=git_ref,
+            event=event,
+            build_references=list(raw_build_references),
         )
 
 

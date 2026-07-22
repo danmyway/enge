@@ -41,6 +41,11 @@ class ManifestWriter:
         dispatched_at: Optional[str] = None,
         launch_uuid: Optional[str] = None,
         rerun_of: Optional[str] = None,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+        git_ref: Optional[str] = None,
+        event: Optional[str] = None,
+        build_references: Optional[List[str]] = None,
     ) -> None:
         self._requests.append(
             {
@@ -56,6 +61,13 @@ class ManifestWriter:
                 or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "launch_uuid": launch_uuid,
                 "rerun_of": rerun_of,
+                "source": source,
+                "target": target,
+                "git_ref": git_ref,
+                "event": event,
+                "build_references": (
+                    list(build_references) if build_references else []
+                ),
             }
         )
 
