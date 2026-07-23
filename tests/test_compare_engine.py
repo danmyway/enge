@@ -444,6 +444,80 @@ class TestTwoStageConsolidation(unittest.TestCase):
             rows_by_label[("/plans/p1", "/tests/y")].consolidated, "FAILED"
         )
 
+    def test_unknown_path_columns_are_never_merged_into_one_coordinate(self):
+        """Bug found via real usage (2026-07-23): a multi-set legacy
+        manifest predating the dispatch-context-schema fields has no
+        per-task source/target, and item 7's fallback deliberately does
+        not apply to multi-set manifests -- so every column's source and
+        target are None. Two such columns for the SAME arch (e.g. one
+        set covering an 8to9 upgrade, another covering 9to10, both
+        genuinely different upgrade paths) must NOT be treated as the
+        same stage-1 coordinate just because they share (arch, None,
+        None) -- that would let a PASS on one path mask an ERROR on a
+        completely different path, exactly the bug this whole two-stage
+        redesign exists to prevent. Without a known, matching source AND
+        target, two columns are never assumed to be the same coordinate."""
+        from enge.compare.engine import build_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                arch="x86_64",
+                source=None,
+                target=None,
+                dispatched_at="2026-07-13T06:13:06Z",
+                plans=[_plan("/plans/p1", "PASSED")],
+            ),
+            _column(
+                task_id="t2",
+                arch="x86_64",
+                source=None,
+                target=None,
+                dispatched_at="2026-07-13T06:13:29Z",
+                plans=[_plan("/plans/p1", "ERROR")],
+            ),
+        ]
+
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
+
+        self.assertEqual(row.consolidated, "ERROR")
+
+    def test_known_matching_path_columns_still_group_as_one_coordinate(self):
+        """Sanity companion to the above: when source/target ARE known
+        and match, PASS-wins-within-a-coordinate must still apply --
+        the fix only withholds the assumption when we lack positive
+        evidence, it must not break the normal rerun-history case."""
+        from enge.compare.engine import build_tables
+
+        cols = [
+            _column(
+                task_id="t1",
+                arch="x86_64",
+                source="9.9",
+                target="10.3",
+                dispatched_at="2026-07-01T00:00:00Z",
+                plans=[_plan("/plans/p1", "FAILED")],
+            ),
+            _column(
+                task_id="t2",
+                arch="x86_64",
+                source="9.9",
+                target="10.3",
+                dispatched_at="2026-07-02T00:00:00Z",
+                plans=[_plan("/plans/p1", "PASSED")],
+            ),
+        ]
+
+        (table,) = build_tables(
+            cols, show_tests=False, splitarch=False, splitpath=False
+        )
+        (row,) = table.rows
+
+        self.assertEqual(row.consolidated, "PASSED")
+
 
 class TestAllExcludedRowFallback(unittest.TestCase):
     """R3, generalized: when no coordinate produces a real result, the
