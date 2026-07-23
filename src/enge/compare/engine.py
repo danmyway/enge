@@ -164,14 +164,27 @@ def _row_is_flaky(per_column: Tuple[str, ...]) -> bool:
     return len(present) > 1
 
 
+def _coordinate_key(col: ExecutionColumn, index: int) -> Tuple[Any, ...]:
+    """Two columns are only ever the same stage-1 coordinate when source
+    AND target are BOTH known and match. A None source/target means the
+    coordinate is unknown (e.g. a multi-set legacy manifest predating the
+    dispatch-context-schema fields, where item 7's fallback deliberately
+    does not apply) -- and two unknown-path columns are never assumed to
+    be the same coordinate just because they share (arch, None, None).
+    `index` makes each such column its own singleton bucket instead."""
+    if col.source is None or col.target is None:
+        return (col.arch, col.source, col.target, index)
+    return (col.arch, col.source, col.target)
+
+
 def consolidate_row(
     cols: Tuple[ExecutionColumn, ...], per_column: Tuple[str, ...]
 ) -> str:
     """Two-stage consolidation (R1). `cols`/`per_column` must be the same
     length and in the same (already chronologically-sorted) order."""
-    by_coordinate: Dict[Tuple[str, Optional[str], Optional[str]], List[str]] = {}
-    for col, verdict in zip(cols, per_column):
-        by_coordinate.setdefault((col.arch, col.source, col.target), []).append(verdict)
+    by_coordinate: Dict[Tuple[Any, ...], List[str]] = {}
+    for index, (col, verdict) in enumerate(zip(cols, per_column)):
+        by_coordinate.setdefault(_coordinate_key(col, index), []).append(verdict)
 
     stage1_results: List[str] = []
     any_skipped = False
