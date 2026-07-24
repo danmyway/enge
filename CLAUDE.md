@@ -340,16 +340,32 @@ envelope -> per-task results -> per-plan -> per-test.
 }
 ```
 
-**Run envelope — all keys required**: `schema_version` (int, literal `1`
-for this contract version; any other value is rejected), `run_id` (ULID;
-matches manifest and filename), `created_at` (ISO 8601; mirrors manifest
-`created_at` — run creation, NOT file-write time), `event` (from manifest
-context, e.g. `preliminary`; harvest-retention filter axis), `source`,
-`target` (upgrade-path values, e.g. `"9.9"`/`"10.3"`), `verdict`
-(**nullable, write-once**: null = run incomplete; set exactly once by
-`finalize_root_verdict` when all manifest requests have entries),
-`results` (list of task entries; may be empty for a freshly initialized
-file).
+**Run envelope — all keys required, three nullable**: `schema_version`
+(int, literal `1` for this contract version; any other value is
+rejected), `run_id` (ULID; matches manifest and filename), `created_at`
+(ISO 8601; mirrors manifest `created_at` — run creation, NOT file-write
+time), `event`, `source`, `target` (nullable strings, 2026-07-24 — see
+below), `verdict` (**nullable, write-once**: null = run incomplete; set
+exactly once by `finalize_root_verdict` when all manifest requests have
+entries), `results` (list of task entries; may be empty for a freshly
+initialized file).
+
+**`event`/`source`/`target` nullability**: the envelope holds only
+things relevant to the whole run as a single batch. A single-set
+manifest has one real answer for all three, copied from the manifest's
+`context` (e.g. `event="preliminary"`, `source="9.9"`,
+`target="10.3"`). A **multi-set** manifest has no single correct
+answer for any of the three and all become `null` — deliberately not
+special-cased on whether the sets happen to share an upgrade path:
+tier/arch can still diverge between sets even when source/target
+coincide (e.g. one set running `tier0`/`x86_64`, another running
+`tier1`/`aarch64`, both `9.9`→`10.3`), so a matching path alone
+doesn't make the run a coherent batch. `is_single_set` (`len({r.get(
+"set") for r in manifest["requests"]}) <= 1`) is the only signal —
+the same check already governing the per-task `source`/`target`/
+`event`/`git_ref` fallback described below. Per-task values are
+unaffected either way; they always carry the real per-request truth
+regardless of set count.
 
 **Task entry — required unless noted; keyed by `task_id`**: `task_id`
 (TF request UUID; join key to manifest `requests[]`; gap-fill idempotency
@@ -547,6 +563,13 @@ dispatch-context-schema fields — `source`/`target`/`git_ref`/`event`/
   `plans: []`, `total_duration_seconds: 32.4`, with a PASSED task; root
   `verdict` = `"CANCELED"`, demonstrating CANCELED outranking PASSED in
   the severity ranking): `906acabeaec812e44f0109e64c8f7275`
+- `results_golden_multiset.json` (finalized two-set run sharing one
+  upgrade path across different tier/arch coordinates —
+  `verification-alpha`/`tier0only`/`x86_64` and `verification-beta`/
+  `tier1only`/`aarch64`, both `9.9`→`10.3`; root `verdict` = `"PASSED"`;
+  demonstrates the envelope's `event`/`source`/`target` all `null`
+  despite the matching path, while both task entries correctly carry
+  `source`/`target`/`tier`/`arch`): `2c455f543b2b9b97bce636d09ddf6f28`
 
 This schema is contract-pinned as of 2026-07-14. Cross-cutting contract:
 schema changes require maintainer sign-off.
