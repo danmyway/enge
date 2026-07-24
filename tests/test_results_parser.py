@@ -393,6 +393,51 @@ class TestResultsJsonSchemaValidation(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ResultsJsonSchema.from_dict(_root_payload(results={}))
 
+    def test_envelope_event_source_target_accept_null(self):
+        """Root envelope keeps 'only things relevant for the whole run as
+        a batch' (maintainer principle, 2026-07-24): a multi-set run has
+        no single correct event/source/target, so these become nullable
+        -- required keys, nullable values, mirroring the existing
+        source_compose/target_compose precedent at the task level."""
+        schema = ResultsJsonSchema.from_dict(
+            _root_payload(event=None, source=None, target=None)
+        )
+        self.assertIsNone(schema.event)
+        self.assertIsNone(schema.source)
+        self.assertIsNone(schema.target)
+
+    def test_envelope_event_source_target_key_still_required(self):
+        """Nullable value, but the key itself is still required -- unlike
+        the fully-optional per-task dispatch-context fields, a missing
+        key here is still rejected."""
+        for field in ("event", "source", "target"):
+            with self.subTest(field=field):
+                payload = _root_payload()
+                del payload[field]
+                with self.assertRaises(ValidationError):
+                    ResultsJsonSchema.from_dict(payload)
+
+    def test_envelope_event_source_target_round_trip_when_populated(self):
+        schema = ResultsJsonSchema.from_dict(
+            _root_payload(event="preliminary", source="9.9", target="10.3")
+        )
+        d = schema.to_dict()
+        self.assertEqual(d["event"], "preliminary")
+        self.assertEqual(d["source"], "9.9")
+        self.assertEqual(d["target"], "10.3")
+
+    def test_to_dict_emits_null_envelope_event_source_target(self):
+        schema = ResultsJsonSchema.from_dict(
+            _root_payload(event=None, source=None, target=None)
+        )
+        d = schema.to_dict()
+        self.assertIn("event", d)
+        self.assertIn("source", d)
+        self.assertIn("target", d)
+        self.assertIsNone(d["event"])
+        self.assertIsNone(d["source"])
+        self.assertIsNone(d["target"])
+
 
 class TestXunitResultMap(unittest.TestCase):
     def test_xunit_result_map_matches_ratified_contract(self):
