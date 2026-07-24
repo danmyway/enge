@@ -38,7 +38,11 @@
       "event": "preliminary",
       "build_ids": [
         "12345:centos-stream9-x86_64"
-      ]
+      ],
+      "rerun_of": null,
+      "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/7692ea3e-c6a5-4bac-8784-ff3a197f4140",
+      "plan": "plans",
+      "plan_filter": "tag:verification_99_103_ctc2"
     },
     {
       "task_id": "d4a16fad-2b2b-49ef-887a-52e6c4828b38",
@@ -76,7 +80,11 @@
       "event": "preliminary",
       "build_ids": [
         "12345:centos-stream9-x86_64"
-      ]
+      ],
+      "rerun_of": null,
+      "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/d4a16fad-2b2b-49ef-887a-52e6c4828b38",
+      "plan": "plans",
+      "plan_filter": "tag:verification_99_103_ctc2"
     },
     {
       "task_id": "3aee70a1-0adc-4ba1-aaf3-8a5b391fc07b",
@@ -93,7 +101,11 @@
       "target": "10.3",
       "git_ref": "main",
       "event": "preliminary",
-      "build_ids": []
+      "build_ids": [],
+      "rerun_of": null,
+      "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/3aee70a1-0adc-4ba1-aaf3-8a5b391fc07b",
+      "plan": "plans",
+      "plan_filter": null
     }
   ]
 }

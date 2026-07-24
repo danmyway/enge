@@ -152,6 +152,7 @@ def _build_task_entry(
     request_meta: Dict[str, Any],
     context: Optional[Dict[str, Any]] = None,
     is_single_set: bool = False,
+    run_id: str = "?",
 ) -> Dict[str, Any]:
     state = task_result.request_state.upper()
     xunit_bytes = getattr(task_result, "xunit_bytes", None)
@@ -185,6 +186,12 @@ def _build_task_entry(
         # ratified sentinel: the fetch layer does not expose a
         # finished/updated TF timestamp to compute elapsed time from
         # (fire-time coordinator ruling, 2026-07-15/16).
+        LOGGER.warning(
+            "results cache: no xunit artifact collected for task %s in "
+            "run %s; verdict recorded as ERROR, no archive written",
+            task_result.request_uuid,
+            run_id,
+        )
         verdict = "ERROR"
         plans = []
         total_duration = 0.0
@@ -197,6 +204,21 @@ def _build_task_entry(
             value = context.get(key)
         dispatch_context[key] = value
     dispatch_context["build_ids"] = request_meta.get("build_ids") or []
+    # rerun_of/artifacts_url/plan have no run-envelope equivalent to fall
+    # back to (there is no such thing as a run's "envelope plan" or
+    # "envelope rerun_of") -- straight copy, None when the manifest entry
+    # lacks the key, regardless of single-set/multi-set.
+    for key in ("rerun_of", "artifacts_url", "plan"):
+        dispatch_context[key] = request_meta.get(key)
+    # plan_filter is deliberately never written to the manifest at
+    # dispatch time (maintainer ruling: it's still in the TF API request
+    # body, so no in-flight write is needed) -- sourced exclusively from
+    # the harvest's already-live-fetched TaskResult, not request_meta.
+    # Normalizes TaskResult.request_plan_filter's "" default to None,
+    # matching this schema's established none-vs-empty convention.
+    dispatch_context["plan_filter"] = (
+        getattr(task_result, "request_plan_filter", None) or None
+    )
 
     return {
         "task_id": task_result.request_uuid,
@@ -240,7 +262,11 @@ def _cache_one_run(
     for task_result, request_meta in matched_task_results:
         task_id = task_result.request_uuid
         entry_dict = _build_task_entry(
-            task_result, request_meta, context=context, is_single_set=is_single_set
+            task_result,
+            request_meta,
+            context=context,
+            is_single_set=is_single_set,
+            run_id=run_id,
         )
         try:
             upsert_task_result(results_path, entry_dict)
