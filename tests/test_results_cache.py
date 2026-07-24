@@ -665,7 +665,12 @@ class TestMetadataFromManifest(_CacheTestCase):
         regress silently): a single-set manifest whose request lacks
         rerun_of/artifacts_url/plan gets NO envelope fallback for those
         three -- unlike source/target, which DO fall back in the exact
-        same single-set scenario."""
+        same single-set scenario. The manifest context deliberately
+        carries bogus rerun_of/artifacts_url/plan keys here (something
+        that would never happen with real data -- those are not envelope
+        concepts) specifically so a reintroduced fallback would pick them
+        up and this test would catch it; a context without these keys at
+        all would pass regardless of whether the fallback existed."""
         from enge.report.results_cache import cache_report_results
 
         runs_dir, results_dir_path = self._tmp_dirs()
@@ -675,7 +680,14 @@ class TestMetadataFromManifest(_CacheTestCase):
             runs_dir,
             run_id,
             [_request(task_id, set_name="onlyset")],
-            context={"event": "candidate", "source": "9.9", "target": "10.3"},
+            context={
+                "event": "candidate",
+                "source": "9.9",
+                "target": "10.3",
+                "rerun_of": "bogus-envelope-rerun-of",
+                "artifacts_url": "bogus-envelope-artifacts-url",
+                "plan": "bogus-envelope-plan",
+            },
         )
         ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
 
