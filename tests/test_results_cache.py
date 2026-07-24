@@ -548,6 +548,62 @@ class TestMetadataFromManifest(_CacheTestCase):
         self.assertEqual(schema.source, "9.9")
         self.assertEqual(schema.target, "10.3")
 
+    def test_multi_set_manifest_envelope_event_source_target_are_null(self):
+        """Root envelope keeps 'only things relevant for the whole run as
+        a batch' (maintainer principle, 2026-07-24): a multi-set manifest
+        has no single correct event/source/target for the run as a whole
+        -- even when two sets happen to share the same upgrade path, other
+        coordinates (tier/arch) can still diverge between them, so the
+        envelope never pretends otherwise for any of the three. Per-task
+        values are unaffected and carry the real per-request truth
+        regardless of set count."""
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDUUUUUUUUUUUUUUUUUUU"
+        task_id_a = "cccccccc-1111-0000-0000-000000000001"
+        task_id_b = "cccccccc-1111-0000-0000-000000000002"
+        _write_manifest(
+            runs_dir,
+            run_id,
+            [
+                _request(
+                    task_id_a,
+                    set_name="alpha",
+                    tier="tier0only",
+                    arch="aarch64",
+                    source="9.9",
+                    target="10.3",
+                ),
+                _request(
+                    task_id_b,
+                    set_name="beta",
+                    tier="tier1only",
+                    arch="x86_64",
+                    source="9.9",
+                    target="10.3",
+                ),
+            ],
+            context={"event": "candidate", "source": "9.9", "target": "10.3"},
+        )
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result_a = _make_task_result(
+            request_uuid=task_id_a, xunit_bytes=_xunit_bytes()
+        )
+        cache_report_results(ctx, [task_result_a])
+
+        schema = parse_results_json(results_dir_path / f"{run_id}.json")
+        self.assertIsNone(schema.event)
+        self.assertIsNone(schema.source)
+        self.assertIsNone(schema.target)
+        # Per-task values are unaffected -- same path, different set.
+        entry = schema.results[0]
+        self.assertEqual(entry.source, "9.9")
+        self.assertEqual(entry.target, "10.3")
+        self.assertEqual(entry.tier, "tier0only")
+        self.assertEqual(entry.arch, "aarch64")
+
     def test_dispatch_context_copied_from_per_task_manifest_request(self):
         """When the manifest request entry itself carries the 5 new
         fields (post-branch dispatch), the harvested task entry must copy
