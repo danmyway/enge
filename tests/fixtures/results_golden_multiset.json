@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "run_id": "01KYAMSX3JEY51DBCMTM7EPG9M",
+  "created_at": "2026-07-24T18:04:40Z",
+  "event": null,
+  "source": null,
+  "target": null,
+  "verdict": "PASSED",
+  "results": [
+    {
+      "task_id": "6f72fbaf-2028-4d46-8cc9-073c3d92e197",
+      "set": "verification-alpha",
+      "tier": "tier0only",
+      "arch": "x86_64",
+      "source_compose": "RHEL-9.9.0-20260629.0",
+      "target_compose": "RHEL-10.3.0-20260705.0",
+      "dispatched_at": "2026-07-24T18:04:42Z",
+      "verdict": "PASSED",
+      "total_duration_seconds": 210.5,
+      "plans": [
+        {
+          "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
+          "verdict": "PASSED",
+          "tests": [
+            {
+              "name": "/tests/newstyle/upgrades/tests/nondestructive/test_selinux_labels.py::TestSelinuxLabels",
+              "verdict": "PASSED",
+              "duration_seconds": 180.2,
+              "start_time": "2026-07-24T18:10:00.000000+00:00",
+              "end_time": "2026-07-24T18:13:00.200000+00:00"
+            }
+          ]
+        }
+      ],
+      "source": "9.9",
+      "target": "10.3",
+      "git_ref": "main",
+      "event": "preliminary",
+      "build_ids": [
+        "12345:centos-stream9-x86_64"
+      ],
+      "rerun_of": null,
+      "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/6f72fbaf-2028-4d46-8cc9-073c3d92e197",
+      "plan": "plans",
+      "plan_filter": "tag:verification-alpha"
+    },
+    {
+      "task_id": "875292b3-0d28-45ca-b6ce-97b63bc81a53",
+      "set": "verification-beta",
+      "tier": "tier1only",
+      "arch": "aarch64",
+      "source_compose": "RHEL-9.9.0-20260629.0",
+      "target_compose": "RHEL-10.3.0-20260705.0",
+      "dispatched_at": "2026-07-24T18:04:43Z",
+      "verdict": "PASSED",
+      "total_duration_seconds": 349.0,
+      "plans": [
+        {
+          "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
+          "verdict": "PASSED",
+          "tests": [
+            {
+              "name": "/tests/newstyle/upgrades/tests/nondestructive/test_var_run_symlink.py::TestVarRunSymlink",
+              "verdict": "PASSED",
+              "duration_seconds": 75.0,
+              "start_time": "2026-07-24T18:20:00.000000+00:00",
+              "end_time": "2026-07-24T18:21:15.000000+00:00"
+            }
+          ]
+        }
+      ],
+      "source": "9.9",
+      "target": "10.3",
+      "git_ref": "main",
+      "event": "preliminary",
+      "build_ids": [
+        "12345:centos-stream9-aarch64"
+      ],
+      "rerun_of": null,
+      "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/875292b3-0d28-45ca-b6ce-97b63bc81a53",
+      "plan": "plans",
+      "plan_filter": "tag:verification-beta"
+    }
+  ]
+}

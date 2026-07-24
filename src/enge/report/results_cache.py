@@ -247,13 +247,26 @@ def _cache_one_run(
     is_single_set = len(request_sets) <= 1
 
     if not results_path.exists():
+        # Root envelope keeps only things relevant to the whole run as a
+        # single batch (maintainer principle, 2026-07-24). A multi-set
+        # manifest has no single correct event/source/target -- even when
+        # two sets happen to share an upgrade path, tier/arch can still
+        # diverge between them, so the envelope never picks a set's value
+        # to stand in for the whole run. Deliberately not gated on path
+        # equality across sets; is_single_set is the only signal.
+        if is_single_set:
+            envelope_event = context.get("event") or None
+            envelope_source = context.get("source") or None
+            envelope_target = context.get("target") or None
+        else:
+            envelope_event = envelope_source = envelope_target = None
         try:
             init_results_json(
                 run_id=run_id,
                 created_at=manifest.get("created_at", ""),
-                event=context.get("event") or "",
-                source=context.get("source") or "",
-                target=context.get("target") or "",
+                event=envelope_event,
+                source=envelope_source,
+                target=envelope_target,
                 output_dir=output_dir,
             )
         except FileExistsError:
