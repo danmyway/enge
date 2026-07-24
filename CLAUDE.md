@@ -305,6 +305,10 @@ envelope -> per-task results -> per-plan -> per-test.
       "git_ref": "main",
       "event": "preliminary",
       "build_ids": ["12345:centos-stream9-x86_64"],
+      "rerun_of": null,
+      "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/5d67eecf-a02d-46b7-aee2-9ffb673f40df",
+      "plan": "plans",
+      "plan_filter": "tag:verification_99_103_ctc2",
       "plans": [
         {
           "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
@@ -369,6 +373,28 @@ trusted to belong to any particular request. `git_ref` has no envelope
 equivalent to fall back to (the envelope never carried it, before or
 after this schema revision), so it stays `null` on every legacy entry.
 `build_ids` never backfills.
+
+`rerun_of`, `artifacts_url`, `plan`, `plan_filter` (nullable strings,
+2026-07-24) are likewise **optional** — a missing key defaults to
+`null` rather than being rejected, same tolerance as the five fields
+above. Unlike `source`/`target`/`git_ref`/`event`, these four have **no
+run-envelope fallback at all**, single-set or not: there is no such
+thing as a run's "envelope plan" or "envelope rerun lineage." `rerun_of`
+and `artifacts_url` are copied verbatim from the manifest's matching
+`requests[]` entry (already written there by
+`dispatch/set_flow.py::add_request` — this extension only stops
+discarding them at harvest time, it adds no new manifest field). `plan`
+is likewise copied verbatim from the manifest request — not recomputed
+anywhere, it lands in the request as-is. `plan_filter` is the one
+exception sourced from neither the manifest nor the envelope: the
+manifest deliberately never records it at dispatch time (it already
+lives in the TF API request body, so an in-flight write would be
+redundant) — it comes from `report/concurrent_parser.py`'s
+`TaskResult.request_plan_filter`, populated by the same live per-task
+TF fetch `enge report` already performs on every invocation and prints
+in its `REQUEST METADATA` table, at zero additional network cost.
+`TaskResult`'s `""` empty-string default is normalized to `null`,
+matching this schema's established none-vs-empty convention.
 
 **Plan — all required**: `name` (str, verbatim `testsuite@name` from
 xunit), `verdict` (enum), `tests` (list).
@@ -496,25 +522,31 @@ manifest store, `results/` instead of `runs/` as the leaf directory, and
 call, since the gap-fill writers each take their own `output_dir`
 explicitly rather than sharing one central flush step.
 
-**TF artifact URL**: NOT stored in `results.json`. The coldstore
-hyperlink will be constructed externally later from the TF result URL
-plus `run_id`/`task_id` — no field for this exists or is planned here.
+**TF artifact URL**: stored as `TaskEntry.artifacts_url` (added
+2026-07-24, see "Task entry" above) — copied verbatim from the
+manifest's `requests[]` entry, the same value `compare`'s
+`TASK REFERENCE` footer already joins in from the manifest separately.
+The coldstore hyperlink is now available directly from a cached
+`results.json` entry without reconstruction or a manifest join;
+superseded is this section's original plan to construct it externally
+from `run_id`/`task_id` alone.
 
 **Golden fixture MD5s** (`tests/fixtures/`; updated when the
 dispatch-context-schema fields — `source`/`target`/`git_ref`/`event`/
-`build_ids` — were added to every task entry below):
+`build_ids` — were added to every task entry below, and later when
+`rerun_of`/`artifacts_url`/`plan`/`plan_filter` were added):
 - `results_golden.json` (finalized multi-task run; 3 task entries —
   PASSED, FAILED-with-a-SKIPPED-plan, and an ERROR task with
   `plans: []`; root `verdict` = `"ERROR"`, the severity-max of
-  PASSED/FAILED/ERROR): `84b1b1df080ba4d9fad2245916bbaf2f`
+  PASSED/FAILED/ERROR): `7731ee7227a5b18562d56dd27c9cefd9`
 - `results_golden_partial.json` (unfinalized run; root `verdict: null`,
   2 task entries against an assumed `expected_count=3` — a third
   tier1/aarch64 task has not reported in yet):
-  `84d144aa484cbad87be5c077d40990f7`
+  `4d21cf882dfc26fd19f6c0a3a786257a`
 - `results_golden_canceled.json` (finalized run mixing a CANCELED task,
   `plans: []`, `total_duration_seconds: 32.4`, with a PASSED task; root
   `verdict` = `"CANCELED"`, demonstrating CANCELED outranking PASSED in
-  the severity ranking): `a2458afdbee5b16a42087d60291ca063`
+  the severity ranking): `906acabeaec812e44f0109e64c8f7275`
 
 This schema is contract-pinned as of 2026-07-14. Cross-cutting contract:
 schema changes require maintainer sign-off.
