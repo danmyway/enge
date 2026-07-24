@@ -291,6 +291,48 @@ class TestTaskEntryValidation(unittest.TestCase):
         self.assertIn("build_ids", d)
         self.assertEqual(d["build_ids"], [])
 
+    def test_rerun_artifacts_plan_metadata_absent_default_to_none(self):
+        """rerun_of/artifacts_url/plan/plan_filter are optional -- a cached
+        task entry predating this extension has none of them, and
+        from_dict() must not raise, defaulting all four to None."""
+        payload = _task_payload()
+        for key in ("rerun_of", "artifacts_url", "plan", "plan_filter"):
+            self.assertNotIn(key, payload)
+        task = TaskEntry.from_dict(payload)
+        self.assertIsNone(task.rerun_of)
+        self.assertIsNone(task.artifacts_url)
+        self.assertIsNone(task.plan)
+        self.assertIsNone(task.plan_filter)
+
+    def test_rerun_artifacts_plan_metadata_round_trip(self):
+        task = TaskEntry.from_dict(
+            _task_payload(
+                rerun_of="parent-uuid",
+                artifacts_url="https://tf.example.com/artifacts/task",
+                plan="plans",
+                plan_filter="tag:verification_99_103_ctc2",
+            )
+        )
+        self.assertEqual(task.rerun_of, "parent-uuid")
+        self.assertEqual(task.artifacts_url, "https://tf.example.com/artifacts/task")
+        self.assertEqual(task.plan, "plans")
+        self.assertEqual(task.plan_filter, "tag:verification_99_103_ctc2")
+
+        d = task.to_dict()
+        self.assertEqual(d["rerun_of"], "parent-uuid")
+        self.assertEqual(d["artifacts_url"], "https://tf.example.com/artifacts/task")
+        self.assertEqual(d["plan"], "plans")
+        self.assertEqual(d["plan_filter"], "tag:verification_99_103_ctc2")
+
+    def test_to_dict_always_emits_rerun_artifacts_plan_keys_even_when_absent(self):
+        """Emit-always applies to these four keys too -- always present
+        with a null value when not applicable, never omitted."""
+        task = TaskEntry.from_dict(_task_payload())
+        d = task.to_dict()
+        for key in ("rerun_of", "artifacts_url", "plan", "plan_filter"):
+            self.assertIn(key, d)
+            self.assertIsNone(d[key])
+
 
 class TestResultsJsonSchemaValidation(unittest.TestCase):
     def test_valid_root_payload_parses(self):

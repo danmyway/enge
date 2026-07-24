@@ -361,6 +361,44 @@ class TestNoXunitErrorEntry(_CacheTestCase):
         self.assertEqual(entry.verdict, "ERROR")
         self.assertEqual(entry.plans, [])
 
+    def test_no_xunit_artifact_logs_a_warning_naming_run_and_task(self):
+        # Mutation-check target (c): removing the new LOGGER.warning call
+        # makes this test fail.
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDSSSSSSSSSSSSSSSSSSS"
+        task_id = "cccccccc-0000-0000-0000-000000000001"
+        _write_manifest(runs_dir, run_id, [_request(task_id)])
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result = _make_task_result(
+            request_uuid=task_id, request_state="ERROR", xunit_bytes=None
+        )
+        with self.assertLogs("enge.report.results_cache", level="WARNING") as cm:
+            cache_report_results(ctx, [task_result])
+
+        self.assertTrue(any(run_id in msg for msg in cm.output))
+        self.assertTrue(any(task_id in msg for msg in cm.output))
+
+    def test_no_warning_logged_when_xunit_is_collected(self):
+        """The new warning must not fire on the happy path -- it is
+        specific to the no-xunit-artifact branch, not a blanket log on
+        every harvested task."""
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDTTTTTTTTTTTTTTTTTTT"
+        task_id = "dddddddd-0000-0000-0000-000000000001"
+        _write_manifest(runs_dir, run_id, [_request(task_id)])
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result = _make_task_result(
+            request_uuid=task_id, xunit_bytes=_xunit_bytes()
+        )
+        with self.assertNoLogs("enge.report.results_cache", level="WARNING"):
+            cache_report_results(ctx, [task_result])
+
 
 class TestVerdictMapping(_CacheTestCase):
     def test_known_verdicts_map_through_xunit_result_map(self):
@@ -579,6 +617,122 @@ class TestMetadataFromManifest(_CacheTestCase):
         self.assertEqual(entry.event, "candidate")
         self.assertIsNone(entry.git_ref)
         self.assertEqual(entry.build_ids, [])
+
+    def test_rerun_of_artifacts_url_plan_copied_verbatim_no_fallback(self):
+        """rerun_of/artifacts_url/plan have no run-envelope equivalent to
+        fall back to (there is no such thing as a run's "envelope plan"),
+        unlike source/target/git_ref/event. Straight request_meta.get(),
+        always None when the manifest entry lacks the key -- single-set
+        or not makes no difference, unlike the source/target fallback."""
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDOOOOOOOOOOOOOOOOOOO"
+        task_id = "88888888-0000-0000-0000-000000000001"
+        _write_manifest(
+            runs_dir,
+            run_id,
+            [
+                _request(
+                    task_id,
+                    set_name="onlyset",  # single-set: source/target WOULD fall back
+                    rerun_of="parent-uuid",
+                    artifacts_url="https://tf.example.com/artifacts/task",
+                    plan="plans",
+                )
+            ],
+            context={"event": "candidate", "source": "9.9", "target": "10.3"},
+        )
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result = _make_task_result(
+            request_uuid=task_id, xunit_bytes=_xunit_bytes()
+        )
+        cache_report_results(ctx, [task_result])
+
+        entry = parse_results_json(results_dir_path / f"{run_id}.json").results[0]
+        self.assertEqual(entry.rerun_of, "parent-uuid")
+        self.assertEqual(entry.artifacts_url, "https://tf.example.com/artifacts/task")
+        self.assertEqual(entry.plan, "plans")
+        # Contrast: source/target DO fall back in this same single-set scenario.
+        self.assertEqual(entry.source, "9.9")
+        self.assertEqual(entry.target, "10.3")
+
+    def test_rerun_of_artifacts_url_plan_absent_from_request_stay_none_even_single_set(
+        self,
+    ):
+        """The one deliberate asymmetry (pin it explicitly so it can't
+        regress silently): a single-set manifest whose request lacks
+        rerun_of/artifacts_url/plan gets NO envelope fallback for those
+        three -- unlike source/target, which DO fall back in the exact
+        same single-set scenario."""
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDPPPPPPPPPPPPPPPPPPP"
+        task_id = "99999999-0000-0000-0000-000000000001"
+        _write_manifest(
+            runs_dir,
+            run_id,
+            [_request(task_id, set_name="onlyset")],
+            context={"event": "candidate", "source": "9.9", "target": "10.3"},
+        )
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result = _make_task_result(
+            request_uuid=task_id, xunit_bytes=_xunit_bytes()
+        )
+        cache_report_results(ctx, [task_result])
+
+        entry = parse_results_json(results_dir_path / f"{run_id}.json").results[0]
+        self.assertIsNone(entry.rerun_of)
+        self.assertIsNone(entry.artifacts_url)
+        self.assertIsNone(entry.plan)
+        # Contrast: source/target DO fall back here.
+        self.assertEqual(entry.source, "9.9")
+        self.assertEqual(entry.target, "10.3")
+
+    def test_plan_filter_sourced_from_task_result_not_manifest(self):
+        """plan_filter has no manifest presence at all (deliberately not
+        written at dispatch time -- it's still in the TF API request body,
+        per the maintainer ruling) -- it comes exclusively from the
+        already-live-fetched TaskResult.request_plan_filter."""
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDQQQQQQQQQQQQQQQQQQQ"
+        task_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        _write_manifest(runs_dir, run_id, [_request(task_id)])
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result = _make_task_result(
+            request_uuid=task_id,
+            request_plan_filter="tag:verification_99_103_ctc2",
+            xunit_bytes=_xunit_bytes(),
+        )
+        cache_report_results(ctx, [task_result])
+
+        entry = parse_results_json(results_dir_path / f"{run_id}.json").results[0]
+        self.assertEqual(entry.plan_filter, "tag:verification_99_103_ctc2")
+
+    def test_plan_filter_empty_string_normalized_to_none(self):
+        # Mutation-check target (b): if the `or None` normalization were
+        # dropped, this would store "" instead of None.
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDRRRRRRRRRRRRRRRRRRR"
+        task_id = "bbbbbbbb-0000-0000-0000-000000000001"
+        _write_manifest(runs_dir, run_id, [_request(task_id)])
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        task_result = _make_task_result(
+            request_uuid=task_id, request_plan_filter="", xunit_bytes=_xunit_bytes()
+        )
+        cache_report_results(ctx, [task_result])
+
+        entry = parse_results_json(results_dir_path / f"{run_id}.json").results[0]
+        self.assertIsNone(entry.plan_filter)
 
     def test_legacy_multi_set_manifest_does_not_fall_back(self):
         """A manifest predating this schema with MORE THAN ONE set across
