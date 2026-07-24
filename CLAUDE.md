@@ -569,6 +569,22 @@ explicitly off-limits here):
   is a schema-legal plan/test-level verdict per this file's own
   "documented gaps"; excluding it from both stages was the ruling, so it
   is excluded from stage 1's scan too, not just stage 2's rank).
+- Coordinate identity requires known-and-matching source+target (bugfix,
+  2026-07-23): two columns are only the same stage-1 coordinate when
+  both are non-None and equal. A multi-set manifest predating the
+  dispatch-context-schema fields (see "Descriptor sourcing" below)
+  leaves both None for every column — in that case each column is its
+  own singleton coordinate (keyed on position), never assumed to share
+  rerun history with another None/None column just because they share
+  an arch. This closes a real bug (two genuinely different upgrade
+  paths on the same arch, both undescribed, collapsing into one
+  coordinate and letting a PASSED mask an unrelated ERROR) at a known,
+  accepted cost: a genuine rerun of the same undescribed coordinate no
+  longer gets PASS-wins collapsing either — it falls through to stage
+  2's severity-max instead. A stable coordinate-identity signal that
+  survives missing descriptors (e.g. `rerun_of` chains) would close
+  that gap; not yet plumbed into results.json/`ExecutionColumn` (see
+  the coldstore note below).
 - **Stage 2**, across the coordinates present in that row: severity-max
   `ERROR > FAILED > PASSED`. A coordinate with no real result (stage 1
   found nothing to report) contributes nothing to stage 2.
