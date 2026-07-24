@@ -426,9 +426,9 @@ class ResultsJsonSchema:
     schema_version: int
     run_id: str
     created_at: str
-    event: str
-    source: str
-    target: str
+    event: Optional[str]
+    source: Optional[str]
+    target: Optional[str]
     verdict: Optional[str]
     results: List[TaskEntry] = field(default_factory=list)
 
@@ -457,9 +457,15 @@ class ResultsJsonSchema:
         created_at = _validate_timestamp(
             data["created_at"], "created_at", context="results.json"
         )
-        event = _validate_string(data["event"], "event", context="results.json")
-        source = _validate_string(data["source"], "source", context="results.json")
-        target = _validate_string(data["target"], "target", context="results.json")
+        event = _validate_optional_string(
+            data["event"], "event", context="results.json"
+        )
+        source = _validate_optional_string(
+            data["source"], "source", context="results.json"
+        )
+        target = _validate_optional_string(
+            data["target"], "target", context="results.json"
+        )
         verdict = _validate_verdict(
             data["verdict"], context="results.json", nullable=True
         )
@@ -538,9 +544,9 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
 def init_results_json(
     run_id: str,
     created_at: str,
-    event: str,
-    source: str,
-    target: str,
+    event: Optional[str],
+    source: Optional[str],
+    target: Optional[str],
     output_dir: Union[str, Path],
 ) -> Path:
     """Create `<output_dir>/<run_id>.json` with verdict: null, results: [].
