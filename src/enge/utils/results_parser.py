@@ -278,6 +278,10 @@ class TaskEntry:
     git_ref: Optional[str] = None
     event: Optional[str] = None
     build_ids: List[str] = field(default_factory=list)
+    rerun_of: Optional[str] = None
+    artifacts_url: Optional[str] = None
+    plan: Optional[str] = None
+    plan_filter: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -296,6 +300,10 @@ class TaskEntry:
             "git_ref": self.git_ref,
             "event": self.event,
             "build_ids": list(self.build_ids),
+            "rerun_of": self.rerun_of,
+            "artifacts_url": self.artifacts_url,
+            "plan": self.plan,
+            "plan_filter": self.plan_filter,
         }
 
     @classmethod
@@ -352,6 +360,17 @@ class TaskEntry:
                 f"got {raw_build_ids!r}"
             )
 
+        rerun_of = _validate_optional_string(
+            data.get("rerun_of"), "rerun_of", context=context
+        )
+        artifacts_url = _validate_optional_string(
+            data.get("artifacts_url"), "artifacts_url", context=context
+        )
+        plan = _validate_optional_string(data.get("plan"), "plan", context=context)
+        plan_filter = _validate_optional_string(
+            data.get("plan_filter"), "plan_filter", context=context
+        )
+
         return cls(
             task_id=task_id,
             set=set_name,
@@ -368,6 +387,10 @@ class TaskEntry:
             git_ref=git_ref,
             event=event,
             build_ids=list(raw_build_ids),
+            rerun_of=rerun_of,
+            artifacts_url=artifacts_url,
+            plan=plan,
+            plan_filter=plan_filter,
         )
 
 

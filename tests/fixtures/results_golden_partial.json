@@ -38,7 +38,11 @@
       "event": "preliminary",
       "build_ids": [
         "12345:centos-stream9-x86_64"
-      ]
+      ],
+      "rerun_of": null,
+      "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/2dd9850e-3e95-4bbf-b63f-ca44582ab3a3",
+      "plan": "plans",
+      "plan_filter": "tag:verification_99_103_ctc2"
     },
     {
       "task_id": "d11ee03f-ab05-41c0-a4fd-77f2b18fe1a3",
@@ -71,7 +75,11 @@
       "event": "preliminary",
       "build_ids": [
         "12345:centos-stream9-x86_64"
-      ]
+      ],
+      "rerun_of": null,
+      "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/d11ee03f-ab05-41c0-a4fd-77f2b18fe1a3",
+      "plan": "plans",
+      "plan_filter": "tag:verification_99_103_ctc2"
     }
   ]
 }
