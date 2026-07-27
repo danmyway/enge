@@ -19,10 +19,9 @@ jobs:
         with:
           python-version: "3.11"
       - uses: pre-commit/action@v3.0.1
+      - uses: ./.github/actions/install-system-deps
       - name: Install project for type checking
-        run: |
-          sudo apt-get install -y libxml2-dev libxslt-dev libkrb5-dev
-          pip install -e . mypy
+        run: pip install -e . mypy
       - name: Type check (mypy)
         run: mypy src/enge
 
@@ -40,7 +39,7 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pyproject.toml
-      - run: sudo apt-get install -y libxml2-dev libxslt-dev libkrb5-dev
+      - uses: ./.github/actions/install-system-deps
       - run: pip install -e . pytest
       - name: Run tests (TZ=${{ matrix.tz }})
         run: python -m pytest tests/ -q
@@ -54,7 +53,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: sudo apt-get install -y libxml2-dev libxslt-dev libkrb5-dev
+      - uses: ./.github/actions/install-system-deps
       - run: pip install -e . pytest
       - name: CLI docs drift check
         run: python -m pytest -k cli_docs_drift tests/ -q
