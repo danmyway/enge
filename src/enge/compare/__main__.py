@@ -21,7 +21,7 @@ from rich.table import Table
 
 from enge.compare import engine
 from enge.compare.loader import load_columns
-from enge.report.__main__ import colorize
+from enge.report.__main__ import colorize, _short_name
 from enge.utils.app_context import AppContext
 from enge.utils.console import console
 from enge.utils.globals import ExitCode
@@ -60,21 +60,25 @@ def _column_header(table: "engine.ComparisonTable", index: int) -> str:
     return " ".join(parts)
 
 
-def _render_table(table: "engine.ComparisonTable") -> Table:
+def _render_table(table: "engine.ComparisonTable", *, short: bool) -> Table:
     rich_table = Table(box=box.ROUNDED, title=_table_title(table))
     rich_table.add_column("Name", justify="left")
     for i in range(len(table.columns)):
         rich_table.add_column(_column_header(table, i), justify="left")
     rich_table.add_column("Consolidated", justify="left")
 
+    def _label(name):
+        return _short_name(name) if short else name
+
     current_plan = None
     blank_padding = len(table.columns) + 1
     for row in table.rows:
         if row.plan_label is not None and row.plan_label != current_plan:
             current_plan = row.plan_label
-            rich_table.add_row(escape(current_plan), *([""] * blank_padding))
+            rich_table.add_row(escape(_label(current_plan)), *([""] * blank_padding))
 
-        label = row.label if row.plan_label is None else f"{'*' * 4} {row.label}"
+        display = _label(row.label)
+        label = display if row.plan_label is None else f"{'*' * 4} {display}"
         cells = [
             colorize(v) if v != engine.ABSENT else engine.ABSENT for v in row.per_column
         ]
@@ -118,6 +122,7 @@ def main(ctx: AppContext) -> int:
     show_tests = getattr(ctx.cli_args, "show_tests", False)
     splitarch = getattr(ctx.cli_args, "splitarch", False)
     splitpath = getattr(ctx.cli_args, "splitpath", False)
+    short = getattr(ctx.cli_args, "short", False)
 
     columns, error_code = load_columns(ctx)
     if error_code is not None:
@@ -135,7 +140,7 @@ def main(ctx: AppContext) -> int:
     for table in tables:
         if not table.rows:
             continue
-        rich_table = _render_table(table)
+        rich_table = _render_table(table, short=short)
 
         console.print()
         console.print("~~~ COMPARE RESULT ~~~~~~~~~~~~~~~~", style="dim")
