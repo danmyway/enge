@@ -188,6 +188,36 @@ class TestShortFlagRendering(unittest.TestCase):
             rich_table.columns[0]._cells[0],
         )
 
+    def test_main_threads_short_flag_from_cli_args_into_render_table(self):
+        """`main()` must forward `ctx.cli_args.short` into `_render_table`,
+        not hardcode it -- caught the wrapped real implementation so the
+        assertion is on the actual keyword value passed, not on a mock's
+        own behavior."""
+        import enge.compare.__main__ as cm
+
+        cols = [
+            _column(
+                task_id="t1",
+                plans=[
+                    PlanEntry(
+                        name="/plans/newstyle/nondestructive/tier0only",
+                        verdict="PASSED",
+                        tests=[],
+                    )
+                ],
+            ),
+        ]
+
+        with (
+            patch("enge.compare.__main__.load_columns", return_value=(cols, None)),
+            patch.object(cm, "_render_table", wraps=cm._render_table) as mock_render,
+        ):
+            cm.main(_ctx(short=True))
+
+        mock_render.assert_called_once()
+        _args, kwargs = mock_render.call_args
+        self.assertTrue(kwargs["short"])
+
     def test_plan_header_dedup_keyed_on_raw_label_not_shortened(self):
         """Two different raw plan labels that happen to shorten to the same
         string (no real collision exists in practice, ruling S-3) must
