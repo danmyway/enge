@@ -51,6 +51,27 @@ def _split_name(name, index):
     return "/".join(name_raw[index:])
 
 
+_NODEID_SEP = "::"
+
+
+def _short_name(name):
+    """`--short` display rule (maintainer-ratified 2026-07-27).
+
+    Test-case names are pytest node IDs (`<path>.py::<Class>`); everything
+    after the first `::` is the meaningful part and the path prefix is noise.
+    Plan names have no node-ID separator and their meaningful part is the last
+    two path segments (`.../nondestructive/tier0only`) -- the last segment
+    alone drops the destructive/nondestructive discriminator.
+
+    Render-time only: never mutates a stored name and never participates in
+    grouping or row identity.
+    """
+    if _NODEID_SEP in name:
+        return name.split(_NODEID_SEP, 1)[1]
+    segments = [s for s in name.split("/") if s]
+    return "/".join(segments[-2:]) or name
+
+
 def build_table(ctx):
     parsed_dict, retval, task_results = _parse_request_xunit_with_retval(
         ctx, skip_pass=ctx.cli_args.skip_pass
@@ -58,12 +79,10 @@ def build_table(ctx):
 
     tables_list = []
 
-    planname_split_index = 0
-    testname_split_index = 0
+    short = bool(getattr(ctx.cli_args, "short", False))
 
-    if ctx.cli_args.short:
-        planname_split_index = -1
-        testname_split_index = -1
+    def _display_name(name):
+        return _short_name(name) if short else _split_name(name, 0)
 
     for task_uuid, data in parsed_dict.items():
         result_url = f"{ctx.testing_farm_endpoint.log_artifact_baseurl}/{task_uuid}"
@@ -110,7 +129,7 @@ def build_table(ctx):
             add_row(
                 testplan=colorize(
                     testsuite_result,
-                    _split_name(testsuite_data["testsuite_name"], planname_split_index),
+                    _display_name(testsuite_data["testsuite_name"]),
                 ),
                 testplan_result=colorize(testsuite_result),
             )
@@ -125,9 +144,7 @@ def build_table(ctx):
                     add_row(
                         testcase=colorize(
                             testcase_result,
-                            _split_name(
-                                testcase["testcase_name"], testname_split_index
-                            ),
+                            _display_name(testcase["testcase_name"]),
                         ),
                         testcase_result=colorize(testcase_result),
                         end_section=(i == len(visible) - 1),
