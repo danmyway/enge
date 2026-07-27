@@ -150,8 +150,11 @@ class TestReportShortIntegration(unittest.TestCase):
             tables_list, _retval, _task_results = rm.build_table(self._ctx())
 
         (result_table, _metadata) = tables_list[0]
+        # The plan name and the test case land in separate rows (build_table
+        # adds one add_row() call per testsuite, then one per testcase) --
+        # the plan cell is row 0, the test-case cell is row 1.
         plan_cell = result_table.columns[0]._cells[0]
-        test_cell = result_table.columns[2]._cells[0]
+        test_cell = result_table.columns[2]._cells[1]
 
         self.assertEqual(plan_cell, rm.colorize("PASSED", "nondestructive/tier0only"))
         self.assertEqual(test_cell, rm.colorize("PASSED", "TestSelinuxLabels"))
