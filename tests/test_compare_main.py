@@ -128,10 +128,93 @@ class TestFlakyNeverRendered(unittest.TestCase):
         )
         table = ComparisonTable(tier="tier1", columns=(col,), rows=(row,))
 
-        rich_table = _render_table(table)
+        rich_table = _render_table(table, short=False)
 
         headers = [str(c.header).lower() for c in rich_table.columns]
         self.assertNotIn("flaky", headers)
+
+
+class TestShortFlagRendering(unittest.TestCase):
+    """`--short` (fix/short-name-rendering, 2026-07-27): render-time only,
+    threaded from `main()` into `_render_table`. Never mutates row/plan
+    identity used for grouping -- only the displayed label text."""
+
+    def test_short_shortens_plan_header_and_row_label(self):
+        from enge.compare.__main__ import _render_table
+
+        col = _column()
+        plan_row = RowResult(
+            label="/plans/newstyle/nondestructive/tier0only",
+            plan_label=None,
+            per_column=("PASSED",),
+            consolidated="PASSED",
+            flaky=False,
+        )
+        test_row = RowResult(
+            label=(
+                "/tests/newstyle/upgrades/tests/nondestructive/"
+                "test_selinux_labels.py::TestSelinuxLabels"
+            ),
+            plan_label="/plans/newstyle/nondestructive/tier0only",
+            per_column=("PASSED",),
+            consolidated="PASSED",
+            flaky=False,
+        )
+        table = ComparisonTable(tier="tier1", columns=(col,), rows=(plan_row, test_row))
+
+        rich_table = _render_table(table, short=True)
+
+        name_cells = rich_table.columns[0]._cells
+        self.assertIn("nondestructive/tier0only", name_cells[0])
+        self.assertIn("TestSelinuxLabels", name_cells[-1])
+
+    def test_without_short_renders_raw_verbatim_name_with_leading_slash(self):
+        from enge.compare.__main__ import _render_table
+
+        col = _column()
+        row = RowResult(
+            label="/plans/newstyle/nondestructive/tier0only",
+            plan_label=None,
+            per_column=("PASSED",),
+            consolidated="PASSED",
+            flaky=False,
+        )
+        table = ComparisonTable(tier="tier1", columns=(col,), rows=(row,))
+
+        rich_table = _render_table(table, short=False)
+
+        self.assertIn(
+            "/plans/newstyle/nondestructive/tier0only",
+            rich_table.columns[0]._cells[0],
+        )
+
+    def test_plan_header_dedup_keyed_on_raw_label_not_shortened(self):
+        """Two different raw plan labels that happen to shorten to the same
+        string (no real collision exists in practice, ruling S-3) must
+        still render as two distinct header rows -- dedup compares the
+        RAW plan_label, never `_short_name(plan_label)`."""
+        from enge.compare.__main__ import _render_table
+
+        col = _column()
+        row_a = RowResult(
+            label="test-a",
+            plan_label="/plans/setA/nondestructive/tier0only",
+            per_column=("PASSED",),
+            consolidated="PASSED",
+            flaky=False,
+        )
+        row_b = RowResult(
+            label="test-b",
+            plan_label="/plans/setB/nondestructive/tier0only",
+            per_column=("PASSED",),
+            consolidated="PASSED",
+            flaky=False,
+        )
+        table = ComparisonTable(tier="tier1", columns=(col,), rows=(row_a, row_b))
+
+        rich_table = _render_table(table, short=True)
+
+        self.assertEqual(rich_table.row_count, 4)  # 2 headers + 2 rows
 
 
 if __name__ == "__main__":
