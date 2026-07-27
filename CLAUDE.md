@@ -585,6 +585,14 @@ Testing Farm, never writes a cache. `compare/engine.py` is pure (no I/O);
 --compare`'s `build_table_comparison` (deleted) and `--unify` (deleted;
 no replacement — plan names in `results.json` are always verbatim).
 
+`-s/--short` (fix/short-name-rendering, 2026-07-27) is render-time
+only: it shortens the displayed plan/test name for `enge report` and
+`enge compare` alike — split on `::` and keep everything after the
+first separator, otherwise split on `/` and keep the last two segments
+— and never mutates the stored or grouped name backing it;
+`results.json` values and the plan-header dedup sentinel stay on the
+full verbatim name, consistent with the invariant above.
+
 **Unified view** (compare-redesign, 2026-07-22): there is no mode split.
 Every invocation renders one or more tables, each with one column per
 matching execution plus an always-present `Consolidated` column. The
