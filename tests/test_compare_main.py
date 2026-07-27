@@ -165,8 +165,9 @@ class TestShortFlagRendering(unittest.TestCase):
         rich_table = _render_table(table, short=True)
 
         name_cells = rich_table.columns[0]._cells
-        self.assertIn("nondestructive/tier0only", name_cells[0])
-        self.assertIn("TestSelinuxLabels", name_cells[-1])
+        self.assertEqual(name_cells[0], "nondestructive/tier0only")
+        self.assertEqual(name_cells[1], "nondestructive/tier0only")
+        self.assertEqual(name_cells[-1], "**** TestSelinuxLabels")
 
     def test_without_short_renders_raw_verbatim_name_with_leading_slash(self):
         from enge.compare.__main__ import _render_table
