@@ -385,5 +385,190 @@ class TestPerTaskDescriptorSourcing(unittest.TestCase):
         self.assertEqual(by_id["t2"].target, "10.4")
 
 
+class TestManifestSchemaIndependence(unittest.TestCase):
+    """Compare's column data comes from results.json exclusively; a
+    manifest is consulted only for run *selection*
+    (resolve_manifests_for_invocation), never for column content
+    (artifacts_url, the single-set gate). These tests fail on a loader
+    that still reads manifest['requests'] for that data."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.runs_dir = Path(self.tmp.name) / "runs"
+        self.results_dir = Path(self.tmp.name) / "results"
+
+    def _write_manifest_no_requests(self, run_id):
+        manifest = {"schema_version": 1, "run_id": run_id}
+        Path(self.runs_dir).mkdir(parents=True, exist_ok=True)
+        (Path(self.runs_dir) / f"{run_id}.json").write_text(json.dumps(manifest))
+
+    def _ctx(self, log_artifact_baseurl="https://artifacts.example.com/base"):
+        cli = {
+            "run": "run1",
+            "filter_set": None,
+            "filter_tier": None,
+            "filter_arch": None,
+            "filter_tag": None,
+        }
+        return make_app_context(
+            action="compare",
+            extra_cli=cli,
+            extra_config={"common": {"results_dir": str(self.results_dir)}},
+            manifest_runs_dir=str(self.runs_dir),
+            log_artifact_baseurl=log_artifact_baseurl,
+        )
+
+    def test_columns_populate_fully_when_manifest_has_no_requests_key(self):
+        """The decoupling pin: a manifest with no 'requests' key at all
+        still yields fully-populated columns, because artifacts_url/
+        source/target come from the results.json task entry directly."""
+        from enge.compare.loader import load_columns
+
+        self._write_manifest_no_requests("run1")
+        _write_results_json(
+            self.results_dir,
+            "run1",
+            tasks=[
+                _task_entry(
+                    "t1",
+                    set="setA",
+                    source="9.6",
+                    target="10.0",
+                    artifacts_url="https://stored.example.com/artifacts/t1",
+                )
+            ],
+        )
+
+        columns, error_code = load_columns(self._ctx())
+
+        self.assertIsNone(error_code)
+        (column,) = columns
+        self.assertEqual(
+            column.artifacts_url, "https://stored.example.com/artifacts/t1"
+        )
+        self.assertEqual(column.source, "9.6")
+        self.assertEqual(column.target, "10.0")
+
+    def test_stored_artifacts_url_is_preferred_over_constructed_value(self):
+        from enge.compare.loader import load_columns
+
+        self._write_manifest_no_requests("run1")
+        _write_results_json(
+            self.results_dir,
+            "run1",
+            tasks=[
+                _task_entry(
+                    "t1", artifacts_url="https://stored.example.com/mismatched/t1"
+                )
+            ],
+        )
+
+        columns, error_code = load_columns(
+            self._ctx(log_artifact_baseurl="https://artifacts.example.com/base")
+        )
+
+        self.assertIsNone(error_code)
+        (column,) = columns
+        self.assertEqual(
+            column.artifacts_url, "https://stored.example.com/mismatched/t1"
+        )
+
+    def test_missing_artifacts_url_falls_back_to_constructed_url(self):
+        from enge.compare.loader import load_columns
+
+        self._write_manifest_no_requests("run1")
+        _write_results_json(self.results_dir, "run1", tasks=[_task_entry("t1")])
+
+        columns, error_code = load_columns(
+            self._ctx(log_artifact_baseurl="https://artifacts.example.com/base")
+        )
+
+        self.assertIsNone(error_code)
+        (column,) = columns
+        self.assertEqual(column.artifacts_url, "https://artifacts.example.com/base/t1")
+
+    def test_empty_string_artifacts_url_falls_back_to_constructed_url(self):
+        from enge.compare.loader import load_columns
+
+        self._write_manifest_no_requests("run1")
+        _write_results_json(
+            self.results_dir, "run1", tasks=[_task_entry("t1", artifacts_url="")]
+        )
+
+        columns, error_code = load_columns(
+            self._ctx(log_artifact_baseurl="https://artifacts.example.com/base")
+        )
+
+        self.assertIsNone(error_code)
+        (column,) = columns
+        self.assertEqual(column.artifacts_url, "https://artifacts.example.com/base/t1")
+        self.assertNotEqual(column.artifacts_url, "")
+
+    def test_legacy_single_set_cache_gate_resourced_from_results_json_not_manifest(
+        self,
+    ):
+        """The manifest LOOKS multi-set (two distinct request sets), but
+        the results.json cache is genuinely single-set. The gate must
+        follow the cache, not the manifest."""
+        from enge.compare.loader import load_columns
+
+        manifest = {
+            "schema_version": 1,
+            "run_id": "run1",
+            "requests": [
+                {"task_id": "t1", "set": "setA"},
+                {"task_id": "t2", "set": "setB"},
+            ],
+        }
+        Path(self.runs_dir).mkdir(parents=True, exist_ok=True)
+        (Path(self.runs_dir) / "run1.json").write_text(json.dumps(manifest))
+
+        _write_results_json(
+            self.results_dir,
+            "run1",
+            source="9.9",
+            target="10.3",
+            tasks=[
+                _task_entry("t1", set="setA"),
+                _task_entry("t2", set="setA"),  # single set in the cache
+            ],
+        )
+
+        columns, error_code = load_columns(self._ctx())
+
+        self.assertIsNone(error_code)
+        for col in columns:
+            self.assertEqual(col.source, "9.9")
+            self.assertEqual(col.target, "10.3")
+
+    def test_legacy_multiset_cache_gate_resourced_from_results_json_not_manifest(self):
+        """M4 guard, re-sourced: the manifest has no 'requests' key at
+        all (the old loader's manifest-derived gate defaulted this shape
+        to is_single_set=True), but the results.json cache is genuinely
+        multi-set. Envelope values must NOT be smeared onto columns
+        lacking a per-task source/target."""
+        from enge.compare.loader import load_columns
+
+        self._write_manifest_no_requests("run1")
+        _write_results_json(
+            self.results_dir,
+            "run1",
+            source="9.9",
+            target="10.3",
+            tasks=[
+                _task_entry("t1", set="setA"),
+                _task_entry("t2", set="setB"),
+            ],
+        )
+
+        columns, error_code = load_columns(self._ctx())
+
+        self.assertIsNone(error_code)
+        for col in columns:
+            self.assertIsNone(col.source)
+            self.assertIsNone(col.target)
+
+
 if __name__ == "__main__":
     unittest.main()
