@@ -540,9 +540,13 @@ explicitly rather than sharing one central flush step.
 
 **TF artifact URL**: stored as `TaskEntry.artifacts_url` (added
 2026-07-24, see "Task entry" above) — copied verbatim from the
-manifest's `requests[]` entry, the same value `compare`'s
-`TASK REFERENCE` footer already joins in from the manifest separately.
-The coldstore hyperlink is now available directly from a cached
+manifest's `requests[]` entry at harvest time, the same value dispatch
+computed at request time (`dispatch/tf_send_request.py`). `enge
+compare` (`compare/loader.py`) reads this field directly from the
+results.json cache — it no longer joins the manifest's `requests[]`
+itself for this value (fix/compare-manifest-decoupling, 2026-07-29; see
+"Compare consolidation policy" below for the read-side layering rule).
+The coldstore hyperlink is available directly from a cached
 `results.json` entry without reconstruction or a manifest join;
 superseded is this section's original plan to construct it externally
 from `run_id`/`task_id` alone.
@@ -692,13 +696,34 @@ titles) come from the PER-TASK `TaskEntry.source`/`.target` fields
 harvest), not unconditionally from the run envelope — the read-side half
 of the M4 multi-set descriptor fix. Fallback to the envelope's
 `source`/`target` applies ONLY when the per-task value is `None` AND the
-manifest is single-set (`len({r.get("set") for r in
-manifest["requests"]}) <= 1`), mirroring `report/results_cache.py`'s own
-`is_single_set` harvest-time fallback exactly. A multi-set manifest with
+**results.json cache** is single-set (`len({t.set for t in
+schema.results}) <= 1`) — re-sourced from the cache itself rather than
+the manifest's `requests[]` (RULING D-2/item 2(b),
+fix/compare-manifest-decoupling, 2026-07-29): `compare/loader.py` is a
+downstream reader of the cache and must not re-derive anything from the
+manifest to agree with it. This mirrors the same `<= 1` rule
+`report/results_cache.py`'s own `is_single_set` harvest-time fallback
+applies, expressed there in terms of the manifest because that module is
+the one writing the cache in the first place. A multi-set cache with
 no per-task value gets no fallback and stays `None`; `compare/__main__.py`
 renders a `None` descriptor as the em dash, never the literal string
 "None" — the em dash is always a render-time substitution, never a
-stored value.
+stored value. **Ratified sunset (RULING D-2, 2026-07-29)**: this
+envelope fallback and its single-set gate are legacy-cache support for
+results.json caches written before per-task `source`/`target` existed,
+and are slated for DELETION when the schema-staleness-warning +
+`--refresh` work ships (ledgered as F7).
+
+**Artifacts URL sourcing**: `ExecutionColumn.artifacts_url` is sourced
+in `compare/loader.py` from the results.json cache exclusively — never
+from the manifest, which by this point in the pipeline is used for run
+selection only. Layering (RULING D-1, fix/compare-manifest-decoupling,
+2026-07-29): the stored `TaskEntry.artifacts_url` wins whenever it is
+truthy (verbatim historical value); a falsy value (missing, or `""` — a
+legacy cache predating the field or a harvest that populated it) falls
+back to a constructed
+`f"{ctx.testing_farm_endpoint.log_artifact_baseurl}/{task.task_id}"`,
+mirroring how dispatch derives the same URL at request time.
 
 **Deprecation alias**: `enge report --compare` delegates to `enge compare`
 for one release, emitting a WARNING. Unlike every other manifest-backed
