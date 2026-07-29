@@ -1,15 +1,26 @@
 """I/O loading for `enge compare`: manifest resolution -> results.json
 parsing -> unified floor policy -> per-task descriptor sourcing.
 
-Data source is results.json caches ONLY (`parse_results_json`) -- no
-xunit parsing, no TF API calls, no second verdict mapping (verdicts arrive
-already as the uppercase schema enum). *Which* manifests/run_ids are in
-scope is resolved via the shared `resolve_manifests_for_invocation` (never
-re-forked -- see CLAUDE.md "Results.json format"); this module only reads
-manifest `requests[]` afterwards for column-provenance metadata
-(`artifacts_url`, joined on `task_id`) that results.json deliberately does
-not store, mirroring the same join `report/results_cache.py` already
-performs.
+Manifest-schema independence (fix/compare-manifest-decoupling): a manifest
+is consulted for run *selection* only, via the shared
+`resolve_manifests_for_invocation` (never re-forked -- see CLAUDE.md
+"Results.json format"); once a manifest is matched, the only field this
+module reads from it is `run_id`. ALL column data -- `artifacts_url`,
+`source`/`target`, `set`/`tier`/`arch`, plans -- comes from that run's
+results.json cache (`parse_results_json`) exclusively. No xunit parsing,
+no TF API calls, no second verdict mapping (verdicts arrive already as the
+uppercase schema enum), and no reads of manifest `requests[]`. Manifests
+are immutable and span every schema generation ever written; coupling
+column data to their shape permanently couples `enge compare` to that
+history. results.json is a derived cache the harvest can improve instead.
+
+Layered `artifacts_url` sourcing (item 1): prefer the value stored on the
+`TaskEntry` (verbatim historical truth); only when that is falsy (missing
+or an empty string -- a legacy cache predating the field, or predating a
+harvest that populated it) is a URL constructed from
+`ctx.testing_farm_endpoint.log_artifact_baseurl` + `task_id`, mirroring
+how dispatch derives the same URL at request time
+(`dispatch/tf_send_request.py`).
 
 Missing-cache policy (fire-time ruling, unchanged by the compare-redesign
 branch): a matched run with no results.json logs an ERROR naming the run
@@ -28,20 +39,29 @@ manifest fanned across N requests (e.g. one per arch) is now always
 sufficient on its own, regardless of table partitioning.
 
 Descriptor sourcing (item 7, the read-side half of the M4 multi-set
-descriptor fix): `ExecutionColumn.source`/`.target` come from the
-PER-TASK `TaskEntry.source`/`.target` fields (dispatch-context-schema).
-Fallback to the run envelope's `source`/`target` applies ONLY when the
-per-task value is None AND the manifest is single-set -- mirroring
-`report/results_cache.py`'s own `is_single_set` harvest-time fallback
-rule exactly (`len({r.get("set") for r in manifest["requests"]}) <= 1`).
-A multi-set manifest with no per-task value gets no fallback and stays
-None; `enge.compare.__main__` renders a None descriptor as the em dash,
-never the literal string "None" -- the em dash is a render-time
-substitution, never a stored value.
+descriptor fix; item 2(b) re-sources its gate): `ExecutionColumn.source`/
+`.target` come from the PER-TASK `TaskEntry.source`/`.target` fields
+(dispatch-context-schema). Fallback to the run envelope's `source`/
+`target` applies ONLY when the per-task value is None AND the results.json
+cache is single-set -- `len({t.set for t in schema.results}) <= 1`,
+re-sourced from the cache itself rather than the manifest's `requests[]`
+(which is how `report/results_cache.py`'s harvest-time `is_single_set`
+rule is still expressed, since it is writing that same cache). A
+multi-set cache with no per-task value gets no fallback and stays None;
+`enge.compare.__main__` renders a None descriptor as the em dash, never
+the literal string "None" -- the em dash is a render-time substitution,
+never a stored value.
+
+Ratified sunset (RULING D-2, 2026-07-29): this envelope fallback and its
+single-set gate are legacy-cache support for results.json written before
+per-task `source`/`target` existed. They are slated for DELETION when the
+schema-staleness-warning + `--refresh` work ships (ledgered as F7) --
+that work gives a stale/incomplete cache a corrective path, removing the
+need to paper over it here.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from enge.compare.engine import ExecutionColumn
 from enge.utils.errors import ValidationError
@@ -93,14 +113,14 @@ def load_columns(
             )
             continue
 
-        request_index: Dict[str, Dict[str, Any]] = {
-            r["task_id"]: r for r in manifest.get("requests", []) if r.get("task_id")
-        }
-        request_sets = {r.get("set") for r in manifest.get("requests", [])}
-        is_single_set = len(request_sets) <= 1
+        is_single_set = len({t.set for t in schema.results}) <= 1
 
         for task in schema.results:
-            request_meta = request_index.get(task.task_id, {})
+            artifacts_url = (
+                task.artifacts_url
+                if task.artifacts_url
+                else f"{ctx.testing_farm_endpoint.log_artifact_baseurl}/{task.task_id}"
+            )
             source = (
                 task.source
                 if task.source is not None
@@ -125,7 +145,7 @@ def load_columns(
                     dispatched_at=task.dispatched_at,
                     run_created_at=schema.created_at,
                     plans=task.plans,
-                    artifacts_url=request_meta.get("artifacts_url"),
+                    artifacts_url=artifacts_url,
                 )
             )
 
