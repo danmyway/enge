@@ -3,6 +3,8 @@
 import unittest
 from unittest.mock import patch, MagicMock
 
+from rich.console import Console
+
 from tests._helpers import make_app_context
 
 
@@ -69,6 +71,35 @@ PARSED_DICT_MIXED = {
             {
                 "testsuite_name": "/plan/pass_plan",
                 "testsuite_result": "PASSED",
+                "testsuite_arch": "x86_64",
+                "testcases": [],
+            },
+        ],
+    },
+}
+
+
+TWO_GROUP_PARSED_DICT = {
+    "uuid-1": {
+        "source_compose": "RHEL-9.0-nightly",
+        "testsuites": [
+            {
+                "testsuite_name": "/plan/plan_a",
+                "testsuite_result": "FAILED",
+                "testsuite_arch": "x86_64",
+                "testcases": [
+                    {"testcase_name": "test::case_one", "testcase_result": "FAILED"},
+                    {"testcase_name": "test::case_two", "testcase_result": "FAILED"},
+                ],
+            },
+        ],
+    },
+    "uuid-2": {
+        "source_compose": "RHEL-9.0-nightly",
+        "testsuites": [
+            {
+                "testsuite_name": "/plan/plan_b",
+                "testsuite_result": "ERROR",
                 "testsuite_arch": "x86_64",
                 "testcases": [],
             },
@@ -189,6 +220,67 @@ class TestQualifyResults(unittest.TestCase):
         self.assertIn("uuid-missing", jobs.rerun_uuids)
         entry = jobs.processed_data["uuid-missing"]
         self.assertIsNone(entry[0])
+
+
+class TestQualifyResultsTableDividers(unittest.TestCase):
+    """Pins info_table's dividers to end_section boundaries, not every row."""
+
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_dividers_appear_only_at_group_boundaries_not_every_row(
+        self, mock_parse, mock_xunit
+    ):
+        req_urls = [
+            f"https://tf.example.com/api/{uid}" for uid in TWO_GROUP_PARSED_DICT
+        ]
+        uuid_map = {uid: None for uid in TWO_GROUP_PARSED_DICT}
+        mock_parse.return_value = (req_urls, "latest", uuid_map)
+        mock_xunit.return_value = TWO_GROUP_PARSED_DICT
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": True},
+        )
+
+        from enge.rerun.__main__ import RerunJobs, console
+
+        jobs = RerunJobs(ctx)
+
+        with patch.object(console, "print") as mock_print:
+            jobs.qualify_results()
+
+        mock_print.assert_called_once()
+        info_table = mock_print.call_args[0][0]
+
+        # Render independently with a fixed, generous width so no cell wraps
+        # and skews the line count.
+        capture = Console(record=True, width=120, no_color=True)
+        capture.print(info_table)
+        rendered = capture.export_text()
+        rule_lines = [
+            line for line in rendered.splitlines() if line.strip().startswith("├")
+        ]
+
+        # Row layout qualify_results() produces for this fixture, in order:
+        #   header
+        #   uuid-1 / plan_a    (mid-group: 2 failed tests follow -> end_section=False)
+        #   ""     / case_one  (mid-group -> end_section=False)
+        #   ""     / case_two  (group-1 FINAL -> end_section=True, followed by
+        #                       another row, so its rule IS visible)
+        #   uuid-2 / plan_b    (group-2 FINAL -> end_section=True, but it is also
+        #                       the table's last row overall, so rich never draws
+        #                       a trailing rule for it -- the bottom border
+        #                       serves that purpose instead, same as for any
+        #                       rich Table's last row)
+        HEADER_RULE = 1
+        VISIBLE_GROUP_BOUNDARIES = 1  # only case_two's end_section precedes another row
+        EXPECTED_RULE_COUNT = HEADER_RULE + VISIBLE_GROUP_BOUNDARIES
+
+        self.assertEqual(
+            len(rule_lines),
+            EXPECTED_RULE_COUNT,
+            f"expected {EXPECTED_RULE_COUNT} interior rule(s), got "
+            f"{len(rule_lines)}:\n{rendered}",
+        )
 
 
 class TestBuildRerunPayloads(unittest.TestCase):
