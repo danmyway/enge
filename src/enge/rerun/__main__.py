@@ -259,7 +259,7 @@ class RerunJobs:
 
         # Log and display qualifying plans for a re-run
         if self.processed_data:
-            info_table = Table(box=box.ROUNDED, show_lines=True)
+            info_table = Table(box=box.ROUNDED)
             info_table.add_column("Original Request")
             info_table.add_column("Source Compose Name")
             info_table.add_column("Arch")
