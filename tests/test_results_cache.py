@@ -30,7 +30,7 @@ from pathlib import Path
 
 from tests._helpers import make_app_context
 from enge.report.concurrent_parser import TaskResult
-from enge.utils.results_parser import parse_results_json
+from enge.utils.results_parser import init_results_json, parse_results_json
 
 
 # ---------------------------------------------------------------------------
@@ -835,6 +835,116 @@ class TestMetadataFromManifest(_CacheTestCase):
         self.assertIsNone(entry.target)
         self.assertIsNone(entry.event)
         self.assertEqual(entry.build_ids, [])
+
+
+class TestNullableSetGapFill(unittest.TestCase):
+    """RED pins for fix/results-set-nullable (maintainer ruling,
+    2026-08-25): a no-set manifest (--set not passed; the invocation
+    workflow does not force users to use a set, and test-development
+    users often skip it) must gap-fill and finalize instead of crashing
+    on TaskEntry.from_dict's non-nullable 'set' validator. Calls
+    _cache_one_run directly -- no AppContext/manifest-resolution
+    machinery needed for these pins."""
+
+    def test_no_set_manifest_populated_context_gap_fills_and_finalizes(self):
+        """Models a real no-set `enge test` invocation (live example: run
+        01KZR9SZMQPFW5HVN3343BH4M0) -- context carries source/target, no
+        set key."""
+        from enge.report.results_cache import _cache_one_run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            run_id = "01KZR9SZMQPFW5HVN3343BH4M0"
+            task_id = "5d67eecf-a02d-46b7-aee2-9ffb673f40df"
+            request_meta = _request(task_id, set_name=None)
+            manifest = {
+                "run_id": run_id,
+                "created_at": "2026-07-07T10:35:07Z",
+                "context": {"event": "preliminary", "source": "9.9", "target": "10.3"},
+                "requests": [request_meta],
+            }
+            task_result = _make_task_result(
+                request_uuid=task_id, xunit_bytes=_xunit_bytes()
+            )
+            _cache_one_run(manifest, [(task_result, request_meta)], output_dir)
+
+            schema = parse_results_json(output_dir / f"{run_id}.json")
+            self.assertEqual(len(schema.results), 1)
+            self.assertIsNone(schema.results[0].set)
+            self.assertEqual(schema.event, "preliminary")
+            self.assertEqual(schema.source, "9.9")
+            self.assertEqual(schema.target, "10.3")
+            self.assertIsNotNone(schema.verdict)
+
+    def test_no_set_manifest_empty_context_gap_fills_with_null_envelope(self):
+        """Real-world shape of a rerun manifest: rerun's ManifestWriter(...)
+        call (rerun/__main__.py:832) passes no context= argument at all,
+        so it defaults to {} on every rerun -- confirmed in production,
+        run 01M0S9Q6B7JPHGB6WESJVA3KVT. Must not regress into a crash or
+        a skipped finalize."""
+        from enge.report.results_cache import _cache_one_run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            run_id = "01M0S9Q6B7JPHGB6WESJVA3KVT"
+            task_id = "6d67eecf-a02d-46b7-aee2-9ffb673f40df"
+            request_meta = _request(task_id, set_name=None)
+            manifest = {
+                "run_id": run_id,
+                "created_at": "2026-07-07T10:35:07Z",
+                "context": {},
+                "requests": [request_meta],
+            }
+            task_result = _make_task_result(
+                request_uuid=task_id, xunit_bytes=_xunit_bytes()
+            )
+            _cache_one_run(manifest, [(task_result, request_meta)], output_dir)
+
+            schema = parse_results_json(output_dir / f"{run_id}.json")
+            self.assertEqual(len(schema.results), 1)
+            self.assertIsNone(schema.results[0].set)
+            self.assertIsNone(schema.event)
+            self.assertIsNone(schema.source)
+            self.assertIsNone(schema.target)
+            self.assertIsNotNone(schema.verdict)
+
+    def test_orphaned_shell_is_gap_filled_not_duplicated(self):
+        """Self-healing: pre-create the orphaned shell (envelope only,
+        zero entries, unfinalized) that the pre-fix crash leaves behind --
+        a re-report against it must gap-fill and finalize, not
+        duplicate."""
+        from enge.report.results_cache import _cache_one_run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            run_id = "01SELFHEALSHELLAAAAAAAAAA"
+            task_id = "7d67eecf-a02d-46b7-aee2-9ffb673f40df"
+            request_meta = _request(task_id, set_name=None)
+            manifest = {
+                "run_id": run_id,
+                "created_at": "2026-07-07T10:35:07Z",
+                "context": {"event": "preliminary", "source": "9.9", "target": "10.3"},
+                "requests": [request_meta],
+            }
+            init_results_json(
+                run_id=run_id,
+                created_at=manifest["created_at"],
+                event="preliminary",
+                source="9.9",
+                target="10.3",
+                output_dir=output_dir,
+            )
+
+            task_result = _make_task_result(
+                request_uuid=task_id, xunit_bytes=_xunit_bytes()
+            )
+            _cache_one_run(manifest, [(task_result, request_meta)], output_dir)
+            _cache_one_run(manifest, [(task_result, request_meta)], output_dir)
+
+            schema = parse_results_json(output_dir / f"{run_id}.json")
+            self.assertEqual(len(schema.results), 1)
+            self.assertIsNone(schema.results[0].set)
+            self.assertIsNotNone(schema.verdict)
 
 
 class TestUnknownTaskIdSkip(_CacheTestCase):

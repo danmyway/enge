@@ -202,6 +202,29 @@ class TestTaskEntryValidation(unittest.TestCase):
         )
         self.assertIsNone(task.source_compose)
 
+    def test_set_null_value_accepted_when_key_present(self):
+        """set becomes required-key/nullable-value (maintainer ruling,
+        2026-08-25): a no-set enge test invocation is a legitimate
+        test-development workflow, mirroring the manifest schema's own
+        set: null convention and the existing source_compose/
+        target_compose precedent."""
+        task = TaskEntry.from_dict(_task_payload(set=None))
+        self.assertIsNone(task.set)
+
+    def test_set_round_trip_null_through_to_dict(self):
+        task = TaskEntry.from_dict(_task_payload(set=None))
+        d = task.to_dict()
+        self.assertIn("set", d)
+        self.assertIsNone(d["set"])
+
+    def test_set_non_string_non_null_value_rejected(self):
+        """Characterization, not RED: a non-string, non-null 'set' was
+        already rejected before this branch (via _validate_string) and
+        stays rejected via _validate_optional_string -- passes unchanged
+        on both sides of the fix."""
+        with self.assertRaises(ValidationError):
+            TaskEntry.from_dict(_task_payload(set=3))
+
     def test_canceled_task_with_nonempty_plans_rejected(self):
         with self.assertRaises(ValidationError):
             TaskEntry.from_dict(_task_payload(verdict="CANCELED"))
