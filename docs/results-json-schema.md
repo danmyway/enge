@@ -199,9 +199,11 @@ regardless of set count.
 
 **Task entry — required unless noted; keyed by `task_id`**: `task_id`
 (TF request UUID; join key to manifest `requests[]`; gap-fill idempotency
-key), `set`, `tier`, `arch`, `source_compose`/`target_compose` (required
-keys, nullable values — manifest parity), `dispatched_at` (ISO 8601, from
-manifest request), `verdict` (task-level, non-null), `total_duration_seconds`
+key), `tier`, `arch`, `set`/`source_compose`/`target_compose` (required
+keys, nullable values — manifest parity; `set: null` = a no-set CLI
+invocation, e.g. test-development workflows where the set is fully
+defined on the command line), `dispatched_at` (ISO 8601, from manifest
+request), `verdict` (task-level, non-null), `total_duration_seconds`
 (float; for CANCELED/no-xunit ERROR: elapsed time before terminal
 state), `plans` (list; see validity rules below). `source`, `target`
 (upgrade-path values, same format as the envelope fields above), `git_ref`,
