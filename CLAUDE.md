@@ -178,28 +178,15 @@ tests/               unittest.TestCase style ONLY (see Conventions)
 ## Results.json format
 
 Full contract: `docs/results-json-schema.md` (schema, validity rules,
-gap-fill write API, golden fixture MD5s, dated rulings). Load-bearing
-summary every agent needs unconditionally, even without opening that file:
+gap-fill write API, golden fixture MD5s, dated rulings). Invariants an
+agent must not violate before opening that file:
 
 - **Ownership**: `enge report` writes `results.json` after parsing xunit;
-  `enge dispatch` never touches it (hard invariant). The write API lives in
-  `utils/results_parser.py` and is standalone (no manifest imports);
-  manifest lookup is delegated to `utils/manifest_resolution.py`.
-- **`enge compare`** (`compare/loader.py`) is a second, read-only consumer —
-  it never writes, gap-fills, or re-derives verdicts. A manifest-backed
-  `enge report --run <run_id>` is the only way to populate a run's cache.
-- **Manifest-backed `enge report` invocations always gap-fill** the cache
-  (default latest-run, `--run`, or `--set`/`--tier`/`--arch`/`--tag`); a
-  filter matching N runs produces N cache files. There is no
-  cache-disable switch. Raw-input invocations (`-f`/`-i`, legacy
-  `--get-tag`/bare-date) never write a cache — no resolvable run_id.
-- **Caching failures never fail the report command.** Re-reporting an
-  already-finalized run raises `AlreadyFinalizedError`, caught and logged
-  at DEBUG — expected steady state, not a drift signal.
-- **Schema v3.1** is a three-level hierarchy (run envelope -> per-task
-  results -> per-plan -> per-test), contract-pinned as of 2026-07-14.
-  Verdict enum: `PASSED | FAILED | SKIPPED | ERROR | CANCELED`. Root
-  verdict derivation (`finalize_root_verdict`) uses severity ranking
+  `enge dispatch` never touches it (hard invariant).
+- **`enge compare`** (`compare/loader.py`) is a second, read-only
+  consumer — it never writes, gap-fills, or re-derives verdicts.
+- **Caching failures never fail the report command.**
+- Root verdict derivation (`finalize_root_verdict`) uses severity ranking
   `ERROR > FAILED > CANCELED > PASSED > SKIPPED` — this ranking is
   specific to deriving one run-level verdict and is off-limits to
   `enge compare`'s own (different) consolidation ranking.
@@ -210,39 +197,18 @@ summary every agent needs unconditionally, even without opening that file:
 ## Compare consolidation policy
 
 Full contract: `docs/compare-consolidation.md` (two-stage consolidation
-algorithm, descriptor-sourcing fallback rules, dated rulings). Load-bearing
-summary every agent needs unconditionally, even without opening that file:
+algorithm, descriptor-sourcing fallback rules, dated rulings). Invariants
+an agent must not violate before opening that file:
 
 - `enge compare` (`src/enge/compare/`) is a **read-only** consumer of the
   `results.json` contract — never parses xunit, never calls Testing Farm,
-  never writes a cache. `compare/engine.py` is pure (no I/O);
-  `compare/loader.py` resolves manifests + loads `results.json`;
-  `compare/__main__.py` renders.
-- **Unified view**: every invocation renders one or more tables, one
-  column per matching execution plus an always-present `Consolidated`
-  column. There is no separate "flakiness mode."
-- **Grouping**: `set` is never a grouping coordinate. Tier is a hard
-  partition. Arch and upgrade-path fold into columns by default;
-  `--splitarch`/`--splitpath` add them to the table key instead.
+  never writes a cache.
 - **Consolidation is TWO-STAGE** and must not be aligned with
   `results_parser`'s severity-rank table (different purpose, different
-  ranking):
-  - Stage 1, within each `(arch, source, target)` coordinate: any
-    `PASSED` wins; otherwise the latest real result wins. `SKIPPED`,
-    `CANCELED`, and absent are excluded from this scan.
-  - Stage 2, across coordinates in a row: severity-max
-    `ERROR > FAILED > PASSED`.
-  - Net effect: a `PASSED` on one coordinate no longer masks a
-    `FAILED`/`ERROR` on a different arch/upgrade-path sharing a row —
-    PASS-wins only applies within a coordinate's own rerun history.
-- **Exit codes**: `enge compare` always returns `SUCCESS` once the floor
-  (>=1 comparable column) is met — it's a reporting view, not a grading
-  command; table content never changes the retval. Fewer than the floor
-  is `ExitCode.CONFIG_ERROR` (99).
-- Read the full doc before touching `compare/engine.py`, `compare/loader.py`,
-  or the descriptor-sourcing/artifacts-URL fallback rules — several of
-  the fallbacks (envelope descriptor fallback, RULING D-2) are ratified
-  for deletion once F7 (schema-staleness-warning + `--refresh`) ships.
+  ranking).
+- Read the full doc before touching `compare/engine.py`,
+  `compare/loader.py`, or the descriptor-sourcing/artifacts-URL fallback
+  rules.
 
 ## Conventions
 
