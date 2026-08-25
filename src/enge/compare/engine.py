@@ -68,7 +68,7 @@ class ExecutionColumn:
 
     task_id: str
     run_id: str
-    set: str
+    set: Optional[str]
     tier: str
     arch: str
     source: Optional[str]
