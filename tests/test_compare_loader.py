@@ -202,12 +202,49 @@ class TestUnifiedFloorAndMissingCache(unittest.TestCase):
         self.assertTrue(any("enge report --run run3" in msg for msg in cm.output))
 
     def test_zero_comparable_columns_returns_config_error(self):
+        # Selection MATCHES a run, but its results.json cache is missing, so
+        # no comparable column survives -> the floor's CONFIG_ERROR (99).
+        # (Distinct from the new empty-*selection* ValidationError below,
+        # which fires when nothing matched at all.)
         from enge.compare.loader import load_columns
 
-        columns, error_code = load_columns(self._ctx())
+        _write_manifest(
+            self.runs_dir, "run1", [_request("t1")], context={"set": "setA"}
+        )
+        # No results.json cache written for run1.
+        with self.assertLogs("enge.compare.loader", level="ERROR"):
+            columns, error_code = load_columns(self._ctx())
 
         self.assertEqual(error_code, ExitCode.CONFIG_ERROR)
         self.assertEqual(columns, [])
+
+    def test_selector_matching_no_runs_raises_validation_error(self):
+        # F2-d: a manifest selector that matches zero runs is now a hard
+        # error (exit 2), not a silent empty selection. This fires BEFORE
+        # the comparability floor's CONFIG_ERROR.
+        from enge.compare.loader import load_columns
+        from enge.utils.errors import ValidationError
+
+        # No manifests written; default filter_set=["setA"] matches nothing.
+        with self.assertRaises(ValidationError):
+            load_columns(self._ctx())
+
+    def test_bare_date_flags_log_warning_and_hit_config_error_floor(self):
+        # F2-f: compare has no legacy-archive path, so bare --since/--until
+        # with no manifest selector select no runs. The loader logs a single
+        # WARNING and falls through to the comparability floor (CONFIG_ERROR),
+        # never the empty-selection ValidationError.
+        from enge.compare.loader import load_columns
+
+        with self.assertLogs("enge.compare.loader", level="WARNING") as cm:
+            columns, error_code = load_columns(self._ctx(filter_set=None, since="3d"))
+
+        self.assertEqual(error_code, ExitCode.CONFIG_ERROR)
+        self.assertEqual(columns, [])
+        self.assertTrue(
+            any("--since" in msg or "--until" in msg for msg in cm.output),
+            f"Expected a bare-date WARNING, got: {cm.output}",
+        )
 
     def test_a_single_manifest_fanned_across_many_arches_is_sufficient(self):
         """Generalizes the old AMENDMENT-1 flakiness-only case: one enge
