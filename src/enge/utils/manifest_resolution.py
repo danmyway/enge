@@ -1,20 +1,21 @@
 """Shared invocation -> manifest(s) resolution.
 
 Independently resolves which manifest(s) a CLI invocation is backed by,
-given its parsed CLI args and manifest paths (via `AppContext`). Mirrors
-`utils/task_resolver.py`'s precedence (file > input >
-tags/date-only-without-manifest-filters -> legacy archive > no-args ->
-latest manifest > --run / filter selectors -> manifest store) closely
-enough to agree with it on manifest-backed vs. raw-input, but is not
-imported from it: `task_resolver` hands back a flat task_id list tuned
-for the xunit fetch layer, not the full manifest objects (and
-run_id-per-task attribution across N matched runs) this resolver's
-consumers need.
+given its parsed CLI args and manifest paths (via `AppContext`).
+Precedence: file > input > tags/date-only-without-manifest-filters ->
+legacy archive > no-selector -> latest manifest > run/filter selectors ->
+`select_runs`. That last step -- resolving repeatable `--run` values and
+AND-composing `--set`/`--tier`/`--arch`/`--tag`/`--since`/`--until` over
+them -- is the shared `select_runs` in this module, which
+`utils/task_resolver.py` now imports too (the long-planned unification of
+the two resolvers partially landing here). They still differ in what they
+return: this module hands back full manifest objects (and run_id-per-task
+attribution across N matched runs), while `task_resolver` returns a flat
+task_id list tuned for the xunit fetch layer.
 
 Consumers: `report/results_cache.py` (`cache_report_results`'s
-manifest-backed gap-fill); the planned `enge compare` subcommand. A
-future unification of this resolver with `task_resolver` is a separate,
-maintainer-approved concern.
+manifest-backed gap-fill); `enge compare` (`compare/loader.py`,
+read-only).
 """
 
 from datetime import timezone
@@ -29,17 +30,15 @@ if TYPE_CHECKING:
 
 
 def resolve_manifests_for_invocation(ctx: "AppContext") -> List[Dict[str, Any]]:
-    """Independently resolve which manifest(s) this report invocation is
-    backed by. Mirrors utils/task_resolver.py's precedence (file > input >
-    tags/date-only-without-manifest-filters -> legacy archive > no-args ->
-    latest manifest > --run / filter selectors -> manifest store) closely
-    enough to agree with it on manifest-backed vs. raw-input, but is not
-    imported from it: task_resolver hands back a flat task_id list tuned
-    for the xunit fetch layer, not the full manifest objects (and
-    run_id-per-task attribution across N matched runs) this module needs.
+    """Resolve which manifest(s) this invocation is backed by, as full
+    manifest objects. Precedence: file > input >
+    tags/date-only-without-manifest-filters -> legacy archive >
+    no-selector -> latest manifest > run/filter selectors (delegated to
+    `select_runs`).
 
-    Returns [] for raw-input invocations -- the caller no-ops in that
-    case."""
+    Returns [] for raw-input and legacy-archive invocations (the caller
+    no-ops in that case). Raises `ValidationError` when a run/filter
+    selector combination matches no runs -- see `select_runs`."""
     cli_args = ctx.cli_args
 
     if getattr(cli_args, "file", None):

@@ -125,7 +125,11 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   universal floor (0 success, 1 exception mapped by `__main__`, 99 config
   error, 130 interrupt) applies to every subcommand. Code 2 means "ran,
   partial failure" for dispatch (some requests failed), report
-  (test failures), and cancel (some cancellations failed).
+  (test failures), and cancel (some cancellations failed); it is also the
+  `ValidationError` exit for a run-selector combination
+  (`--run`/`--set`/`--tier`/`--arch`/`--tag`/`--since`/`--until`) that
+  matches no runs on report, compare, rerun, or cancel — nothing ran at
+  all (an unknown or ambiguous `--run` value already exited 2 this way).
   Report is the ONLY subcommand that returns codes 3
   (errors in parsed results) and 4 (missing/partial results, including
   unrecognized TF overall values — rerun candidates, maintainer-ratified
