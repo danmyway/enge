@@ -513,7 +513,9 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument(
         "--run",
         metavar="RUN_ID",
-        help="Select a specific run by manifest ID. "
+        action="append",
+        help="Select a run by manifest ID (repeatable; multiple runs are "
+        "unioned, and other selectors further filter within them). "
         "Use 'enge report --list' to browse available runs.",
     )
 
@@ -571,7 +573,10 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument(
         "--run",
         metavar="RUN_ID",
-        help="Select a specific run by manifest ID (needs another matched run to compare against).",
+        action="append",
+        help="Select a run by manifest ID (repeatable; multiple runs are "
+        "unioned, and other selectors further filter within them). "
+        "A single matched run is enough on its own.",
     )
 
     compare.add_argument(
@@ -606,6 +611,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="Filter runs by tag (repeatable, OR within).",
     )
+
+    _add_date_filter_args(compare)
 
     compare.add_argument(
         "-s",
@@ -673,8 +680,44 @@ def build_parser() -> argparse.ArgumentParser:
     rerun.add_argument(
         "--run",
         metavar="RUN_ID",
-        help="Select a specific run by manifest ID for rerun.",
+        action="append",
+        help="Select a run by manifest ID for rerun (repeatable; multiple "
+        "runs are unioned, and other selectors further filter within them).",
     )
+
+    rerun.add_argument(
+        "--set",
+        dest="filter_set",
+        metavar="SET",
+        action="append",
+        help="Filter runs by test set name (repeatable, OR within).",
+    )
+
+    rerun.add_argument(
+        "--tier",
+        dest="filter_tier",
+        metavar="TIER",
+        action="append",
+        help="Filter runs by tier (repeatable, OR within).",
+    )
+
+    rerun.add_argument(
+        "--arch",
+        dest="filter_arch",
+        metavar="ARCH",
+        action="append",
+        help="Filter runs by architecture (repeatable, OR within).",
+    )
+
+    rerun.add_argument(
+        "--tag",
+        dest="filter_tag",
+        metavar="TAG",
+        action="append",
+        help="Filter runs by tag (repeatable, OR within).",
+    )
+
+    _add_date_filter_args(rerun)
 
     # ==================== REPORTPORTAL SUBCOMMAND ====================
     reportportal = subparsers.add_parser(
@@ -816,8 +859,44 @@ def build_parser() -> argparse.ArgumentParser:
     cancel.add_argument(
         "--run",
         metavar="RUN_ID",
-        help="Select a specific run by manifest ID to cancel.",
+        action="append",
+        help="Select a run by manifest ID to cancel (repeatable; multiple "
+        "runs are unioned, and other selectors further filter within them).",
     )
+
+    cancel.add_argument(
+        "--set",
+        dest="filter_set",
+        metavar="SET",
+        action="append",
+        help="Filter runs by test set name (repeatable, OR within).",
+    )
+
+    cancel.add_argument(
+        "--tier",
+        dest="filter_tier",
+        metavar="TIER",
+        action="append",
+        help="Filter runs by tier (repeatable, OR within).",
+    )
+
+    cancel.add_argument(
+        "--arch",
+        dest="filter_arch",
+        metavar="ARCH",
+        action="append",
+        help="Filter runs by architecture (repeatable, OR within).",
+    )
+
+    cancel.add_argument(
+        "--tag",
+        dest="filter_tag",
+        metavar="TAG",
+        action="append",
+        help="Filter runs by tag (repeatable, OR within).",
+    )
+
+    _add_date_filter_args(cancel)
 
     # Cancel control
     _add_dryrun_arg(
