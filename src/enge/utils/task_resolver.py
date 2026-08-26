@@ -2,7 +2,12 @@
 
 Resolves Testing Farm task UUIDs from CLI input, manifest store, or legacy
 archive files.  Every consumer calls ``parse_tasks`` or ``parse_tasks_with_map``
-— the heavy lifting lives in ``_parse_tasks_impl``.
+— the heavy lifting lives in ``_parse_tasks_impl``.  The manifest-store leg
+(``_resolve_manifest_tasks``) delegates run selection to
+``manifest_resolution.select_runs`` — the same repeatable-``--run`` +
+AND-filter selection ``enge report``/``compare`` use — then flattens the
+selected runs' task_ids (de-duplicated, order preserved).  A selector
+combination matching no runs raises ``ValidationError`` (exit 2).
 """
 
 import logging
