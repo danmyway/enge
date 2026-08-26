@@ -57,7 +57,7 @@ def _column_header(table: "engine.ComparisonTable", index: int) -> str:
             f"{_descriptor(col.source)}{_UPGRADE_ARROW}{_descriptor(col.target)}"
         )
     parts.append(f"({index + 1})")
-    return " ".join(parts)
+    return "\n".join(parts)
 
 
 def _render_table(table: "engine.ComparisonTable", *, short: bool) -> Table:
@@ -151,8 +151,7 @@ def main(ctx: AppContext) -> int:
         for entry in _footer_entries(table):
             console.print(
                 f"({entry['index']}) {entry['arch']} {entry['path']} "
-                f"set={entry['set']} run={entry['run_id']} "
-                f"task={entry['task_id']} {entry['artifacts_url'] or ''}",
+                f"run={entry['run_id']} {entry['artifacts_url'] or ''}",
                 style="dim",
             )
         has_content = True
