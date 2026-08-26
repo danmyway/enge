@@ -248,5 +248,86 @@ class TestShortFlagRendering(unittest.TestCase):
         self.assertEqual(rich_table.row_count, 4)  # 2 headers + 2 rows
 
 
+class TestColumnHeaderNewlineJoin(unittest.TestCase):
+    """RULING F5 (maintainer, 2026-07-29): column headers join their parts
+    with a plain newline in every output mode -- no format-aware
+    branching."""
+
+    def test_header_joins_arch_and_path_parts_with_newline(self):
+        from enge.compare.__main__ import _column_header
+
+        col = _column(arch="x86_64", source="9.9", target="10.3")
+        table = ComparisonTable(
+            tier="tier1", arch=None, source=None, target=None, columns=(col,), rows=()
+        )
+
+        header = _column_header(table, 0)
+
+        self.assertEqual(header, "x86_64\n9.9→10.3\n(1)")
+
+    def test_header_is_index_only_when_arch_and_path_are_table_level(self):
+        from enge.compare.__main__ import _column_header
+
+        col = _column(arch="x86_64", source="9.9", target="10.3")
+        table = ComparisonTable(
+            tier="tier1",
+            arch="x86_64",
+            source="9.9",
+            target="10.3",
+            columns=(col,),
+            rows=(),
+        )
+
+        header = _column_header(table, 0)
+
+        self.assertEqual(header, "(1)")
+
+
+class TestFooterDropsSetAndTask(unittest.TestCase):
+    """RULING F3 (maintainer, 2026-07-29): the TASK REFERENCE footer drops
+    `set=` and `task=`; `run=` stays unconditional -- the task is already
+    in results.json, run_id is not otherwise discoverable without grepping
+    the caches."""
+
+    def test_footer_line_omits_set_and_task_keeps_run_unconditionally(self):
+        import enge.compare.__main__ as cm
+
+        cols = [
+            _column(
+                task_id="t1",
+                run_id="run1",
+                set="setA",
+                arch="x86_64",
+                source="9.9",
+                target="10.3",
+                artifacts_url="https://example.test/artifacts",
+                plans=[PlanEntry(name="/plans/a", verdict="PASSED", tests=[])],
+            ),
+        ]
+
+        with (
+            patch("enge.compare.__main__.load_columns", return_value=(cols, None)),
+            patch("enge.compare.__main__.console.print") as mock_print,
+        ):
+            cm.main(_ctx())
+
+        footer_lines = [
+            call.args[0]
+            for call in mock_print.call_args_list
+            if call.args
+            and isinstance(call.args[0], str)
+            and call.args[0].startswith("(1)")
+        ]
+        self.assertEqual(len(footer_lines), 1)
+        footer_line = footer_lines[0]
+
+        self.assertEqual(
+            footer_line,
+            "(1) x86_64 9.9→10.3 run=run1 https://example.test/artifacts",
+        )
+        self.assertNotIn("set=", footer_line)
+        self.assertNotIn("task=", footer_line)
+
+
 if __name__ == "__main__":
     unittest.main()
