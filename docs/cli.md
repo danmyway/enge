@@ -96,7 +96,7 @@ Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs fro
 - `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `--list` — List all runs in the manifest store as a table. Combinable with --set/--tier/--arch/--tag/--since/--until to narrow results.
-- `--run RUN_ID` — Select a specific run by manifest ID. Use 'enge report --list' to browse available runs.
+- `--run RUN_ID` — Select a run by manifest ID (repeatable; multiple runs are unioned, and other selectors further filter within them). Use 'enge report --list' to browse available runs.
 - `--set SET` — Filter runs by test set name (repeatable, OR within).
 - `--tier TIER` — Filter runs by tier (repeatable, OR within).
 - `--arch ARCH` — Filter runs by architecture (repeatable, OR within).
@@ -129,11 +129,13 @@ Read cached results.json data (see 'enge report') and build a comparison table a
 - `-h, --help` — show this help message and exit
 - `-c, --config CONFIG` — Custom path to the config file.
 - `-v, --verbose` — Increase output verbosity. -v for verbose, -vv for full debug.
-- `--run RUN_ID` — Select a specific run by manifest ID (needs another matched run to compare against).
+- `--run RUN_ID` — Select a run by manifest ID (repeatable; multiple runs are unioned, and other selectors further filter within them). A single matched run is enough on its own.
 - `--set SET` — Filter runs by test set name (repeatable, OR within). Display-only provenance -- never a comparison coordinate.
 - `--tier TIER` — Filter runs by tier (repeatable, OR within).
 - `--arch ARCH` — Filter runs by architecture (repeatable, OR within).
 - `--tag TAG` — Filter runs by tag (repeatable, OR within).
+- `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
+- `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `-s, --short` — Display shortened test and plan names.
 - `--show-tests` — Display detailed test view. By default, only plan view is shown.
 - `--splitarch` — One table per (tier, arch) instead of folding arch into columns. Combinable with --splitpath.
@@ -168,7 +170,13 @@ Rerun failed or errored tasks from previous runs.
 - `-o, --format {terminal,gitlab,json}` — Output format. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks and tables. 'json': machine-readable JSON to stdout (suppresses other output). (default: `terminal`)
 - `--error` — Rerun only jobs that reported ERROR state.
 - `--fail` — Rerun only jobs that reported FAILED state.
-- `--run RUN_ID` — Select a specific run by manifest ID for rerun.
+- `--run RUN_ID` — Select a run by manifest ID for rerun (repeatable; multiple runs are unioned, and other selectors further filter within them).
+- `--set SET` — Filter runs by test set name (repeatable, OR within).
+- `--tier TIER` — Filter runs by tier (repeatable, OR within).
+- `--arch ARCH` — Filter runs by architecture (repeatable, OR within).
+- `--tag TAG` — Filter runs by tag (repeatable, OR within).
+- `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
+- `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 
 ### Deprecated
 
@@ -273,7 +281,13 @@ Cancel running or queued Testing Farm tasks by sending DELETE requests.
 - `-f, --file FILE` — Filepath containing request IDs, artifact URLs, or request URLs to parse. Can be provided multiple times: -f file1 -f ~/file2
 - `-i, --input ID_OR_URL` — Request ID, artifact URL, or request URL to parse from command line. Can be provided multiple times: -i id1 -i id2
 - `--get-tag TAG` — Query for all task results under a given tag. Can be used multiple times.
-- `--run RUN_ID` — Select a specific run by manifest ID to cancel.
+- `--run RUN_ID` — Select a run by manifest ID to cancel (repeatable; multiple runs are unioned, and other selectors further filter within them).
+- `--set SET` — Filter runs by test set name (repeatable, OR within).
+- `--tier TIER` — Filter runs by tier (repeatable, OR within).
+- `--arch ARCH` — Filter runs by architecture (repeatable, OR within).
+- `--tag TAG` — Filter runs by tag (repeatable, OR within).
+- `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
+- `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `-n, --dry-run, --dryrun` — Show which tasks would be cancelled without actually cancelling them.
 
 ## migrate-archive

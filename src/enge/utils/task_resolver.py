@@ -9,7 +9,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from enge.utils import parse_date_arg
@@ -49,53 +49,50 @@ def _latest_tasks_file(ctx):
 
 
 def _resolve_manifest_tasks(ctx):
-    """Try to resolve task IDs from manifest store. Returns (task_ids, source) or None."""
+    """Resolve task IDs from the manifest store via the shared run selection.
+
+    Delegates run/filter selection to ``manifest_resolution.select_runs`` --
+    the same repeatable ``--run`` + AND-composed filter selection ``enge
+    report``/``compare`` use -- then flattens the selected runs' task_ids
+    (de-duplicated, order preserved).  Source lineage is preserved for a lone
+    ``--run`` (``manifest:<run_id>``); multi-run or any filter collapses to
+    the ``manifest:filter`` sentinel.  Returns None only when no selector at
+    all is present; an empty selection with selectors raises ``ValidationError``.
+    """
+    from enge.utils.manifest_resolution import _as_list, select_runs
+
     cli_args = ctx.cli_args
-    runs_dir = Path(ctx.manifest_runs_dir)
 
-    run_id = getattr(cli_args, "run", None)
-    if run_id:
-        manifest = ManifestReader.get_run(runs_dir, run_id)
-        return ManifestReader.get_task_ids(manifest), f"manifest:{run_id}"
-
+    run_values = _as_list(getattr(cli_args, "run", None))
     has_filters = any(
         getattr(cli_args, attr, None)
         for attr in ("filter_set", "filter_tier", "filter_arch", "filter_tag")
     )
-    since_str = getattr(cli_args, "since", None)
-    until_str = getattr(cli_args, "until", None)
+    has_date = bool(
+        getattr(cli_args, "since", None) or getattr(cli_args, "until", None)
+    )
 
-    if has_filters or since_str or until_str:
-        kwargs = {}
-        if getattr(cli_args, "filter_set", None):
-            kwargs["set_name"] = cli_args.filter_set
-        if getattr(cli_args, "filter_tier", None):
-            kwargs["tier"] = cli_args.filter_tier
-        if getattr(cli_args, "filter_arch", None):
-            kwargs["arch"] = cli_args.filter_arch
-        if getattr(cli_args, "filter_tag", None):
-            kwargs["tag"] = cli_args.filter_tag
-        if since_str:
-            dt = parse_date_arg(since_str)
-            kwargs["since"] = (
-                dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-            )
-        if until_str:
-            dt = parse_date_arg(until_str)
-            dt = dt.replace(hour=23, minute=59, second=59)
-            kwargs["until"] = (
-                dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-            )
-        matching = ManifestReader.find_runs(runs_dir, **kwargs)
-        if matching:
-            all_ids = []
-            for summary in matching:
-                full = ManifestReader.load(Path(summary["path"]))
-                all_ids.extend(ManifestReader.get_task_ids(full))
-            return all_ids, "manifest:filter"
+    if not (run_values or has_filters or has_date):
         return None
 
-    return None
+    selected = select_runs(ctx)
+
+    task_ids = []
+    seen = set()
+    for manifest in selected:
+        for tid in ManifestReader.get_task_ids(manifest):
+            if tid not in seen:
+                seen.add(tid)
+                task_ids.append(tid)
+
+    single_run = (
+        len(selected) == 1 and len(run_values) == 1 and not has_filters and not has_date
+    )
+    if single_run:
+        source = f"manifest:{selected[0]['run_id']}"
+    else:
+        source = "manifest:filter"
+    return task_ids, source
 
 
 def _parse_tasks_impl(ctx):  # noqa: C901

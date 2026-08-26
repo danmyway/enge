@@ -88,6 +88,33 @@ def load_columns(
     fewer than 1 comparable column is available.
     """
     manifests = resolve_manifests_for_invocation(ctx)
+
+    if not manifests:
+        # F2-f: compare has no legacy-archive path, so bare --since/--until
+        # with no manifest selector resolve to [] (not the empty-selection
+        # ValidationError, which fires only when a manifest selector matched
+        # nothing). Warn once, then fall through to the comparability floor.
+        cli_args = ctx.cli_args
+        has_date = bool(
+            getattr(cli_args, "since", None) or getattr(cli_args, "until", None)
+        )
+        has_manifest_selector = any(
+            getattr(cli_args, attr, None)
+            for attr in (
+                "run",
+                "filter_set",
+                "filter_tier",
+                "filter_arch",
+                "filter_tag",
+            )
+        )
+        if has_date and not has_manifest_selector:
+            LOGGER.warning(
+                "compare: --since/--until with no manifest selector "
+                "(--run/--set/--tier/--arch/--tag) select no runs; pair them "
+                "with a manifest selector to compare."
+            )
+
     output_dir = results_dir(ctx.config)
 
     columns: List[ExecutionColumn] = []
