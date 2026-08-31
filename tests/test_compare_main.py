@@ -111,6 +111,20 @@ class TestDescriptorRenderFallback(unittest.TestCase):
         self.assertIn("—", entry["path"])
 
 
+class TestUntieredTableTitle(unittest.TestCase):
+    """RULING Q-T1 (maintainer, 2026-08-31): tier is nullable, not a
+    sentinel. _table_title must not render the bare word 'None' for a
+    null-tier (untiered) table."""
+
+    def test_null_tier_table_title_renders_ratified_label(self):
+        from enge.compare.__main__ import _table_title
+
+        col = _column()
+        table = ComparisonTable(tier=None, columns=(col,), rows=())
+
+        self.assertEqual(_table_title(table), "tier: untiered")
+
+
 class TestFlakyNeverRendered(unittest.TestCase):
     """R5: flaky is computed but must never surface as a rendered
     column."""

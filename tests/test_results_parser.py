@@ -225,6 +225,21 @@ class TestTaskEntryValidation(unittest.TestCase):
         with self.assertRaises(ValidationError):
             TaskEntry.from_dict(_task_payload(set=3))
 
+    def test_tier_null_value_accepted_when_key_present(self):
+        """tier becomes required-key/nullable-value (maintainer ruling
+        Q-T1, 2026-08-31): reachable via plan-only dispatch (no --tier)
+        and via any rerun whose parent lineage does not resolve, mirroring
+        the set/source_compose/target_compose precedent. No sentinel
+        string is introduced -- see CLAUDE.md "Results.json format"."""
+        task = TaskEntry.from_dict(_task_payload(tier=None))
+        self.assertIsNone(task.tier)
+
+    def test_tier_round_trip_null_through_to_dict(self):
+        task = TaskEntry.from_dict(_task_payload(tier=None))
+        d = task.to_dict()
+        self.assertIn("tier", d)
+        self.assertIsNone(d["tier"])
+
     def test_canceled_task_with_nonempty_plans_rejected(self):
         with self.assertRaises(ValidationError):
             TaskEntry.from_dict(_task_payload(verdict="CANCELED"))
