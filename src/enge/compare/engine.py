@@ -69,7 +69,7 @@ class ExecutionColumn:
     task_id: str
     run_id: str
     set: Optional[str]
-    tier: str
+    tier: Optional[str]
     arch: str
     source: Optional[str]
     target: Optional[str]
@@ -94,7 +94,7 @@ class RowResult:
 
 @dataclass(frozen=True)
 class ComparisonTable:
-    tier: str
+    tier: Optional[str]
     columns: Tuple[ExecutionColumn, ...]
     rows: Tuple[RowResult, ...]
     arch: Optional[str] = None
@@ -289,5 +289,7 @@ def build_tables(
                 rows=tuple(rows),
             )
         )
-    tables.sort(key=lambda t: (t.tier, _safe(t.arch), _safe(t.source), _safe(t.target)))
+    tables.sort(
+        key=lambda t: (_safe(t.tier), _safe(t.arch), _safe(t.source), _safe(t.target))
+    )
     return tables
