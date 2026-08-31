@@ -947,6 +947,48 @@ class TestNullableSetGapFill(unittest.TestCase):
             self.assertIsNotNone(schema.verdict)
 
 
+class TestNullableTierGapFill(unittest.TestCase):
+    """RED pin for fix/results-tier-nullable (maintainer ruling Q-T1,
+    2026-08-31): a null tier is reachable via plan-only dispatch
+    (dispatch/plan_flow.py's no---tier else-branch) and via any rerun
+    whose parent lineage does not resolve (_build_parent_request_index
+    returns {}) -- both must gap-fill and finalize instead of crashing
+    on TaskEntry.from_dict's non-nullable 'tier' validator."""
+
+    def test_null_tier_rerun_shape_gap_fills_and_finalizes(self):
+        """Models a lineage-unresolved rerun (ledger L8): set, tier, and
+        target_compose all null on the parent-inherited fields; arch
+        survives because rerun/__main__.py sources it from the
+        re-submitted request body, not the parent index."""
+        from enge.report.results_cache import _cache_one_run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            run_id = "01NULLTIERRERUNAAAAAAAAAA"
+            task_id = "8d67eecf-a02d-46b7-aee2-9ffb673f40df"
+            request_meta = _request(
+                task_id, set_name=None, tier=None, target_compose=None
+            )
+            manifest = {
+                "run_id": run_id,
+                "created_at": "2026-07-07T10:35:07Z",
+                "context": {},
+                "requests": [request_meta],
+            }
+            task_result = _make_task_result(
+                request_uuid=task_id, xunit_bytes=_xunit_bytes()
+            )
+            _cache_one_run(manifest, [(task_result, request_meta)], output_dir)
+
+            schema = parse_results_json(output_dir / f"{run_id}.json")
+            self.assertEqual(len(schema.results), 1)
+            self.assertIsNone(schema.results[0].tier)
+            self.assertIsNone(schema.results[0].set)
+            self.assertIsNone(schema.results[0].target_compose)
+            self.assertEqual(schema.results[0].arch, "x86_64")
+            self.assertIsNotNone(schema.verdict)
+
+
 class TestUnknownTaskIdSkip(_CacheTestCase):
     def test_task_id_absent_from_manifest_is_skipped_with_warning(self):
         from enge.report.results_cache import cache_report_results

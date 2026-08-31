@@ -685,6 +685,26 @@ class TestFlakiness(unittest.TestCase):
         self.assertIn("FAILED", row.per_column)
 
 
+class TestMixedTieredUntieredSort(unittest.TestCase):
+    """RED pin for fix/results-tier-nullable: a null tier must not crash
+    build_tables' final sort, and forms its own hard partition (RULING
+    Q-T3, maintainer 2026-08-31) rather than folding into a tiered
+    table."""
+
+    def test_mixed_tiered_and_untiered_columns_sort_without_raising(self):
+        from enge.compare.engine import build_tables
+
+        cols = [
+            _column(task_id="t1", tier="tier0"),
+            _column(task_id="t2", tier=None),
+        ]
+
+        tables = build_tables(cols, show_tests=False, splitarch=False, splitpath=False)
+
+        self.assertEqual(len(tables), 2)
+        self.assertEqual([t.tier for t in tables], ["tier0", None])
+
+
 class TestUnifiedViewShape(unittest.TestCase):
     """C1: no more mode split -- every row always carries both a
     consolidated verdict and a flaky flag."""
