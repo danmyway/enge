@@ -265,7 +265,7 @@ class TaskEntry:
 
     task_id: str
     set: Optional[str]  # mirrors the results.json "set" field verbatim
-    tier: str
+    tier: Optional[str]
     arch: str
     source_compose: Optional[str]
     target_compose: Optional[str]
@@ -315,7 +315,7 @@ class TaskEntry:
         task_id = _validate_string(data["task_id"], "task_id", context="task entry")
         context = f"task '{task_id}'"
         set_name = _validate_optional_string(data["set"], "set", context=context)
-        tier = _validate_string(data["tier"], "tier", context=context)
+        tier = _validate_optional_string(data["tier"], "tier", context=context)
         arch = _validate_string(data["arch"], "arch", context=context)
         source_compose = _validate_optional_string(
             data["source_compose"], "source_compose", context=context

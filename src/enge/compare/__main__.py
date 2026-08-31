@@ -43,7 +43,7 @@ def _table_title(table: "engine.ComparisonTable") -> str:
         parts.append(
             f"{_descriptor(table.source)}{_UPGRADE_ARROW}{_descriptor(table.target)}"
         )
-    parts.append(f"tier: {table.tier}")
+    parts.append(f"tier: {table.tier}" if table.tier is not None else "tier: untiered")
     return " | ".join(parts)
 
 
