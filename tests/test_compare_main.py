@@ -261,6 +261,63 @@ class TestShortFlagRendering(unittest.TestCase):
 
         self.assertEqual(rich_table.row_count, 4)  # 2 headers + 2 rows
 
+    def test_main_defaults_to_shortened_rendering_with_neither_flag(self):
+        """RULING F4 (maintainer, 2026-07-27, restated v23 §2.9): `enge
+        compare` shortens names by default now, with neither `-s` nor
+        `-l` passed."""
+        import enge.compare.__main__ as cm
+
+        cols = [
+            _column(
+                task_id="t1",
+                plans=[
+                    PlanEntry(
+                        name="/plans/newstyle/nondestructive/tier0only",
+                        verdict="PASSED",
+                        tests=[],
+                    )
+                ],
+            ),
+        ]
+
+        with (
+            patch("enge.compare.__main__.load_columns", return_value=(cols, None)),
+            patch.object(cm, "_render_table", wraps=cm._render_table) as mock_render,
+        ):
+            cm.main(_ctx())
+
+        mock_render.assert_called_once()
+        _args, kwargs = mock_render.call_args
+        self.assertTrue(kwargs["short"])
+
+    def test_main_long_flag_renders_full_verbatim_name(self):
+        """`-l/--long` opts back into the full verbatim rendering that
+        used to be the default."""
+        import enge.compare.__main__ as cm
+
+        cols = [
+            _column(
+                task_id="t1",
+                plans=[
+                    PlanEntry(
+                        name="/plans/newstyle/nondestructive/tier0only",
+                        verdict="PASSED",
+                        tests=[],
+                    )
+                ],
+            ),
+        ]
+
+        with (
+            patch("enge.compare.__main__.load_columns", return_value=(cols, None)),
+            patch.object(cm, "_render_table", wraps=cm._render_table) as mock_render,
+        ):
+            cm.main(_ctx(long=True))
+
+        mock_render.assert_called_once()
+        _args, kwargs = mock_render.call_args
+        self.assertFalse(kwargs["short"])
+
 
 class TestColumnHeaderNewlineJoin(unittest.TestCase):
     """RULING F5 (maintainer, 2026-07-29): column headers join their parts
