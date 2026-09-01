@@ -456,6 +456,9 @@ def main(ctx) -> int:
                 f"Done: {successful_requests}/{total_requests} submitted",
                 extra={"style": done_style},
             )
+            if not getattr(ctx.cli_args, "dryrun", False) and successful_requests > 0:
+                LOGGER.info(f"Run ID: {manifest_writer.run_id}")
+                LOGGER.info(f"Report with: enge report --run {manifest_writer.run_id}")
 
         if dispatch_results:
             _print_dispatch_summaries(dispatch_results, output_format)

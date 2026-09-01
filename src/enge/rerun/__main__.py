@@ -837,6 +837,8 @@ def main(ctx: AppContext):
         parent_run_id=parent_run_id,
     )
 
+    manifest_flushed = False
+
     for i, payload in enumerate(jobs.rerun_payloads):
         original_uuid = payload.pop("_original_uuid", None)
         if original_uuid:
@@ -976,3 +978,8 @@ def main(ctx: AppContext):
             manifest_writer.flush(
                 Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest)
             )
+            manifest_flushed = True
+
+    if not is_dryrun and manifest_flushed:
+        logger.info(f"Run ID: {manifest_writer.run_id}")
+        logger.info(f"Report with: enge report --run {manifest_writer.run_id}")
