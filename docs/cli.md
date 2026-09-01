@@ -87,7 +87,8 @@ Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs fro
 - `--get-tag TAG` — Query for all task results under a given tag. Can be used multiple times.
 - `--path PATH` — Custom path to archived task files directory.
 - `--show-tests` — Display detailed test view. By default, only plan view is shown.
-- `-s, --short` — Display shortened test and plan names.
+- `-s, --short` — Display shortened test and plan names. This is now the default; the flag is accepted for backward compatibility.
+- `-l, --long` — Display full, verbatim test and plan names (the previous default).
 - `-w, --wait` — Wait for the job to complete. Print the table afterwards
 - `--download` — Download logs for requested run(s).
 - `--skip-pass` — Skip PASSED results in table and log downloads.
@@ -136,7 +137,8 @@ Read cached results.json data (see 'enge report') and build a comparison table a
 - `--tag TAG` — Filter runs by tag (repeatable, OR within).
 - `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
-- `-s, --short` — Display shortened test and plan names.
+- `-s, --short` — Display shortened test and plan names. This is now the default; the flag is accepted for backward compatibility.
+- `-l, --long` — Display full, verbatim test and plan names (the previous default).
 - `--show-tests` — Display detailed test view. By default, only plan view is shown.
 - `--splitarch` — One table per (tier, arch) instead of folding arch into columns. Combinable with --splitpath.
 - `--splitpath` — One table per (tier, upgrade-path) instead of folding the upgrade-path into columns. Combinable with --splitarch.
