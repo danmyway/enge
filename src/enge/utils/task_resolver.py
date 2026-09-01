@@ -81,6 +81,7 @@ def _resolve_manifest_tasks(ctx):
         return None
 
     selected = select_runs(ctx)
+    LOGGER.info(f"Selected run(s): {', '.join(m['run_id'] for m in selected)}")
 
     task_ids = []
     seen = set()
