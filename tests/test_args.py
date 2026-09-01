@@ -33,5 +33,27 @@ class TestArgs(unittest.TestCase):
             )
 
 
+class TestShortLongMutualExclusion(unittest.TestCase):
+    """RULING F4 / Coordinator Refinement 2 (2026-07-27, restated v23
+    §2.9): `-s/--short` and `-l/--long` are mutually exclusive on both
+    `report` and `compare`."""
+
+    def test_report_short_and_long_together_is_parse_error(self):
+        with self.assertRaises(SystemExit):
+            get_arguments(["report", "-s", "-l"])
+
+    def test_compare_short_and_long_together_is_parse_error(self):
+        with self.assertRaises(SystemExit):
+            get_arguments(["compare", "-s", "-l"])
+
+    def test_report_long_flag_parses(self):
+        args = get_arguments(["report", "-l"])
+        self.assertTrue(args.long)
+
+    def test_compare_long_flag_parses(self):
+        args = get_arguments(["compare", "-l"])
+        self.assertTrue(args.long)
+
+
 if __name__ == "__main__":
     unittest.main()

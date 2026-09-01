@@ -160,5 +160,90 @@ class TestReportShortIntegration(unittest.TestCase):
         self.assertEqual(test_cell, rm.colorize("PASSED", "TestSelinuxLabels"))
 
 
+class TestReportDefaultShortFlip(unittest.TestCase):
+    """RULING F4 (maintainer, 2026-07-27, restated v23 §2.9): `--short`
+    becomes the default for `enge report`; `-l/--long` opts back into the
+    full verbatim name that used to be the default."""
+
+    PARSED_DICT = {
+        "task-uuid-1": {
+            "testsuites": [
+                {
+                    "testsuite_name": "/plans/newstyle/nondestructive/tier0only",
+                    "testsuite_result": "PASSED",
+                    "testsuite_arch": "x86_64",
+                    "testcases": [
+                        {
+                            "testcase_name": (
+                                "/tests/newstyle/upgrades/tests/"
+                                "nondestructive/test_selinux_labels.py"
+                                "::TestSelinuxLabels"
+                            ),
+                            "testcase_result": "PASSED",
+                        }
+                    ],
+                }
+            ],
+        }
+    }
+
+    def _ctx(self, **cli_overrides):
+        cli = {
+            "list": False,
+            "show_ids": False,
+            "compare": False,
+            "jira": False,
+            "skip_pass": False,
+            "show_tests": True,
+            "output_format": "terminal",
+        }
+        cli.update(cli_overrides)
+        return make_app_context(action="report", extra_cli=cli)
+
+    def test_default_renders_shortened_name_with_neither_flag(self):
+        import enge.report.__main__ as rm
+
+        with patch.object(
+            rm,
+            "_parse_request_xunit_with_retval",
+            return_value=(self.PARSED_DICT, 0, []),
+        ):
+            tables_list, _retval, _task_results = rm.build_table(self._ctx())
+
+        (result_table, _metadata) = tables_list[0]
+        plan_cell = result_table.columns[0]._cells[0]
+        test_cell = result_table.columns[2]._cells[1]
+
+        self.assertEqual(plan_cell, rm.colorize("PASSED", "nondestructive/tier0only"))
+        self.assertEqual(test_cell, rm.colorize("PASSED", "TestSelinuxLabels"))
+
+    def test_long_flag_renders_full_verbatim_name(self):
+        import enge.report.__main__ as rm
+
+        with patch.object(
+            rm,
+            "_parse_request_xunit_with_retval",
+            return_value=(self.PARSED_DICT, 0, []),
+        ):
+            tables_list, _retval, _task_results = rm.build_table(self._ctx(long=True))
+
+        (result_table, _metadata) = tables_list[0]
+        plan_cell = result_table.columns[0]._cells[0]
+        test_cell = result_table.columns[2]._cells[1]
+
+        self.assertEqual(
+            plan_cell,
+            rm.colorize("PASSED", "plans/newstyle/nondestructive/tier0only"),
+        )
+        self.assertEqual(
+            test_cell,
+            rm.colorize(
+                "PASSED",
+                "tests/newstyle/upgrades/tests/nondestructive/"
+                "test_selinux_labels.py::TestSelinuxLabels",
+            ),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
