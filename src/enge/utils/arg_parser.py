@@ -456,11 +456,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Display detailed test view. By default, only plan view is shown.",
     )
 
-    report.add_argument(
+    report_short_group = report.add_mutually_exclusive_group()
+    report_short_group.add_argument(
         "-s",
         "--short",
         action="store_true",
-        help="Display shortened test and plan names.",
+        help="Display shortened test and plan names. This is now the "
+        "default; the flag is accepted for backward compatibility.",
+    )
+    report_short_group.add_argument(
+        "-l",
+        "--long",
+        action="store_true",
+        help="Display full, verbatim test and plan names (the previous default).",
     )
 
     report.add_argument(
@@ -614,11 +622,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_date_filter_args(compare)
 
-    compare.add_argument(
+    compare_short_group = compare.add_mutually_exclusive_group()
+    compare_short_group.add_argument(
         "-s",
         "--short",
         action="store_true",
-        help="Display shortened test and plan names.",
+        help="Display shortened test and plan names. This is now the "
+        "default; the flag is accepted for backward compatibility.",
+    )
+    compare_short_group.add_argument(
+        "-l",
+        "--long",
+        action="store_true",
+        help="Display full, verbatim test and plan names (the previous default).",
     )
 
     compare.add_argument(

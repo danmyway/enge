@@ -79,7 +79,7 @@ def build_table(ctx):
 
     tables_list = []
 
-    short = bool(getattr(ctx.cli_args, "short", False))
+    short = not bool(getattr(ctx.cli_args, "long", False))
 
     def _display_name(name):
         return _short_name(name) if short else _split_name(name, 0)

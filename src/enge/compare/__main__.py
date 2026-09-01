@@ -122,7 +122,7 @@ def main(ctx: AppContext) -> int:
     show_tests = getattr(ctx.cli_args, "show_tests", False)
     splitarch = getattr(ctx.cli_args, "splitarch", False)
     splitpath = getattr(ctx.cli_args, "splitpath", False)
-    short = getattr(ctx.cli_args, "short", False)
+    short = not bool(getattr(ctx.cli_args, "long", False))
 
     columns, error_code = load_columns(ctx)
     if error_code is not None:
