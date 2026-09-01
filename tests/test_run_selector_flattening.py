@@ -408,5 +408,72 @@ class TestTaskResolverMultiRunAndFilters(unittest.TestCase):
             _parse_tasks_impl(ctx)
 
 
+class TestSelectionRunIdLogging(unittest.TestCase):
+    """RED/GREEN pins for the run-selection visibility log (L4)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+        self.runs.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _write(self, run_id, *, context=None):
+        manifest = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "created_at": "2026-07-01T00:00:00Z",
+            "command": "test",
+            "argv": ["enge", "test"],
+            "tags": [],
+            "parent_run_id": None,
+            "origin": "native",
+            "context": context or {},
+            "requests": [{"task_id": f"task-{run_id}"}],
+        }
+        (self.runs / f"{run_id}.json").write_text(json.dumps(manifest))
+        return run_id
+
+    def test_multi_run_selection_logs_both_ids_on_one_line(self):
+        self._write("01AAA")
+        self._write("01BBB")
+        ctx = _make_ctx(self.runs, self.latest, run=["01AAA", "01BBB"])
+
+        with self.assertLogs("enge.utils.task_resolver", level="INFO") as cm:
+            _resolve_manifest_tasks(ctx)
+
+        selected_lines = [m for m in cm.output if "Selected run(s):" in m]
+        self.assertEqual(len(selected_lines), 1, cm.output)
+        self.assertIn("01AAA", selected_lines[0])
+        self.assertIn("01BBB", selected_lines[0])
+
+    def test_filter_only_selection_logs_every_matched_run(self):
+        self._write("01AAA", context={"set": "smoke"})
+        self._write("01BBB", context={"set": "smoke"})
+        self._write("01CCC", context={"set": "regression"})
+        ctx = _make_ctx(self.runs, self.latest, filter_set="smoke")
+
+        with self.assertLogs("enge.utils.task_resolver", level="INFO") as cm:
+            _resolve_manifest_tasks(ctx)
+
+        selected_lines = [m for m in cm.output if "Selected run(s):" in m]
+        self.assertEqual(len(selected_lines), 1, cm.output)
+        self.assertIn("01AAA", selected_lines[0])
+        self.assertIn("01BBB", selected_lines[0])
+        self.assertNotIn("01CCC", selected_lines[0])
+
+    def test_no_selector_path_emits_no_selection_log(self):
+        self._write("01AAA")
+        ctx = _make_ctx(self.runs, self.latest)
+
+        with self.assertNoLogs("enge.utils.task_resolver", level="INFO"):
+            result = _resolve_manifest_tasks(ctx)
+
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()

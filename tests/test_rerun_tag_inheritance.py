@@ -302,6 +302,215 @@ class TestRerunManifestLineageWiring(unittest.TestCase):
         self.assertEqual(child["tags"], ["nightly", "milestone-x", "cli-tag", "rerun"])
 
 
+TASK_UUID_2 = "11111111-2222-3333-4444-555555555555"
+
+
+class TestRerunRunIdLogging(unittest.TestCase):
+    """RED/GREEN pins for rerun's run_id visibility log (L4).
+
+    The flush happens inside the per-payload loop, so the log must fire
+    once, after the loop -- not once per rerun payload.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _find_manifests(self):
+        return list(self.runs_dir.glob("*.json"))
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_run_id_logged_once_after_loop_and_matches_manifest(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _mock_repin, _mock_rp
+    ):
+        api_url = f"https://tf.example.com/api/{TASK_UUID}"
+        mock_parse.return_value = ([api_url], None, {TASK_UUID: None, api_url: None})
+        mock_xunit.return_value = _parsed_dict()
+        mock_http.return_value = _mock_tf_response()
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = ["cli-tag"]
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        with self.assertLogs("enge.rerun.__main__", level="INFO") as cm:
+            main(ctx)
+
+        manifests = self._find_manifests()
+        self.assertEqual(
+            len(manifests), 1, f"expected 1 child manifest, got {manifests}"
+        )
+        child = json.loads(manifests[0].read_text())
+        run_id = child["run_id"]
+
+        run_id_lines = [m for m in cm.output if "Run ID:" in m]
+        self.assertEqual(
+            len(run_id_lines), 1, f"expected exactly one Run ID line, got: {cm.output}"
+        )
+        self.assertIn(run_id, run_id_lines[0])
+
+        hint_lines = [m for m in cm.output if "Report with:" in m]
+        self.assertEqual(len(hint_lines), 1)
+        self.assertIn(f"enge report --run {run_id}", hint_lines[0])
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_run_id_logged_exactly_once_across_multiple_payloads(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _mock_repin, _mock_rp
+    ):
+        # Pins the loop-placement bug found during the STOP-gate
+        # investigation: the flush call site is inside the per-payload
+        # loop, so a naively-placed log statement would fire once per
+        # rerun task instead of once per invocation.
+        api_url_1 = f"https://tf.example.com/api/{TASK_UUID}"
+        api_url_2 = f"https://tf.example.com/api/{TASK_UUID_2}"
+        mock_parse.return_value = (
+            [api_url_1, api_url_2],
+            None,
+            {TASK_UUID: None, api_url_1: None, TASK_UUID_2: None, api_url_2: None},
+        )
+        parsed = _parsed_dict()
+        parsed[TASK_UUID_2] = {
+            "source_compose": "RHEL-9.0",
+            "testsuites": [
+                {
+                    "testsuite_name": "/plan/tier0",
+                    "testsuite_result": "FAILED",
+                    "testsuite_arch": "x86_64",
+                    "testcases": [
+                        {
+                            "testcase_name": "test::failing2",
+                            "testcase_result": "FAILED",
+                        },
+                    ],
+                }
+            ],
+        }
+        mock_xunit.return_value = parsed
+
+        resp1 = _mock_tf_response()
+        resp2 = MagicMock()
+        resp2.json.return_value = {
+            "id": TASK_UUID_2,
+            "environments_requested": [
+                {"os": {"compose": "RHEL-9.0"}, "arch": "x86_64"}
+            ],
+            "test": {"fmf": {"name": "/plan/tier0"}},
+        }
+        mock_http.side_effect = [resp1, resp2]
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = ["cli-tag"]
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        with self.assertLogs("enge.rerun.__main__", level="INFO") as cm:
+            main(ctx)
+
+        run_id_lines = [m for m in cm.output if "Run ID:" in m]
+        self.assertEqual(
+            len(run_id_lines),
+            1,
+            f"expected the Run ID line once per invocation, not once per "
+            f"rerun payload, got: {cm.output}",
+        )
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_dryrun_suppresses_run_id_line(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _mock_repin, _mock_rp
+    ):
+        api_url = f"https://tf.example.com/api/{TASK_UUID}"
+        mock_parse.return_value = ([api_url], None, {TASK_UUID: None, api_url: None})
+        mock_xunit.return_value = _parsed_dict()
+        mock_http.return_value = _mock_tf_response()
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = ["cli-tag"]
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": True},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        with self.assertLogs("enge.rerun.__main__", level="INFO") as cm:
+            main(ctx)
+
+        self.assertFalse(any("Run ID:" in m for m in cm.output))
+        self.assertFalse(any("Report with:" in m for m in cm.output))
+        self.assertEqual(self._find_manifests(), [])
+
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_no_qualifying_tasks_suppresses_run_id_line(
+        self, mock_parse, mock_xunit, mock_submit_cls
+    ):
+        mock_parse.return_value = ([], None, {})
+        mock_xunit.return_value = {}
+        mock_submit = MagicMock()
+        mock_submit.set_tag = []
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        with self.assertLogs("enge.rerun.__main__", level="INFO") as cm:
+            main(ctx)
+
+        self.assertFalse(any("Run ID:" in m for m in cm.output))
+        self.assertFalse(any("Report with:" in m for m in cm.output))
+        self.assertEqual(self._find_manifests(), [])
+
+
 class TestRerunManifestFieldInheritance(unittest.TestCase):
     """Wiring-level tests: rerun request entries inherit set/tier/target_compose
     from the parent manifest's matching request entry, and always record
