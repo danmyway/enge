@@ -21,10 +21,9 @@ needed values explicitly. Report-subcommand integration lives in
 `resolve_manifests_for_invocation` and `parse_results_json` — it never
 writes, gap-fills, or re-derives verdicts; a manifest-backed
 `enge report --run <run_id>` remains the only way to populate a run's
-cache. `enge report --compare` is a one-release deprecation alias that
-delegates to `enge compare` and is therefore also read-only, unlike every
-other manifest-backed `enge report` invocation (see "Compare consolidation
-policy" below).
+cache. `enge report --compare` is the sole read-only exception to `enge
+report`'s cache-write ownership; see `docs/compare-consolidation.md` for
+the full contract.
 
 **Report write policy (implemented in `report/results_cache.py`)**:
 caching is a side effect of `enge report`, never a behavior change to
