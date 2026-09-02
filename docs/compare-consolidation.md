@@ -8,8 +8,9 @@ algorithm, descriptor-sourcing fallback rules, and dated rulings.
 ## Compare consolidation policy
 
 `enge compare` (`src/enge/compare/`) is a **read-only** consumer of the
-`results.json` contract above — it never parses xunit, never calls
-Testing Farm, never writes a cache. `compare/engine.py` is pure (no I/O);
+`results.json` contract in `docs/results-json-schema.md` — it never
+parses xunit, never calls Testing Farm, never writes a cache.
+`compare/engine.py` is pure (no I/O);
 `compare/loader.py` resolves manifests via the shared
 `resolve_manifests_for_invocation` and loads each matched run's
 `results.json`; `compare/__main__.py` renders. It replaced `enge report
@@ -24,7 +25,8 @@ keep everything after the first separator, otherwise split on `/` and
 keep the last two segments — and never mutates the stored or grouped
 name backing it;
 `results.json` values and the plan-header dedup sentinel stay on the
-full verbatim name, consistent with the invariant above.
+full verbatim name, consistent with `enge compare` never writing back
+to the results.json cache it reads.
 
 **Unified view** (compare-redesign, 2026-07-22): there is no mode split.
 Every invocation renders one or more tables, each with one column per
@@ -80,7 +82,7 @@ explicitly off-limits here):
   2's severity-max instead. A stable coordinate-identity signal that
   survives missing descriptors (e.g. `rerun_of` chains) would close
   that gap; not yet plumbed into results.json/`ExecutionColumn` (see
-  the coldstore note below).
+  the coldstore-hyperlink note in `docs/results-json-schema.md`).
 - **Stage 2**, across the coordinates present in that row: severity-max
   `ERROR > FAILED > PASSED`. A coordinate with no real result (stage 1
   found nothing to report) contributes nothing to stage 2.
