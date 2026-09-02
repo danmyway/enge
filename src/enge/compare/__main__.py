@@ -2,8 +2,8 @@
 results.json caches across runs.
 
 Read-only consumer of the results.json contract -- never parses xunit,
-never calls Testing Farm, never writes a cache (see CLAUDE.md "Results.json
-format"). Grouping/consolidation is delegated entirely to
+never calls Testing Farm, never writes a cache (see
+docs/results-json-schema.md). Grouping/consolidation is delegated entirely to
 `enge.compare.engine` (pure) via `enge.compare.loader` (I/O); this module
 is display only: turning `engine.ComparisonTable` objects into rich
 tables/footers. The exit code is always SUCCESS once the floor is met
