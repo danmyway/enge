@@ -3,8 +3,8 @@ parsing -> unified floor policy -> per-task descriptor sourcing.
 
 Manifest-schema independence (fix/compare-manifest-decoupling): a manifest
 is consulted for run *selection* only, via the shared
-`resolve_manifests_for_invocation` (never re-forked -- see CLAUDE.md
-"Results.json format"); once a manifest is matched, the only field this
+`resolve_manifests_for_invocation` (never re-forked -- see
+docs/results-json-schema.md); once a manifest is matched, the only field this
 module reads from it is `run_id`. ALL column data -- `artifacts_url`,
 `source`/`target`, `set`/`tier`/`arch`, plans -- comes from that run's
 results.json cache (`parse_results_json`) exclusively. No xunit parsing,

@@ -4,7 +4,7 @@ No I/O here -- this module only groups and consolidates already-loaded
 `ExecutionColumn` records (see `enge.compare.loader` for how those get
 built from results.json caches). Kept import-free of manifest/results.json
 I/O so the ratified grouping and consolidation-policy contracts can be
-pinned by direct unit tests (see CLAUDE.md "Compare consolidation policy"
+pinned by direct unit tests (see docs/compare-consolidation.md
 and the fire-time compare-redesign session log for the full ratified
 design).
 

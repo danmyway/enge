@@ -4,7 +4,7 @@
 manifest-backed invocations via the `results_parser` gap-fill API.
 `enge dispatch` never touches results (hard invariant). Raw-input
 invocations (`--file`/`--input`, or any selector with no resolvable
-run_id) are a no-op -- see CLAUDE.md "Results.json format" for the full
+run_id) are a no-op -- see docs/results-json-schema.md for the full
 write policy and terminality predicate.
 
 Invocation -> manifest resolution lives in `utils/manifest_resolution.py`
@@ -325,9 +325,9 @@ def _cache_one_run(
 def cache_report_results(ctx: "AppContext", task_results: List[Any]) -> None:
     """Gap-fill results.json + xunit for every manifest matched by this
     report invocation. No-op for raw-input invocations. Never raises: a
-    caching failure must not fail the report command (CLAUDE.md
-    "Results.json format" write policy) -- the user's table must still
-    render."""
+    caching failure must not fail the report command
+    (docs/results-json-schema.md write policy) -- the user's table must
+    still render."""
     try:
         manifests = _resolve_manifests_for_report(ctx)
     except Exception:  # noqa: BLE001

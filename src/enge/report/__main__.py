@@ -339,7 +339,7 @@ def main(ctx: AppContext, result_table=None):
                 # cache_report_results already guards its own known
                 # failure modes internally; this is the outer backstop so
                 # a caching bug can never take the report table down with
-                # it (see CLAUDE.md "Results.json format" write policy).
+                # it (see docs/results-json-schema.md write policy).
                 LOGGER.warning(
                     "Failed to update the local results cache; continuing",
                     exc_info=True,

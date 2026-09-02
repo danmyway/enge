@@ -1,9 +1,9 @@
 """RED tests for the unified `enge compare` engine (enge.compare.engine).
 
 Ratified redesign (compare-redesign-contract-v3 C1/C2/C3/R1/R3/R5, fired
-2026-07-22 -- see CLAUDE.md "Compare consolidation policy" pending
-rewrite): the old two-mode split (`--flakiness` flag selecting flakiness
-vs consolidation tables) is gone. There is now ONE view: a multi-column
+2026-07-22 -- see docs/compare-consolidation.md): the old two-mode split
+(`--flakiness` flag selecting flakiness vs consolidation tables) is gone.
+There is now ONE view: a multi-column
 comparison table plus an always-present consolidated column.
 
 - Grouping (C2): `set` is never a grouping coordinate. Tier is always a

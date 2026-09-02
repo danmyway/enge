@@ -36,8 +36,8 @@ def results_dir(config: Dict[str, Any]) -> Path:
     resolve_runs_dir (results.json is sibling data to the run manifests,
     both under the enge XDG_DATA_HOME root) -- not the literal
     `~/.enge/results/` path floated informally elsewhere, which would be
-    inconsistent with the manifest store's XDG convention. See CLAUDE.md
-    "Results.json format" for the full storage-layout contract.
+    inconsistent with the manifest store's XDG convention. See
+    docs/results-json-schema.md for the full storage-layout contract.
 
     Unlike the resolve_* functions above, this also creates the directory
     on first call (mkdir -p): results_parser.py's gap-fill writers

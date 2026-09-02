@@ -12,7 +12,7 @@ from enge.utils.errors import AlreadyFinalizedError, ConflictError, ValidationEr
 class Verdict(str, Enum):
     """The results.json verdict enum -- shared by the root verdict and every
     task/plan/test verdict. Contract-pinned; do not add members without
-    maintainer sign-off (see CLAUDE.md "Results.json format")."""
+    maintainer sign-off (see docs/results-json-schema.md)."""
 
     PASSED = "PASSED"
     FAILED = "FAILED"
@@ -399,7 +399,7 @@ def _validate_task_plans_arity(
 ) -> None:
     """Validity rules 1-3. SKIPPED task-level verdicts are not covered by
     the ratified rule set and are deliberately left unconstrained here --
-    see CLAUDE.md "Results.json format" for the documented gap."""
+    see docs/results-json-schema.md for the documented gap."""
     if verdict == Verdict.CANCELED.value and plans:
         raise ValidationError(
             f"{context}: verdict is CANCELED but 'plans' is non-empty; "
@@ -415,7 +415,7 @@ def _validate_task_plans_arity(
 @dataclass(frozen=True)
 class ResultsJsonSchema:
     """The results.json v3.1 run envelope (contract-pinned as of
-    2026-07-14, see CLAUDE.md "Results.json format").
+    2026-07-14, see docs/results-json-schema.md).
 
     A plain dataclass + manual validators, not pydantic: pydantic is not a
     project dependency, is used nowhere else in the codebase, and this
@@ -528,7 +528,7 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
     """Tmp-then-replace atomic write, mirroring the pattern used by
     ManifestWriter.flush() in utils/manifest.py. Duplicated rather than
     imported: this module stays dependency-free of the manifest layer by
-    design (see CLAUDE.md "Results.json format")."""
+    design (see docs/results-json-schema.md)."""
     tmp_path = path.with_name(path.name + ".tmp")
     tmp_path.write_text(json.dumps(data, indent=2))
     os.replace(tmp_path, path)

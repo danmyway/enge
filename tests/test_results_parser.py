@@ -230,7 +230,7 @@ class TestTaskEntryValidation(unittest.TestCase):
         Q-T1, 2026-08-31): reachable via plan-only dispatch (no --tier)
         and via any rerun whose parent lineage does not resolve, mirroring
         the set/source_compose/target_compose precedent. No sentinel
-        string is introduced -- see CLAUDE.md "Results.json format"."""
+        string is introduced -- see docs/results-json-schema.md."""
         task = TaskEntry.from_dict(_task_payload(tier=None))
         self.assertIsNone(task.tier)
 

@@ -1,7 +1,7 @@
 """RED tests for the report-side results.json cache writer
 (enge.report.results_cache).
 
-Write policy under test (see CLAUDE.md "Results.json format" and the
+Write policy under test (see docs/results-json-schema.md and the
 fire-time coordinator ruling in the feat/report-results-cache session log):
 
 - Manifest-backed report invocations (--run, --set/--tier/--arch/--tag
