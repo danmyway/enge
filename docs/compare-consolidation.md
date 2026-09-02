@@ -25,8 +25,8 @@ keep everything after the first separator, otherwise split on `/` and
 keep the last two segments — and never mutates the stored or grouped
 name backing it;
 `results.json` values and the plan-header dedup sentinel stay on the
-full verbatim name, consistent with `enge compare` never writing back
-to the results.json cache it reads.
+full verbatim name, consistent with `results.json` plan names always
+being verbatim.
 
 **Unified view** (compare-redesign, 2026-07-22): there is no mode split.
 Every invocation renders one or more tables, each with one column per
