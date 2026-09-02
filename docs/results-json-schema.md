@@ -380,7 +380,7 @@ computed at request time (`dispatch/tf_send_request.py`). `enge
 compare` (`compare/loader.py`) reads this field directly from the
 results.json cache — it no longer joins the manifest's `requests[]`
 itself for this value (fix/compare-manifest-decoupling, 2026-07-29; see
-"Compare consolidation policy" below for the read-side layering rule).
+`docs/compare-consolidation.md` for the read-side layering rule).
 The coldstore hyperlink is available directly from a cached
 `results.json` entry without reconstruction or a manifest join;
 superseded is this section's original plan to construct it externally
