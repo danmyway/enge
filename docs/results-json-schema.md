@@ -233,7 +233,9 @@ thing as a run's "envelope plan" or "envelope rerun lineage." `rerun_of`
 and `artifacts_url` are copied verbatim from the manifest's matching
 `requests[]` entry (already written there by
 `dispatch/set_flow.py::add_request` — this extension only stops
-discarding them at harvest time, it adds no new manifest field). `plan`
+discarding them at harvest time, it adds no new manifest field). See
+`docs/manifest-schema.md` for the full `requests[]` entry shape — which
+writer populates each field and its current nullability. `plan`
 is likewise copied verbatim from the manifest request — not recomputed
 anywhere, it lands in the request as-is. `plan_filter` is the one
 exception sourced from neither the manifest nor the envelope: the

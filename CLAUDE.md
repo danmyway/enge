@@ -214,6 +214,24 @@ an agent must not violate before opening that file:
   `compare/loader.py`, or the descriptor-sourcing/artifacts-URL fallback
   rules.
 
+## Manifest schema
+
+Full contract: `docs/manifest-schema.md` (envelope + `requests[]`
+shape, per-field nullability, shape-by-origin contrast, dated rulings).
+Invariants an agent must not violate before opening that file:
+
+- Manifests are written ONLY by dispatch (`dispatch/set_flow.py`),
+  rerun (`rerun/__main__.py`), and migrate-archive
+  (`migrate/__main__.py`) — no other code path writes a manifest.
+- **Consumers must `.get()` `requests[]` entry fields, never `[key]`**
+  — migrated manifests omit several keys entirely rather than nulling
+  them, so bracket access can raise `KeyError` on a legitimate
+  manifest.
+- Schema changes require maintainer sign-off — see the full doc before
+  touching `utils/manifest.py`, `dispatch/set_flow.py`'s
+  `add_request` call, `rerun/__main__.py`'s `add_request` call, or
+  `migrate/__main__.py`'s hand-built request dict.
+
 ## Conventions
 
 - **Tests**: unittest.TestCase style exclusively (tempfile.TemporaryDirectory,
