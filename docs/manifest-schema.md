@@ -193,11 +193,13 @@ Field-by-field, type / nullability / producing writer:
   `_original_uuid` (set at `rerun/__main__.py:618`, consumed at `:843`)
   — this is INDEPENDENT of `parent_run_id`/lineage resolution, so by
   code reading it should be populated even on an `-i`/raw-input rerun
-  that has no resolved `parent_run_id`. **This population rule is OPEN
-  (ledger L8)**: a production report states `rerun_of` was absent on
-  such a manifest, contradicting the code reading above, and this has
-  not been reconciled. Do not treat either reading as settled. Native
-  dispatch: always `null` (a first dispatch is never a rerun).
+  that has no resolved `parent_run_id`. **Confirmed** (maintainer field
+  observation, 2026-09-02): `rerun_of` is populated independently of
+  `parent_run_id`/lineage resolution on the bare `enge rerun` (latest),
+  `enge rerun -i` (raw-input), and tag-filter selection paths —
+  verified on single-run reruns only; the multi-run rerun case is
+  unverified. Native dispatch: always `null` (a first dispatch is never
+  a rerun).
   Migrated: key absent entirely.
 - `source` (nullable str) — optional key (absent on migrated
   manifests only; always emitted on the native path). The upgrade-path source value
@@ -292,5 +294,8 @@ for bracket access elsewhere.
 - Ledger L8 (maintainer, 2026-08-25, parked; narrowed 2026-09-01):
   rerun `set`/`tier`/`target_compose` inheritance is settled as
   conditional on lineage resolution (documented above);
-  `rerun_of`'s population rule remains OPEN.
+  `rerun_of`'s population rule closed 2026-09-02 (maintainer field
+  observation) — confirmed independent of lineage resolution on
+  single-run reruns across the bare-latest, `-i`, and tag-filter paths;
+  multi-run reruns unverified.
 - Ledger L9 (unverified): the `build_ids` chroot-suffix caution above.
