@@ -90,11 +90,15 @@ documented as one. In practice, the observed keys are `event`,
 `source`, `target`, `tiers`, `architectures`, and `set`.
 
 Native dispatch (`dispatch/__main__.py:328`, `_build_manifest_writer`)
-populates `event`/`source`/`target`/`tiers`/`architectures` from the
-resolved test attributes, and `set` only when `--set` was passed on the
-CLI (`:340-341`, holding the first requested set name — a convenience
-value for the fast-path filter below, not necessarily representative of
-every request in a multi-set run). Native rerun constructs its
+unconditionally assigns `context["event"]` (`:342`) — the only key
+guaranteed present on a native dispatch manifest, and its value may be
+`null`. The other five keys are each guarded and therefore ABSENT
+(never null) whenever their guard fails: `set` (`:339-341`, present
+only when `--set` was passed on the CLI, holding the first requested
+set name — a convenience value for the fast-path filter below, not
+necessarily representative of every request in a multi-set run),
+`source` (`:343-345`), `target` (`:346-348`), `tiers` (`:349-353`), and
+`architectures` (`:354-355`). Native rerun constructs its
 `ManifestWriter` with no `context` argument at all
 (`rerun/__main__.py:832-837`), so every rerun manifest's `context` is
 `{}`. Migrated manifests populate `set`, `tiers`, `architectures` only,
@@ -177,11 +181,14 @@ Field-by-field, type / nullability / producing writer:
   (`migrate/__main__.py:123`) — every request in a migrated manifest
   shares one timestamp, even if the original requests were dispatched
   at slightly different times.
-- `launch_uuid` (nullable str) — optional key (`.get` default `None`).
+- `launch_uuid` (nullable str) — optional key (absent on migrated
+  manifests only; always emitted on the native path) (`.get` default
+  `None`).
   Native dispatch and rerun: the ReportPortal launch UUID for this
   request, `null` when no RP launch applies. Migrated: key absent
   entirely.
-- `rerun_of` (nullable str) — optional key. The parent task's own UUID
+- `rerun_of` (nullable str) — optional key (absent on migrated
+  manifests only; always emitted on the native path). The parent task's own UUID
   being rerun. Native rerun: `original_uuid`, popped from the payload's
   `_original_uuid` (set at `rerun/__main__.py:618`, consumed at `:843`)
   — this is INDEPENDENT of `parent_run_id`/lineage resolution, so by
@@ -192,27 +199,32 @@ Field-by-field, type / nullability / producing writer:
   not been reconciled. Do not treat either reading as settled. Native
   dispatch: always `null` (a first dispatch is never a rerun).
   Migrated: key absent entirely.
-- `source` (nullable str) — optional key. The upgrade-path source value
+- `source` (nullable str) — optional key (absent on migrated
+  manifests only; always emitted on the native path). The upgrade-path source value
   (e.g. `"9.9"`). Native dispatch: threaded down from the resolved test
   attributes. Native rerun: `env_vars.get("SOURCE_RELEASE")` from the
   rerun payload's own `tmt.environment` variables
   (`rerun/__main__.py:972`) — the payload's own value, not
   parent-inherited. Migrated: key absent entirely.
-- `target` (nullable str) — optional key. Mirrors `source`: native
+- `target` (nullable str) — optional key (absent on migrated
+  manifests only; always emitted on the native path). Mirrors `source`: native
   dispatch from resolved test attributes, native rerun from
   `env_vars.get("TARGET_RELEASE")` (`rerun/__main__.py:973`), migrated
   always absent.
-- `git_ref` (nullable str) — optional key. Native dispatch:
+- `git_ref` (nullable str) — optional key (absent on migrated
+  manifests only; always emitted on the native path). Native dispatch:
   `submit_test.tests_git_ref`. Native rerun:
   `request_data["tests_git_ref"]`, the rerun payload's own
   `test.fmf.ref` (`rerun/__main__.py:923`). Migrated: key absent
   entirely.
-- `event` (nullable str) — optional key. Native dispatch: the
+- `event` (nullable str) — optional key (absent on migrated
+  manifests only; always emitted on the native path). Native dispatch: the
   dispatch's resolved event. Native rerun: the rerun payload's own
   `tmt.context.event` (`rerun/__main__.py:944`). Migrated: key absent
   entirely.
 - `build_ids` (list of str, default `[]`, never `null` when the key is
-  present) — optional key, absent entirely on migrated manifests.
+  present) — optional key (absent on migrated manifests only; always
+  emitted on the native path).
   Native dispatch and rerun: `[a["id"] for a in <artifacts>]`
   (`dispatch/set_flow.py:526`, `rerun/__main__.py:976`, filtered to
   entries with an `id` on the rerun side). Format is
