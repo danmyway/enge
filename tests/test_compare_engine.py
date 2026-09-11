@@ -705,6 +705,202 @@ class TestMixedTieredUntieredSort(unittest.TestCase):
         self.assertEqual([t.tier for t in tables], ["tier0", None])
 
 
+class TestDiscoverPhaseNormalization(unittest.TestCase):
+    """RULING G1, 2026-09-11: tmt's POSITIONAL `/default-<N>/` discover-phase
+    prefix is not test identity, so it is stripped before forming a test-row
+    key. Real case: an arch-guarded plan whose ppc64le `when:` phase sits at
+    index 1 emitted `/default-1/...::TestBasic` there and
+    `/default-0/...::TestBasic` everywhere else, splitting one test into two
+    half-empty rows."""
+
+    _AARCH = "/default-0/upgrades/tests/destructive/test_basic.py::TestBasic"
+    _PPC = "/default-1/upgrades/tests/destructive/test_basic.py::TestBasic"
+    _PLAN = "/plans/upgrades/test_basic.py::TestBasic"
+
+    def _split_phase_columns(self):
+        return [
+            _column(
+                task_id="t1",
+                arch="x86_64",
+                plans=[_plan(self._PLAN, "PASSED", [_test(self._AARCH, "PASSED")])],
+            ),
+            _column(
+                task_id="t2",
+                arch="ppc64le",
+                plans=[_plan(self._PLAN, "FAILED", [_test(self._PPC, "FAILED")])],
+            ),
+        ]
+
+    def test_same_test_from_two_phase_indexes_is_one_row(self):
+        from enge.compare.engine import build_rows
+
+        rows = build_rows(self._split_phase_columns(), show_tests=True)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].per_column, ("PASSED", "FAILED"))
+
+    def test_row_label_drops_the_phase_segment(self):
+        from enge.compare.engine import build_rows
+
+        rows = build_rows(self._split_phase_columns(), show_tests=True)
+
+        self.assertEqual(
+            rows[0].label,
+            "/upgrades/tests/destructive/test_basic.py::TestBasic",
+        )
+
+    def test_named_discover_phase_is_never_stripped(self):
+        """`/tests/...` is a NAMED phase and may carry meaning; only the
+        generated `default-<N>` form is positional noise."""
+        from enge.compare.engine import build_rows
+
+        cols = [
+            _column(
+                task_id="t1",
+                plans=[
+                    _plan(
+                        "/plans/nondestructive/tier0only",
+                        "PASSED",
+                        [_test("/tests/upgrades/test_x.py::TestX", "PASSED")],
+                    )
+                ],
+            )
+        ]
+
+        rows = build_rows(cols, show_tests=True)
+
+        self.assertEqual(rows[0].label, "/tests/upgrades/test_x.py::TestX")
+
+    def test_unprefixed_node_id_keeps_its_first_path_segment(self):
+        """A blanket first-segment strip would turn `/upgrades/...` into
+        `/tests/...` and destroy the name."""
+        from enge.compare.engine import build_rows
+
+        cols = [
+            _column(
+                task_id="t1",
+                plans=[
+                    _plan(
+                        "/plans/p1",
+                        "PASSED",
+                        [_test("/upgrades/tests/test_x.py::TestX", "PASSED")],
+                    )
+                ],
+            )
+        ]
+
+        rows = build_rows(cols, show_tests=True)
+
+        self.assertEqual(rows[0].label, "/upgrades/tests/test_x.py::TestX")
+
+    def test_colliding_plan_keeps_verbatim_names_and_loses_no_verdict(self):
+        """Collision guard: two concurrently-enabled phases running the same
+        node ID would collapse to one key, and last-match-wins would silently
+        drop a verdict. Such a plan opts out of normalization entirely."""
+        from enge.compare.engine import build_rows
+
+        cols = [
+            _column(
+                task_id="t1",
+                plans=[
+                    _plan(
+                        "/plans/p1",
+                        "FAILED",
+                        [
+                            _test("/default-0/t.py::T", "PASSED"),
+                            _test("/default-1/t.py::T", "FAILED"),
+                        ],
+                    )
+                ],
+            )
+        ]
+
+        rows = build_rows(cols, show_tests=True)
+
+        self.assertEqual(
+            [(r.label, r.per_column) for r in rows],
+            [
+                ("/default-0/t.py::T", ("PASSED",)),
+                ("/default-1/t.py::T", ("FAILED",)),
+            ],
+        )
+
+    def test_collision_in_one_column_disables_normalization_for_all_columns(self):
+        """The guard is per-plan, not per-column -- a plan must key
+        identically in every column or rows would not line up."""
+        from enge.compare.engine import build_rows
+
+        cols = [
+            _column(
+                task_id="t1",
+                arch="x86_64",
+                plans=[
+                    _plan(
+                        "/plans/p1", "PASSED", [_test("/default-0/t.py::T", "PASSED")]
+                    )
+                ],
+            ),
+            _column(
+                task_id="t2",
+                arch="ppc64le",
+                plans=[
+                    _plan(
+                        "/plans/p1",
+                        "FAILED",
+                        [
+                            _test("/default-0/t.py::T", "PASSED"),
+                            _test("/default-1/t.py::T", "FAILED"),
+                        ],
+                    )
+                ],
+            ),
+        ]
+
+        rows = build_rows(cols, show_tests=True)
+
+        self.assertEqual(
+            [(r.label, r.per_column) for r in rows],
+            [
+                ("/default-0/t.py::T", ("PASSED", "PASSED")),
+                ("/default-1/t.py::T", ("—", "FAILED")),
+            ],
+        )
+
+    def test_normalization_does_not_merge_across_different_plans(self):
+        """Row identity is still (plan, test) -- the same node ID under two
+        different plans stays two rows."""
+        from enge.compare.engine import build_rows
+
+        cols = [
+            _column(
+                task_id="t1",
+                plans=[
+                    _plan(
+                        "/plans/p1", "PASSED", [_test("/default-0/t.py::T", "PASSED")]
+                    ),
+                    _plan(
+                        "/plans/p2", "FAILED", [_test("/default-1/t.py::T", "FAILED")]
+                    ),
+                ],
+            )
+        ]
+
+        rows = build_rows(cols, show_tests=True)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r.plan_label for r in rows}, {"/plans/p1", "/plans/p2"})
+
+    def test_consolidation_sees_the_merged_row(self):
+        """The merge is what makes stage 2 severity-max meaningful here: two
+        arches on one row, PASSED must not mask FAILED."""
+        from enge.compare.engine import build_rows
+
+        rows = build_rows(self._split_phase_columns(), show_tests=True)
+
+        self.assertEqual(rows[0].consolidated, "FAILED")
+        self.assertTrue(rows[0].flaky)
+
+
 class TestUnifiedViewShape(unittest.TestCase):
     """C1: no more mode split -- every row always carries both a
     consolidated verdict and a flaky flag."""
