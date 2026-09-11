@@ -49,6 +49,42 @@ yield one table per `(tier, arch, source, target)` — the old
 consolidation-mode grouping, now reachable via explicit flags rather
 than being the only shape available.
 
+**Test-row identity** (RULING G1, 2026-09-11): a `--show-tests` row is keyed
+on `(plan name, discover-phase-normalized test name)`. tmt prefixes every
+test node ID with the name of the discover phase that produced it, and an
+*unnamed* phase gets the POSITIONAL name `default-<N>`. A plan whose phases
+are guarded by mutually-exclusive `when:` conditions therefore emits the same
+test under a different prefix per arch — the observed case was
+`/default-0/…::TestBasic` on aarch64/s390x/x86_64 and `/default-1/…::TestBasic`
+on ppc64le, from a plan with `when: arch != ppc64le` at phase index 0 and
+`when: arch == ppc64le` at index 1. Keyed verbatim, that split one test into
+two half-empty rows whose `-s/--short` labels rendered identically, giving no
+way to tell them apart. `_strip_discover_phase` removes a leading
+`/default-<N>/` before keying.
+
+Deliberately narrow — only the generated `default-<N>` form is stripped:
+- A **named** phase (`/tests/…`) may carry real meaning and is left alone.
+- A node ID with **no** phase prefix (`/upgrades/…`) must not lose its first
+  real path segment, which a blanket first-segment strip would do.
+- Row identity still includes the plan, so the same node ID under two
+  different plans stays two rows.
+
+**Collision guard**: normalization is applied per plan only when it is
+injective in *every* column (`_normalizable_plans`). Mutually-exclusive
+`when:` guards — the case this exists for — enable one phase per run, so they
+never collide. A plan that genuinely runs the same node ID under two
+concurrently-enabled phases would collapse to one key, and `_build_test_rows`
+resolves a duplicate key by last-match-wins, silently dropping a verdict; such
+a plan keeps verbatim names in all columns instead. An unwanted split row is
+recoverable, a wrong cell is not. Measured at ruling time across 101 local
+results.json caches: zero collisions under either the narrow or the blanket
+rule.
+
+Rendering is unaffected by this rule — `_short_name` keeps only what follows
+`::`, so the displayed label is identical either way; `--long` shows the
+normalized name, since a merged row spans both phases and printing one
+phase's prefix would misattribute it.
+
 **Consolidation policy is TWO-STAGE** (R1, replaces the old single-stage
 PASS-wins-else-latest-wins rule; fence-critical, do not "align" with the
 `results_parser`/`results_cache` Verdict severity-rank table — that table

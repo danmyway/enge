@@ -21,6 +21,12 @@ Grouping contract (C2):
 - `--splitarch` adds arch to the key; `--splitpath` adds (source, target).
   Neither flag folds every (arch, path) coordinate into one per-tier
   table -- the default.
+- Test-row identity (G1) is `(plan name, discover-phase-normalized test
+  name)`: tmt's POSITIONAL `/default-<N>/` prefix is stripped before
+  keying, so a test that arrives from phase 0 on one arch and phase 1 on
+  another (arch-guarded `when:` phases) is ONE row, not two. Named phases
+  and unprefixed node IDs are untouched, and a plan where stripping would
+  collide keeps verbatim names.
 
 Consolidation policy (fence-critical, do not "align" with the
 results_parser/results_cache Verdict severity-rank table -- that table
@@ -52,13 +58,21 @@ off-limits here):
   every row regardless of split flags; never rendered as a column.
 """
 
+import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 ABSENT = "—"  # em dash -- unified absence marker (C3)
 
 _STAGE1_EXCLUDED = {"SKIPPED", "CANCELED"}
 _STAGE2_RANK: Dict[str, int] = {"PASSED": 0, "FAILED": 1, "ERROR": 2}
+
+# tmt prefixes each test's node ID with the name of the discover phase that
+# produced it. Unnamed phases get the POSITIONAL name `default-<N>`, so the
+# same test lands under a different prefix purely because a plan's `when:`
+# guards enabled a different phase index -- see RULING G1 in
+# docs/compare-consolidation.md.
+_DISCOVER_PHASE_RE = re.compile(r"^/default-\d+/")
 
 
 @dataclass(frozen=True)
@@ -146,12 +160,50 @@ def _plan_names(columns: List[ExecutionColumn]) -> List[str]:
     return sorted({plan.name for col in columns for plan in col.plans})
 
 
-def _plan_test_keys(columns: List[ExecutionColumn]) -> List[Tuple[str, str]]:
+def _strip_discover_phase(name: str) -> str:
+    """Drop tmt's positional discover-phase segment from a test node ID
+    (`/default-0/foo.py::Bar` -> `/foo.py::Bar`). Only the generated
+    `default-<N>` form is stripped: a *named* phase (`/tests/...`) may carry
+    real meaning, and a test whose node ID has no phase prefix at all
+    (`/upgrades/...`) must not lose its first real path segment."""
+    return _DISCOVER_PHASE_RE.sub("/", name, count=1)
+
+
+def _normalizable_plans(columns: List[ExecutionColumn]) -> Set[str]:
+    """Plans for which stripping the discover-phase segment is injective in
+    every column (RULING G1 collision guard).
+
+    Mutually-exclusive `when:` guards -- the case this normalization exists
+    for -- can only enable one phase per run, so a plan's tests never collide.
+    A plan that genuinely runs the same test node ID under two concurrently-
+    enabled phases would collide, and `_build_test_rows` resolves a duplicate
+    key by last-match-wins, silently dropping a verdict. Such a plan keeps
+    verbatim names instead: an unwanted split row is recoverable, a wrong
+    cell is not."""
+    all_plans = {plan.name for col in columns for plan in col.plans}
+    unsafe: Set[str] = set()
+    for col in columns:
+        for plan in col.plans:
+            if plan.name in unsafe:
+                continue
+            names = {test.name for test in plan.tests}
+            if len({_strip_discover_phase(name) for name in names}) != len(names):
+                unsafe.add(plan.name)
+    return all_plans - unsafe
+
+
+def _test_key(plan_name: str, test_name: str, normalizable: Set[str]) -> str:
+    return _strip_discover_phase(test_name) if plan_name in normalizable else test_name
+
+
+def _plan_test_keys(
+    columns: List[ExecutionColumn], normalizable: Set[str]
+) -> List[Tuple[str, str]]:
     keys = set()
     for col in columns:
         for plan in col.plans:
             for test in plan.tests:
-                keys.add((plan.name, test.name))
+                keys.add((plan.name, _test_key(plan.name, test.name, normalizable)))
     return sorted(keys)
 
 
@@ -233,7 +285,8 @@ def _build_plan_rows(columns: List[ExecutionColumn]) -> List[RowResult]:
 
 def _build_test_rows(columns: List[ExecutionColumn]) -> List[RowResult]:
     rows = []
-    for plan_name, test_name in _plan_test_keys(columns):
+    normalizable = _normalizable_plans(columns)
+    for plan_name, test_name in _plan_test_keys(columns, normalizable):
         per_column_list = []
         for col in columns:
             verdict = ABSENT
@@ -241,7 +294,7 @@ def _build_test_rows(columns: List[ExecutionColumn]) -> List[RowResult]:
                 if plan.name != plan_name:
                     continue
                 for test in plan.tests:
-                    if test.name == test_name:
+                    if _test_key(plan_name, test.name, normalizable) == test_name:
                         verdict = test.verdict
                 break
             per_column_list.append(verdict)

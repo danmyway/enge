@@ -211,6 +211,11 @@ an agent must not violate before opening that file:
 - **Consolidation is TWO-STAGE** and must not be aligned with
   `results_parser`'s severity-rank table (different purpose, different
   ranking).
+- **Test-row keys strip tmt's positional `/default-<N>/` discover-phase
+  prefix** (RULING G1) so an arch-guarded plan's test is one row, not
+  one per phase index. Named phases (`/tests/…`) and unprefixed node IDs
+  (`/upgrades/…`) are never stripped, and a plan where stripping would
+  collide keeps verbatim names.
 - Read the full doc before touching `compare/engine.py`,
   `compare/loader.py`, or the descriptor-sourcing/artifacts-URL fallback
   rules.
