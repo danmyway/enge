@@ -9,8 +9,9 @@ distributed as an RPM via COPR (Packit builds from `enge.spec`) and pip.
 
 ```bash
 pip install -e .                          # editable install (deps: rich, argcomplete, requests, copr, koji, lxml)
-python -m unittest discover -s tests      # full suite — must stay green
 python -m pytest tests/ -q                # what CI runs; collects the same tests
+PYTHONPATH=src python -m unittest discover -s tests   # full suite — must stay green
+python scripts/check_collector_parity.py  # pytest and unittest must agree
 pre-commit run --all-files                # what the CI lint job runs
 enge --help                               # smoke check after packaging changes
 ```
@@ -278,7 +279,11 @@ Invariants an agent must not violate before opening that file:
   with a reason; new call-arg errors must be fixed, not suppressed. CI runs
   tests under a TZ matrix (UTC + America/Los_Angeles) and a pytest/unittest
   collector-parity guard; invoke tests as `python -m pytest` from the repo
-  root.
+  root. `pythonpath = ["src"]` in `pyproject.toml` makes that resolve to the
+  working tree — without it, a machine with enge also installed system-wide
+  (the COPR RPM) silently tests the installed copy and your edits appear to
+  do nothing. `unittest discover` has no such setting, hence the explicit
+  `PYTHONPATH=src` above.
 - For external review, bundle with both refs:
   `git bundle create <name>.bundle devel <branch>` (the `devel..branch`
   range form creates a thin, uncloneable bundle).

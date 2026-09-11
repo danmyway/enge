@@ -3,10 +3,28 @@
 
 A divergence means pytest-style bare-function tests crept in
 (unittest silently skips them).
+
+Both collectors run against src/ explicitly. pytest picks it up from
+`pythonpath` in pyproject.toml, but `unittest discover` has no equivalent
+setting, so without PYTHONPATH it would import an installed enge (e.g. the
+COPR RPM) while pytest read the working tree -- comparing two different
+codebases and calling it parity.
 """
+import os
+import pathlib
 import re
 import subprocess
 import sys
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+def _env():
+    env = os.environ.copy()
+    src = str(REPO_ROOT / "src")
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = f"{src}{os.pathsep}{existing}" if existing else src
+    return env
 
 
 def pytest_count():
@@ -14,6 +32,8 @@ def pytest_count():
         [sys.executable, "-m", "pytest", "--collect-only", "-q", "tests/"],
         capture_output=True,
         text=True,
+        cwd=REPO_ROOT,
+        env=_env(),
     )
     if result.returncode not in (0, 5):
         print(
@@ -38,6 +58,8 @@ def unittest_count():
         [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
         capture_output=True,
         text=True,
+        cwd=REPO_ROOT,
+        env=_env(),
     )
     if result.returncode != 0:
         print(

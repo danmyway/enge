@@ -40,5 +40,16 @@ where = ["src"]
 [tool.setuptools.package-data]
 "enge.utils" = ["enge_default_config.toml"]
 
+[tool.pytest.ini_options]
+# Test the working tree, never an installed copy. Without this, a bare
+# `python -m pytest` on a machine that also has enge installed system-wide
+# (e.g. the COPR RPM under /usr/lib/pythonX.Y/site-packages) silently imports
+# that copy instead of src/, so edits appear to have no effect and the suite
+# "passes" against the wrong code. CI is unaffected -- it installs editable
+# into a clean runner -- so this only ever bites locally, which is exactly
+# where it is hardest to notice.
+pythonpath = ["src"]
+testpaths = ["tests"]
+
 [tool.black]
 target-version = ["py311"]
