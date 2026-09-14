@@ -78,7 +78,7 @@ def _render_table(table: "engine.ComparisonTable", *, short: bool) -> Table:
             rich_table.add_row(escape(_label(current_plan)), *([""] * blank_padding))
 
         display = _label(row.label)
-        label = display if row.plan_label is None else f"{'*' * 4} {display}"
+        label = display if row.plan_label is None else f"{' ' * 4}{display}"
         cells = [
             colorize(v) if v != engine.ABSENT else engine.ABSENT for v in row.per_column
         ]
