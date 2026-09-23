@@ -2,8 +2,9 @@ import copy
 import json
 import logging
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, Any, Iterable, List
+from typing import Optional, Dict, Any, Iterable, List, Mapping, Sequence, Tuple
 from enge.utils.http_client import http_get
 from rich.table import Table
 from rich.markup import escape
@@ -134,10 +135,40 @@ def _build_parent_request_index(
     }
 
 
+@dataclass(frozen=True)
+class RerunCandidate:
+    """One task the caller has already decided to rerun, and how.
+
+    plans: verbatim tmt plan names (no trailing '$'). Empty tuple means
+        "fallback shape": rerun with the task's original filter, exactly
+        as qualify_results()' fallback sweep would.
+    tests_by_plan: verbatim last-'::'-segment test names per plan (no
+        trailing '$'); a plan absent or mapped to () gets no test filter.
+    undefined_plans: plans to rerun plan-only in a second payload (the
+        UNDEFINED-plan path of build_rerun_payloads).
+    source_compose: the compose to report in the qualifying table /
+        processed tuple; may be None.
+    source_path: the archive path the task was resolved from; may be None.
+    """
+
+    task_id: str
+    plans: Tuple[str, ...] = ()
+    tests_by_plan: Mapping[str, Tuple[str, ...]] = field(default_factory=dict)
+    undefined_plans: Tuple[str, ...] = ()
+    source_compose: Optional[str] = None
+    source_path: Optional[str] = None
+
+
 class RerunJobs:
     """
     A class to handle the identification, filtering, and re-submission of tasks for re-run based on results
     obtained from the Testing Farm API.
+
+    Two construction modes. Without `candidates` this is the CLI path: task
+    URLs come from parse_tasks_with_map() and qualify_results() decides what
+    to rerun by parsing xunit. With `candidates` the caller has already
+    decided, and qualify_candidates() registers that set verbatim. The two
+    are mutually exclusive -- calling the wrong qualifier raises RuntimeError.
 
     Attributes:
         rerun_payloads (list): A list to store payloads prepared for re-running tasks.
@@ -148,23 +179,133 @@ class RerunJobs:
         task_source (str): The source from which tasks were retrieved.
     """
 
-    def __init__(self, ctx: AppContext):
+    def __init__(
+        self,
+        ctx: AppContext,
+        *,
+        candidates: Optional[Sequence[RerunCandidate]] = None,
+        task_source: Optional[Any] = None,
+    ):
         self.ctx = ctx
         self.rerun_payloads = []
         self.parsed_dict = {}
         self.processed_data = {}
         self.rerun_uuids = []
+        self._candidates: Optional[Tuple[RerunCandidate, ...]] = None
 
-        # Retrieve task URLs and their source from the report module
-        self.req_url_list, self.task_source, self.uuid_source_map = (
-            parse_tasks_with_map(ctx)
+        if candidates is None:
+            if task_source is not None:
+                raise ValueError(
+                    "task_source is only accepted alongside candidates; on the "
+                    "CLI path it is resolved by parse_tasks_with_map()"
+                )
+            # Retrieve task URLs and their source from the report module
+            self.req_url_list, self.task_source, self.uuid_source_map = (
+                parse_tasks_with_map(ctx)
+            )
+            return
+
+        # Caller-supplied set: no task resolution, no result parsing.
+        self._candidates = tuple(candidates)
+        self.req_url_list = [
+            os.path.join(
+                str(ctx.testing_farm_endpoint.api_endpoint_url), candidate.task_id
+            )
+            for candidate in self._candidates
+        ]
+        self.task_source = task_source
+        self.uuid_source_map = {
+            candidate.task_id: candidate.source_path for candidate in self._candidates
+        }
+
+    def _register(
+        self,
+        task_id: str,
+        *,
+        plans: Sequence[str],
+        tests_by_plan: Mapping[str, Sequence[str]],
+        undefined_plans: Sequence[str],
+        source_compose: Optional[str],
+        source_path: Optional[str],
+    ) -> None:
+        """
+        Record one qualifying task in processed_data and rerun_uuids.
+
+        Both qualifying paths funnel through here so the 5-tuple layout has a
+        single author. An empty `plans` registers the fallback shape, i.e.
+        rerun the task under its original filter.
+        """
+        if not plans:
+            self.processed_data[task_id] = (
+                None,  # No suite names
+                None,  # No compose
+                None,  # No mapping
+                None,  # No undefined filters
+                source_path,
+            )
+            self.rerun_uuids.append(task_id)
+            return
+
+        # Suffix the suite name with $ to indicate that it is an end of a string match
+        suite_names = "|".join(plan + "$" for plan in plans)
+        # Every kept plan gets an entry even when it has no failed tests;
+        # build_rerun_payloads reads the values, not the key set, so the
+        # empty lists are harmless -- but dropping them would change the
+        # tuple the CLI path has always produced.
+        suite_test_mapping = {
+            plan: [test + "$" for test in tests_by_plan.get(plan, ())] for plan in plans
+        }
+        self.processed_data[task_id] = (
+            suite_names,
+            source_compose,
+            suite_test_mapping,
+            _unique_preserve(plan + "$" for plan in undefined_plans),
+            source_path,
         )
+        self.rerun_uuids.append(task_id)
+
+    def qualify_candidates(self) -> None:
+        """
+        Register a caller-supplied rerun set verbatim.
+
+        Unlike qualify_results() this parses nothing, reads no CLI flags and
+        sweeps in no extra tasks: the caller has already decided, and the
+        decision is recorded as given.
+        """
+        if self._candidates is None:
+            raise RuntimeError(
+                "qualify_candidates() requires candidates; use qualify_results() "
+                "on the CLI path"
+            )
+
+        for candidate in self._candidates:
+            logger.info(
+                "Rerun candidate %s: plans=%s tests=%s undefined=%s",
+                candidate.task_id,
+                candidate.plans,
+                candidate.tests_by_plan,
+                candidate.undefined_plans,
+            )
+            self._register(
+                candidate.task_id,
+                plans=candidate.plans,
+                tests_by_plan=candidate.tests_by_plan,
+                undefined_plans=candidate.undefined_plans,
+                source_compose=candidate.source_compose,
+                source_path=candidate.source_path,
+            )
 
     def qualify_results(self):
         """
         Parse the task results, filter them based on specified CLI arguments (e.g., 'ERROR' or 'FAILED'),
         and prepare the data for re-run.
         """
+        if self._candidates is not None:
+            raise RuntimeError(
+                "qualify_results() is the CLI path; use qualify_candidates() "
+                "when candidates were supplied"
+            )
+
         logger.info(
             "Looking for tasks from the requested sources, this may take a while."
         )
@@ -191,9 +332,9 @@ class RerunJobs:
                 result_filter.append("ERROR")
 
             # Filter test suites based on the result filter and collect failed tests per suite
-            filtered_suites = []
-            suite_test_mapping = {}  # Map suite name to list of failed test names
-            undefined_suites = []  # Plans with UNDEFINED result and no failed tests
+            plans = []  # Names of the suites that survived the result filter
+            tests_by_plan = {}  # Map suite name to list of failed test names
+            undefined_plans = []  # Plans with UNDEFINED result and no failed tests
 
             for suite in details["testsuites"]:
                 # Skip suites that don't match result filter
@@ -205,14 +346,15 @@ class RerunJobs:
                 for testcase in suite.get("testcases", []):
                     # Collect testcase names that failed/errored (not skipped or passed)
                     if testcase["testcase_result"] not in ["SKIPPED", "PASSED"]:
-                        # Split on '::' and take the last part, then suffix with $
-                        test_name = testcase["testcase_name"].split("::")[-1] + "$"
-                        failed_test_names.append(test_name)
+                        # Split on '::' and take the last part; _register suffixes
+                        failed_test_names.append(
+                            testcase["testcase_name"].split("::")[-1]
+                        )
 
                 # Store mapping of suite to its failed tests
                 suite_name = suite["testsuite_name"]
-                suite_test_mapping[suite_name] = failed_test_names
-                filtered_suites.append(suite)
+                tests_by_plan[suite_name] = failed_test_names
+                plans.append(suite_name)
 
                 # Track UNDEFINED plans without testcase data so that we can
                 # rerun them separately without a restrictive test filter.
@@ -220,23 +362,18 @@ class RerunJobs:
                     suite.get("testsuite_result") == "UNDEFINED"
                     and not failed_test_names
                 ):
-                    undefined_suites.append(f"{suite_name}$")
+                    undefined_plans.append(suite_name)
 
             # Process and store data for filtered test suites
-            if filtered_suites:
-                # Suffix the suite name with $ to indicate that it is an end of a string match
-                suite_names = "|".join(
-                    suite["testsuite_name"] + "$" for suite in filtered_suites
+            if plans:
+                self._register(
+                    key,
+                    plans=plans,
+                    tests_by_plan=tests_by_plan,
+                    undefined_plans=undefined_plans,
+                    source_compose=details["source_compose"],
+                    source_path=self.uuid_source_map.get(key),
                 )
-                # Store suite names, compose, and suite-to-tests mapping
-                self.processed_data[key] = (
-                    suite_names,
-                    details["source_compose"],
-                    suite_test_mapping,
-                    _unique_preserve(undefined_suites),
-                    self.uuid_source_map.get(key),
-                )
-                self.rerun_uuids.append(key)
 
         # Identify tasks that were not parsed (Error, No XML, Canceled, etc.)
         for req_url in self.req_url_list:
@@ -248,14 +385,15 @@ class RerunJobs:
                 logger.debug(
                     f"Task {uuid} missing from parsed results, adding as fallback candidate."
                 )
-                self.processed_data[uuid] = (
-                    None,  # No suite names
-                    None,  # No compose
-                    None,  # No mapping
-                    None,  # No undefined filters
-                    self.uuid_source_map.get(uuid) or self.uuid_source_map.get(req_url),
+                self._register(
+                    uuid,
+                    plans=(),
+                    tests_by_plan={},
+                    undefined_plans=(),
+                    source_compose=None,
+                    source_path=self.uuid_source_map.get(uuid)
+                    or self.uuid_source_map.get(req_url),
                 )
-                self.rerun_uuids.append(uuid)
 
         # Log and display qualifying plans for a re-run
         if self.processed_data:
