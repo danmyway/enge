@@ -67,7 +67,11 @@ from enge.compare.engine import ExecutionColumn
 from enge.utils.errors import ValidationError
 from enge.utils.globals import ExitCode
 from enge.utils.manifest_resolution import resolve_manifests_for_invocation
-from enge.utils.results_parser import parse_results_json
+from enge.utils.results_parser import (
+    ResultsJsonSchema,
+    read_raw_results_json,
+    stale_task_keys,
+)
 from enge.utils.state_paths import results_dir
 
 if TYPE_CHECKING:
@@ -76,6 +80,31 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 _MIN_COLUMNS = 1
+
+
+def _warn_on_stale_caches(stale_run_ids: List[str], selected: int) -> None:
+    """One WARNING for the whole invocation, never one per run.
+
+    Compare cannot repair a stale cache -- it is a read-only consumer of
+    results.json -- but staying silent about one leaves the user comparing
+    columns whose blanks are an artifact of the cache's age rather than of
+    the run. Point at the report-side repair and stop there.
+
+    The staleness predicate is deliberately restated here rather than
+    imported from `report/results_cache.py`: compare never depends on the
+    writer. See tests/test_compare_loader.py and tests/test_results_refresh.py
+    for the two halves of the same rule.
+    """
+    if not stale_run_ids:
+        return
+    LOGGER.warning(
+        "compare: %d of %d selected run(s) were cached by an older enge "
+        "version (e.g. %s); refresh them with 'enge report "
+        "<same selectors> --refresh'",
+        len(stale_run_ids),
+        selected,
+        stale_run_ids[0],
+    )
 
 
 def load_columns(
@@ -118,6 +147,7 @@ def load_columns(
     output_dir = results_dir(ctx.config)
 
     columns: List[ExecutionColumn] = []
+    stale_run_ids: List[str] = []
     for manifest in manifests:
         run_id = manifest["run_id"]
         results_path = output_dir / f"{run_id}.json"
@@ -130,7 +160,13 @@ def load_columns(
             )
             continue
         try:
-            schema = parse_results_json(results_path)
+            # The raw dict is read alongside the parsed schema, not instead
+            # of it: `TaskEntry.from_dict` reads every optional key through
+            # `.get()`, so by the time a key reaches `schema` an absent one
+            # is indistinguishable from an explicit null. Staleness can only
+            # be seen before that.
+            raw = read_raw_results_json(results_path)
+            schema = ResultsJsonSchema.from_dict(raw)
         except ValidationError:
             LOGGER.error(
                 "compare: results cache for run %s is corrupted; "
@@ -139,6 +175,14 @@ def load_columns(
                 run_id,
             )
             continue
+
+        # Unfinalized caches are excluded: `--refresh` refuses them (their
+        # gap-fill path is still live), so advertising the flag for one
+        # would be wrong advice.
+        if raw.get("verdict") is not None and any(
+            stale_task_keys(entry) for entry in raw.get("results") or []
+        ):
+            stale_run_ids.append(run_id)
 
         is_single_set = len({t.set for t in schema.results}) <= 1
 
@@ -175,6 +219,10 @@ def load_columns(
                     artifacts_url=artifacts_url,
                 )
             )
+
+    # Emitted before the comparability floor: a run whose cache is too old
+    # to yield a column is exactly the case the user most needs told.
+    _warn_on_stale_caches(stale_run_ids, len(manifests))
 
     if len(columns) < _MIN_COLUMNS:
         return [], ExitCode.CONFIG_ERROR
