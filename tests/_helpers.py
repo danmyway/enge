@@ -1,7 +1,43 @@
+import contextlib
+import logging
 from types import SimpleNamespace
 
 from enge.utils.app_context import AppContext
 from enge.utils.opt_manager import TestingFarmEndpoint
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.messages = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
+@contextlib.contextmanager
+def captured_logs(logger_name, level=logging.DEBUG):
+    """Record every message a logger emits, including none at all.
+
+    unittest's assertLogs() FAILS when no record is emitted, which makes it
+    unusable for asserting that a particular WARNING did *not* fire -- the
+    code paths under test routinely emit other, unrelated records, or none.
+    """
+    logger = logging.getLogger(logger_name)
+    handler = _ListHandler()
+    previous_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(level)
+    try:
+        yield handler.messages
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+
+
+def matching(messages, needle):
+    """The recorded messages containing `needle`."""
+    return [m for m in messages if needle in m]
 
 
 def make_app_context(

@@ -437,7 +437,7 @@ class TestReportResultsCacheWiring(unittest.TestCase):
         ):
             rm.main(ctx)
 
-        mock_cache.assert_called_once_with(ctx, sentinel_task_results)
+        mock_cache.assert_called_once_with(ctx, sentinel_task_results, refresh=False)
 
     def test_cache_writer_exception_does_not_break_report_output(self):
         import enge.report.__main__ as rm
