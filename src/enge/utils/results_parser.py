@@ -1,10 +1,10 @@
 import json
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union
 
 from enge.utils.errors import AlreadyFinalizedError, ConflictError, ValidationError
 
@@ -394,6 +394,26 @@ class TaskEntry:
         )
 
 
+# Every key `TaskEntry.to_dict` emits, in emission order. Derived from the
+# dataclass rather than hand-listed, so a field added to TaskEntry cannot be
+# forgotten here -- but to_dict is a hand-written literal, so the parity is
+# also pinned by a test (G1) rather than merely assumed.
+TASK_ENTRY_KEYS: Tuple[str, ...] = tuple(f.name for f in fields(TaskEntry))
+
+
+def stale_task_keys(raw_task: Mapping[str, Any]) -> FrozenSet[str]:
+    """The keys the current writer always emits that `raw_task` is missing.
+
+    Takes the RAW parsed JSON dict, never a `TaskEntry`: parsing erases
+    absence (`from_dict` reads the nine optional keys through `.get()` and
+    stores `None` either way), so a `TaskEntry` can never report staleness.
+
+    Absence only. A key present with a `null` value was written by a
+    current writer that had nothing to record -- that is data, not drift.
+    """
+    return frozenset(TASK_ENTRY_KEYS) - set(raw_task)
+
+
 def _validate_task_plans_arity(
     verdict: str, plans: List[PlanEntry], *, context: str
 ) -> None:
@@ -509,6 +529,23 @@ def parse_results_json(path: Union[str, Path]) -> ResultsJsonSchema:
     except json.JSONDecodeError as exc:
         raise ValidationError(f"{path}: not valid JSON: {exc}") from exc
     return ResultsJsonSchema.from_dict(data)
+
+
+def read_raw_results_json(path: Union[str, Path]) -> Dict[str, Any]:
+    """Validate a results.json file and return its RAW parsed dict.
+
+    Same read and same `ValidationError` as `parse_results_json` -- only the
+    return value differs. Callers that must tell an ABSENT key from a null
+    one (staleness detection, the refresh merge) cannot use the dataclass
+    view, which collapses the two into `None`.
+    """
+    text = Path(path).read_text()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValidationError(f"{path}: not valid JSON: {exc}") from exc
+    ResultsJsonSchema.from_dict(data)
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +703,66 @@ def finalize_root_verdict(path: Union[str, Path], expected_count: int) -> Option
 
     derived = _derive_root_verdict([task.verdict for task in schema.results])
     updated = replace(schema, verdict=derived)
+    _atomic_write_json(path, updated.to_dict())
+    return derived
+
+
+def rewrite_finalized_results(
+    path: Union[str, Path], entries: Sequence[TaskEntry]
+) -> str:
+    """Replace a FINALIZED file's task entries and re-derive its root verdict.
+
+    The only sanctioned write to a finalized results.json and the only
+    exception to the write-once rule -- see the "Refresh" section of
+    docs/results-json-schema.md. Reached exclusively from
+    `enge report --refresh`.
+
+    Policy-free by design: the caller decides what each entry should
+    contain (`report/results_cache.py` applies guards G2-G4 before calling
+    here). This function enforces only that a rewrite cannot change WHICH
+    tasks a run has.
+
+    Preconditions, each a `ValidationError` with nothing written:
+
+    - the file is finalized (non-null root verdict) -- an unfinalized file
+      is still gap-fillable through `upsert_task_result` and must go that
+      way instead;
+    - `entries` carries exactly the file's recorded task_id set: no
+      additions, no drops, no duplicates.
+
+    Every envelope field except `verdict` is left untouched; the verdict is
+    re-derived from the replacement entries by `_derive_root_verdict`.
+    Returns that newly derived verdict.
+    """
+    path = Path(path)
+    schema = parse_results_json(path)
+
+    if schema.verdict is None:
+        raise ValidationError(
+            f"{path}: results.json is not finalized (root verdict is null); "
+            "only a finalized file may be rewritten"
+        )
+
+    new_ids = [entry.task_id for entry in entries]
+    duplicates = sorted({task_id for task_id in new_ids if new_ids.count(task_id) > 1})
+    if duplicates:
+        raise ValidationError(
+            f"{path}: duplicate task_id(s) {duplicates} among the "
+            "replacement entries; refusing to rewrite"
+        )
+
+    recorded_ids = {task.task_id for task in schema.results}
+    if set(new_ids) != recorded_ids:
+        added = sorted(set(new_ids) - recorded_ids)
+        dropped = sorted(recorded_ids - set(new_ids))
+        raise ValidationError(
+            f"{path}: replacement entries do not match the recorded task set "
+            f"(added={added}, dropped={dropped}); a rewrite may change what a "
+            "task recorded, never which tasks a run has"
+        )
+
+    derived = _derive_root_verdict([entry.verdict for entry in entries])
+    updated = replace(schema, results=list(entries), verdict=derived)
     _atomic_write_json(path, updated.to_dict())
     return derived
 
