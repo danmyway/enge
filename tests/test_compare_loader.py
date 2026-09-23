@@ -98,6 +98,15 @@ def _write_results_json(
 
 
 def _task_entry(task_id, **overrides):
+    """A task entry carrying all nineteen keys the current writer emits.
+
+    The nine optional keys are spelled out as explicit nulls rather than
+    left absent: `TaskEntry.from_dict` reads them through `.get()`, so the
+    parsed shape is identical either way -- but the staleness predicate
+    (`stale_task_keys`) works on the RAW dict, where absence is exactly
+    what marks a cache as written by an older enge version. A test that
+    wants a stale entry pops the key it cares about.
+    """
     base = {
         "task_id": task_id,
         "set": "setA",
@@ -117,6 +126,15 @@ def _task_entry(task_id, **overrides):
                 ],
             }
         ],
+        "source": None,
+        "target": None,
+        "git_ref": None,
+        "event": None,
+        "build_ids": [],
+        "rerun_of": None,
+        "artifacts_url": None,
+        "plan": None,
+        "plan_filter": None,
     }
     base.update(overrides)
     return base
