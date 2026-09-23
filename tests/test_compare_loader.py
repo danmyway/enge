@@ -31,7 +31,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests._helpers import make_app_context
+from tests._helpers import captured_logs, make_app_context, matching
 from enge.utils.globals import ExitCode
 
 
@@ -605,6 +605,121 @@ class TestManifestSchemaIndependence(unittest.TestCase):
         for col in columns:
             self.assertIsNone(col.source)
             self.assertIsNone(col.target)
+
+
+class TestCompareStalenessWarning(unittest.TestCase):
+    """Compare is a read-only consumer of results.json, so it cannot repair
+    a stale cache -- but it must not stay silent about one either. One
+    aggregated WARNING per invocation (never one per run) points at the
+    report-side repair path. See tests/test_results_refresh.py for the
+    report-side half of the same rule."""
+
+    NEEDLE = "were cached by an older enge version"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.runs_dir = Path(self.tmp.name) / "runs"
+        self.results_dir = Path(self.tmp.name) / "results"
+
+    def _ctx(self):
+        return make_app_context(
+            action="compare",
+            extra_cli={
+                "run": None,
+                "filter_set": ["setA"],
+                "filter_tier": None,
+                "filter_arch": None,
+                "filter_tag": None,
+            },
+            extra_config={"common": {"results_dir": str(self.results_dir)}},
+            manifest_runs_dir=str(self.runs_dir),
+        )
+
+    def _three_runs(self, stale_run_ids):
+        run_ids = ["run1", "run2", "run3"]
+        for run_id in run_ids:
+            _write_manifest(
+                self.runs_dir, run_id, [_request("t1")], context={"set": "setA"}
+            )
+            entry = _task_entry("t1")
+            if run_id in stale_run_ids:
+                entry.pop("artifacts_url", None)
+            _write_results_json(self.results_dir, run_id, tasks=[entry])
+        return run_ids
+
+    def _load(self):
+        from enge.compare.loader import load_columns
+
+        ctx = self._ctx()
+        with captured_logs("enge.compare.loader") as messages:
+            load_columns(ctx)
+        return ctx, messages
+
+    def test_one_warning_for_two_stale_runs_of_three(self):
+        from enge.utils.manifest_resolution import resolve_manifests_for_invocation
+
+        stale = {"run1", "run3"}
+        self._three_runs(stale)
+
+        ctx, messages = self._load()
+
+        hits = matching(messages, self.NEEDLE)
+        self.assertEqual(len(hits), 1, messages)
+        self.assertTrue(hits[0].startswith("compare:"), hits[0])
+        self.assertIn("2 of 3 selected run(s)", hits[0])
+        self.assertIn("--refresh", hits[0])
+
+        first_stale = next(
+            m["run_id"]
+            for m in resolve_manifests_for_invocation(ctx)
+            if m["run_id"] in stale
+        )
+        self.assertIn(first_stale, hits[0])
+
+    def test_no_warning_when_no_run_is_stale(self):
+        self._three_runs(set())
+
+        _ctx, messages = self._load()
+
+        self.assertEqual(matching(messages, self.NEEDLE), [])
+
+    def test_a_run_with_no_cache_is_counted_but_never_stale(self):
+        """A missing cache already has its own ERROR naming the fix command;
+        it must not also inflate the staleness count."""
+        _write_manifest(
+            self.runs_dir, "run1", [_request("t1")], context={"set": "setA"}
+        )
+        _write_manifest(
+            self.runs_dir, "run2", [_request("t2")], context={"set": "setA"}
+        )
+        stale_entry = _task_entry("t1")
+        stale_entry.pop("artifacts_url", None)
+        _write_results_json(self.results_dir, "run1", tasks=[stale_entry])
+
+        _ctx, messages = self._load()
+
+        hits = matching(messages, self.NEEDLE)
+        self.assertEqual(len(hits), 1, messages)
+        self.assertIn("1 of 2 selected run(s)", hits[0])
+
+    def test_unfinalized_cache_is_never_reported_as_stale(self):
+        """`--refresh` refuses an unfinalized file, so advertising it for
+        one would be wrong advice."""
+        _write_manifest(
+            self.runs_dir, "run1", [_request("t1")], context={"set": "setA"}
+        )
+        entry = _task_entry("t1")
+        entry.pop("artifacts_url", None)
+        _write_results_json(self.results_dir, "run1", tasks=[entry])
+        path = self.results_dir / "run1.json"
+        payload = json.loads(path.read_text())
+        payload["verdict"] = None
+        path.write_text(json.dumps(payload))
+
+        _ctx, messages = self._load()
+
+        self.assertEqual(matching(messages, self.NEEDLE), [])
 
 
 if __name__ == "__main__":
