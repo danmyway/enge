@@ -12,8 +12,10 @@ from enge.report import results_cache
 from enge.utils import parse_date_arg
 from enge.utils.app_context import AppContext
 from enge.utils.console import console
+from enge.utils.errors import ValidationError
 from enge.utils.globals import ExitCode
 from enge.utils.manifest import ManifestReader
+from enge.utils.manifest_resolution import resolve_manifests_for_invocation
 from enge.utils.task_resolver import parse_tasks, parse_tasks_with_map  # noqa: F401
 
 LOGGER = logging.getLogger(__name__)
@@ -309,7 +311,39 @@ def _handle_compare_alias(ctx: AppContext) -> int:
     return compare_main(ctx)
 
 
+def _validate_refresh(ctx: AppContext) -> None:
+    """`--refresh` repairs a run's cached results, so it needs a run.
+
+    Rejected before anything is fetched: the flag is useless for an
+    invocation with no resolvable run_id (raw task input), and meaningless
+    for one that never reaches the cache writer at all (--list renders the
+    manifest store; --compare delegates to a read-only subcommand). Failing
+    here rather than silently ignoring the flag is the difference between
+    the user learning their repair did not happen and not learning it.
+    """
+    if not getattr(ctx.cli_args, "refresh", False):
+        return
+
+    for flag, attr in (("--list", "list"), ("--compare", "compare")):
+        if getattr(ctx.cli_args, attr, False):
+            raise ValidationError(
+                f"--refresh cannot be combined with {flag}; repair the "
+                "run(s) first with 'enge report --run <run_id> --refresh'"
+            )
+
+    if not resolve_manifests_for_invocation(ctx):
+        raise ValidationError(
+            "--refresh needs a manifest-backed run to repair, but this "
+            "invocation resolves to none; raw task input (-i/--input, "
+            "-f/--file) has no run_id and therefore no cached results. "
+            "Select the run instead, e.g. "
+            "'enge report --run <run_id> --refresh'"
+        )
+
+
 def main(ctx: AppContext, result_table=None):
+    _validate_refresh(ctx)
+
     if getattr(ctx.cli_args, "list", False):
         return _handle_list(ctx)
 
@@ -332,7 +366,11 @@ def main(ctx: AppContext, result_table=None):
 
         if task_results:
             try:
-                results_cache.cache_report_results(ctx, task_results)
+                results_cache.cache_report_results(
+                    ctx,
+                    task_results,
+                    refresh=getattr(ctx.cli_args, "refresh", False),
+                )
             except Exception:  # noqa: BLE001
                 # Never let caching fail the report command -- caching is
                 # a side effect of reporting, never a gate on it.

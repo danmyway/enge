@@ -29,9 +29,14 @@ from enge.utils.manifest_resolution import (
     resolve_manifests_for_invocation as _resolve_manifests_for_report,
 )
 from enge.utils.results_parser import (
+    TASK_ENTRY_KEYS,
     XUNIT_RESULT_MAP,
+    TaskEntry,
     finalize_root_verdict,
     init_results_json,
+    read_raw_results_json,
+    rewrite_finalized_results,
+    stale_task_keys,
     upsert_task_result,
     write_xunit,
 )
@@ -235,16 +240,255 @@ def _build_task_entry(
     }
 
 
+# ---------------------------------------------------------------------------
+# Refresh (`enge report --refresh`).
+#
+# A finalized results.json is immutable through the gap-fill API, which is
+# what makes two defects permanent: a task harvested before TF published
+# its xunit stays ERROR + [] forever, and a cache written by an older enge
+# version keeps whatever key set that version emitted. Refresh is the one
+# sanctioned repair, and every guard below exists to keep it from becoming
+# a way to lose data. See docs/results-json-schema.md, "Refresh".
+# ---------------------------------------------------------------------------
+
+# The three keys the content gate (G3) governs. Everything else on a task
+# entry is metadata and is fill-only (G4).
+_CONTENT_KEYS = ("verdict", "plans", "total_duration_seconds")
+
+# Distinguishes "key absent" from "key present and null" while merging --
+# `None` cannot, and the difference is the whole point of the raw read.
+_ABSENT = object()
+
+
+def _is_finalized(results_path: Path) -> bool:
+    """True when the file exists, parses, and carries a non-null root
+    verdict. A parse failure is not a refresh opportunity: the normal path
+    already logs it, and rewriting a file we cannot read is not a repair."""
+    try:
+        return read_raw_results_json(results_path).get("verdict") is not None
+    except (ValidationError, OSError):
+        return False
+
+
+def _merge_refreshed_entry(
+    cached: Dict[str, Any], fresh: Dict[str, Any]
+) -> Tuple[Dict[str, Any], bool, bool]:
+    """Merge one cached entry with its fresh harvest under G3 and G4.
+
+    Returns (merged, recovered, filled).
+
+    G3 (content gate): `verdict`/`plans`/`total_duration_seconds` come from
+    `fresh` if and only if the cached entry is the recoverable ERROR + []
+    shape. `CANCELED` + [] is a legitimate terminal state (a dispatch-level
+    cancel has no results to publish, ever) and is never replaced; neither
+    is any entry that already recorded plans.
+
+    G4 (fill-only): every other key except `task_id` is taken from `fresh`
+    only where the cached entry has nothing -- absent, null, or (for
+    `build_ids` alone, whose empty state is `[]` rather than null) empty. A
+    populated cached value wins even when `fresh` disagrees: the cache is
+    the historical record of what dispatch knew, and a later harvest does
+    not get to rewrite it.
+    """
+    merged = dict(cached)
+
+    recovered = False
+    if cached.get("verdict") == "ERROR" and cached.get("plans") == []:
+        for key in _CONTENT_KEYS:
+            merged[key] = fresh[key]
+        recovered = any(merged[key] != cached.get(key) for key in _CONTENT_KEYS)
+
+    filled = False
+    for key in TASK_ENTRY_KEYS:
+        if key == "task_id" or key in _CONTENT_KEYS:
+            continue
+        current = cached.get(key, _ABSENT)
+        is_empty = (
+            current is _ABSENT
+            or current is None
+            or (key == "build_ids" and current == [])
+        )
+        if not is_empty:
+            continue
+        merged[key] = fresh.get(key)
+        if merged[key] != (None if current is _ABSENT else current):
+            filled = True
+
+    return merged, recovered, filled
+
+
+def _refresh_one_run(
+    manifest: Dict[str, Any],
+    matched_task_results: List[Tuple[Any, Dict[str, Any]]],
+    output_dir: Path,
+    results_path: Path,
+) -> None:
+    """Repair one finalized run in place. Guards G2-G4; the write itself
+    goes through `rewrite_finalized_results`, which enforces that the task
+    set cannot change."""
+    run_id = manifest["run_id"]
+    context = manifest.get("context") or {}
+    request_sets = {r.get("set") for r in manifest.get("requests", [])}
+    is_single_set = len(request_sets) <= 1
+
+    raw = read_raw_results_json(results_path)
+    cached_entries = raw.get("results") or []
+    old_verdict = raw.get("verdict")
+
+    available = {
+        task_result.request_uuid: (task_result, request_meta)
+        for task_result, request_meta in matched_task_results
+    }
+
+    # G2 (completeness). Refreshing from a partial invocation would mean
+    # either inventing content for the tasks this run did not harvest or
+    # dropping them from the file; both are data loss, so the run is left
+    # exactly as it was.
+    missing = [e["task_id"] for e in cached_entries if e["task_id"] not in available]
+    if missing:
+        LOGGER.warning(
+            "results cache: cannot refresh run %s: %d of %d cached task(s) "
+            "not available in this invocation; run is unchanged",
+            run_id,
+            len(missing),
+            len(cached_entries),
+        )
+        return
+
+    merged_entries = []
+    recovered_ids = []
+    filled_count = 0
+    for cached in cached_entries:
+        task_id = cached["task_id"]
+        task_result, request_meta = available[task_id]
+        fresh = _build_task_entry(
+            task_result,
+            request_meta,
+            context=context,
+            is_single_set=is_single_set,
+            run_id=run_id,
+        )
+        merged, recovered, filled = _merge_refreshed_entry(cached, fresh)
+        # The merge happens on raw dicts and only then becomes a TaskEntry
+        # (G5): from_dict turns an absent key into None, so merging after
+        # the round-trip would "repair" a stale cache into a schema-current
+        # and permanently empty one.
+        merged_entries.append(TaskEntry.from_dict(merged))
+        if recovered:
+            recovered_ids.append(task_id)
+        if filled:
+            filled_count += 1
+
+    new_verdict = rewrite_finalized_results(results_path, merged_entries)
+
+    for task_id in recovered_ids:
+        xunit_bytes = getattr(available[task_id][0], "xunit_bytes", None)
+        if xunit_bytes:
+            try:
+                write_xunit(run_id, task_id, xunit_bytes, output_dir)
+            except ConflictError:
+                LOGGER.warning(
+                    "results cache: conflicting cached xunit for task %s in "
+                    "run %s; keeping the existing file",
+                    task_id,
+                    run_id,
+                )
+
+    LOGGER.info(
+        "results cache: refreshed run %s: %d task(s) recovered, %d task(s) "
+        "had metadata filled; root verdict %s -> %s",
+        run_id,
+        len(recovered_ids),
+        filled_count,
+        old_verdict,
+        new_verdict,
+    )
+
+
+def _warn_on_empty_error_entries(results_path: Path, run_id: str) -> None:
+    """Surface finalized ERROR + [] entries once per run.
+
+    This used to be a per-task DEBUG line and nothing else, which is how a
+    real run kept a PASSED task recorded as ERROR without anyone noticing.
+    Some of these are genuine -- TF never published an xunit and never will
+    -- so the WARNING recurs on every report of such a run. That is the
+    ratified trade (Q11-1): visibility over silence.
+    """
+    try:
+        raw = read_raw_results_json(results_path)
+    except (ValidationError, OSError):
+        return
+    if raw.get("verdict") is None:
+        # Still gap-fillable through the normal path; --refresh does not
+        # apply to it, so advertising the flag would be wrong advice.
+        return
+    count = sum(
+        1
+        for entry in raw.get("results") or []
+        if entry.get("verdict") == "ERROR" and entry.get("plans") == []
+    )
+    if not count:
+        return
+    LOGGER.warning(
+        "results cache: run %s has %d task(s) with no test results recorded; "
+        "if Testing Farm has since published them, recover with "
+        "'enge report --run %s --refresh'",
+        run_id,
+        count,
+        run_id,
+    )
+
+
+def _warn_on_stale_caches(manifests: List[Dict[str, Any]], output_dir: Path) -> None:
+    """One WARNING for the whole invocation, never one per run: a user who
+    selected thirty runs with an old cache wants a pointer to the fix, not
+    thirty copies of it."""
+    stale = [
+        manifest["run_id"]
+        for manifest in manifests
+        if _has_stale_entries(output_dir / f"{manifest['run_id']}.json")
+    ]
+    if not stale:
+        return
+    LOGGER.warning(
+        "results cache: %d of %d selected run(s) were cached by an older "
+        "enge version (e.g. %s); refresh them with 'enge report "
+        "<same selectors> --refresh'",
+        len(stale),
+        len(manifests),
+        stale[0],
+    )
+
+
+def _has_stale_entries(results_path: Path) -> bool:
+    """True when the file is a FINALIZED cache holding at least one entry
+    that predates the current key set. Unfinalized files are excluded for
+    the same reason as above: --refresh refuses them."""
+    try:
+        raw = read_raw_results_json(results_path)
+    except (ValidationError, OSError):
+        return False
+    if raw.get("verdict") is None:
+        return False
+    return any(stale_task_keys(entry) for entry in raw.get("results") or [])
+
+
 def _cache_one_run(
     manifest: Dict[str, Any],
     matched_task_results: List[Tuple[Any, Dict[str, Any]]],
     output_dir: Path,
+    *,
+    refresh: bool = False,
 ) -> None:
     run_id = manifest["run_id"]
     results_path = output_dir / f"{run_id}.json"
     context = manifest.get("context") or {}
     request_sets = {r.get("set") for r in manifest.get("requests", [])}
     is_single_set = len(request_sets) <= 1
+
+    if refresh and _is_finalized(results_path):
+        _refresh_one_run(manifest, matched_task_results, output_dir, results_path)
+        return
 
     if not results_path.exists():
         # Root envelope keeps only things relevant to the whole run as a
@@ -321,13 +565,25 @@ def _cache_one_run(
             run_id,
         )
 
+    if not refresh:
+        _warn_on_empty_error_entries(results_path, run_id)
 
-def cache_report_results(ctx: "AppContext", task_results: List[Any]) -> None:
+
+def cache_report_results(
+    ctx: "AppContext", task_results: List[Any], *, refresh: bool = False
+) -> None:
     """Gap-fill results.json + xunit for every manifest matched by this
     report invocation. No-op for raw-input invocations. Never raises: a
     caching failure must not fail the report command
     (docs/results-json-schema.md write policy) -- the user's table must
-    still render."""
+    still render.
+
+    `refresh=True` (`enge report --refresh`) additionally repairs every
+    matched run whose cache is already finalized, under guards G2-G4 -- see
+    `_refresh_one_run`. Runs whose cache is absent or unfinalized take the
+    normal gap-fill path unchanged. The two advisory WARNINGs that point at
+    the flag are suppressed under refresh: the user is already doing the
+    thing they would ask for."""
     try:
         manifests = _resolve_manifests_for_report(ctx)
     except Exception:  # noqa: BLE001
@@ -371,10 +627,15 @@ def cache_report_results(ctx: "AppContext", task_results: List[Any]) -> None:
     for manifest in manifests:
         run_id = manifest["run_id"]
         try:
-            _cache_one_run(manifest, by_run.get(run_id, []), output_dir)
+            _cache_one_run(
+                manifest, by_run.get(run_id, []), output_dir, refresh=refresh
+            )
         except Exception:  # noqa: BLE001
             LOGGER.warning(
                 "results cache: unexpected error caching run %s",
                 run_id,
                 exc_info=True,
             )
+
+    if not refresh:
+        _warn_on_stale_caches(manifests, output_dir)

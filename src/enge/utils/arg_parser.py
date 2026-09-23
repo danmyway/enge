@@ -496,6 +496,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     report.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Repair cached results for the selected run(s): recover tasks "
+        "recorded with no results and fill metadata missing from caches "
+        "written by older enge versions.",
+    )
+
+    report.add_argument(
         "--show-ids",
         action="store_true",
         help="Display only a list of UUIDs queried from the requested inputs.",
