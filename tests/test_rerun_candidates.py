@@ -311,5 +311,232 @@ class TestBuildRerunPayloadsShape(unittest.TestCase):
             self.assertNotIn(key, plan_only)
 
 
+def _mixed_candidates():
+    """PARSED_DICT_MIXED's default-flag qualifying set, written out by hand.
+
+    '/plan/error_plan' is deliberately absent from tests_by_plan: the CLI path
+    still records an empty test list for a kept suite that had no failed
+    testcases, and the candidate path has to reproduce that.
+    """
+    from enge.rerun.__main__ import RerunCandidate
+
+    return [
+        RerunCandidate(
+            task_id="uuid-mix",
+            plans=("/plan/fail_plan", "/plan/error_plan"),
+            tests_by_plan={"/plan/fail_plan": ("broken",)},
+            undefined_plans=(),
+            source_compose="RHEL-9.0-nightly",
+            source_path=SOURCE_PATH_MIX,
+        )
+    ]
+
+
+def _candidate_jobs(candidates, extra_cli=None, task_source=None):
+    """Build a candidate-path RerunJobs; parse_tasks_with_map must stay unused."""
+    cli = {"error": False, "fail": False, "dryrun": False}
+    if extra_cli:
+        cli.update(extra_cli)
+    ctx = make_app_context(action="rerun", extra_cli=cli)
+
+    from enge.rerun.__main__ import RerunJobs
+
+    return RerunJobs(ctx, candidates=candidates, task_source=task_source)
+
+
+class TestCandidatePathMatchesCliPath(unittest.TestCase):
+    """T7/T8: the two paths agree on processed_data, rerun_uuids and payloads."""
+
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_qualify_candidates_matches_qualify_results(self, mock_parse, mock_xunit):
+        cli_jobs = _make_cli_jobs(
+            mock_parse,
+            mock_xunit,
+            PARSED_DICT_MIXED,
+            uuid_map={"uuid-mix": SOURCE_PATH_MIX},
+        )
+        cli_jobs.qualify_results()
+
+        cand_jobs = _candidate_jobs(_mixed_candidates())
+        cand_jobs.qualify_candidates()
+
+        self.assertEqual(cand_jobs.processed_data, cli_jobs.processed_data)
+        self.assertEqual(cand_jobs.rerun_uuids, cli_jobs.rerun_uuids)
+
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_both_paths_build_identical_payloads(
+        self, mock_parse, mock_xunit, mock_get, _mock_repin
+    ):
+        mock_resp = MagicMock()
+        mock_resp.json.side_effect = lambda: _tf_response("uuid-mix")
+        mock_get.return_value = mock_resp
+
+        cli_jobs = _make_cli_jobs(
+            mock_parse,
+            mock_xunit,
+            PARSED_DICT_MIXED,
+            uuid_map={"uuid-mix": SOURCE_PATH_MIX},
+        )
+        cli_jobs.qualify_results()
+        cli_payloads = cli_jobs.build_rerun_payloads(cli_jobs.rerun_uuids)
+
+        cand_jobs = _candidate_jobs(_mixed_candidates())
+        cand_jobs.qualify_candidates()
+        cand_payloads = cand_jobs.build_rerun_payloads(cand_jobs.rerun_uuids)
+
+        self.assertEqual(cand_payloads, cli_payloads)
+
+
+class TestCandidateConstruction(unittest.TestCase):
+    """T9/T13: what the candidate constructor sets, and how the paths refuse to mix."""
+
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_candidates_bypass_parse_tasks_with_map(self, mock_parse):
+        from enge.rerun.__main__ import RerunCandidate
+
+        candidates = [
+            RerunCandidate(task_id="uuid-a", source_path="/archive/a.json"),
+            RerunCandidate(task_id="uuid-b", source_path=None),
+        ]
+        jobs = _candidate_jobs(candidates, task_source="supervised-loop")
+
+        mock_parse.assert_not_called()
+        self.assertEqual(
+            jobs.req_url_list,
+            [
+                "https://tf.example.com/api/uuid-a",
+                "https://tf.example.com/api/uuid-b",
+            ],
+        )
+        self.assertEqual(jobs.task_source, "supervised-loop")
+        self.assertEqual(
+            jobs.uuid_source_map,
+            {"uuid-a": "/archive/a.json", "uuid-b": None},
+        )
+
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_paths_are_not_mixable(self, mock_parse):
+        mock_parse.return_value = ([], None, {})
+
+        from enge.rerun.__main__ import RerunJobs
+
+        cand_jobs = _candidate_jobs(_mixed_candidates())
+        with self.assertRaises(RuntimeError):
+            cand_jobs.qualify_results()
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+        )
+        cli_jobs = RerunJobs(ctx)
+        with self.assertRaises(RuntimeError):
+            cli_jobs.qualify_candidates()
+
+        with self.assertRaises(ValueError):
+            RerunJobs(ctx, task_source="supervised-loop")
+
+
+class TestCandidatePathIgnoresCliDerivedBehavior(unittest.TestCase):
+    """T10/T11/T12: no flag filter, no fallback sweep, explicit fallback shape."""
+
+    def test_fail_and_error_flags_do_not_change_candidate_registration(self):
+        baseline = _candidate_jobs(_mixed_candidates())
+        baseline.qualify_candidates()
+
+        for flag in ("fail", "error"):
+            with self.subTest(flag=flag):
+                jobs = _candidate_jobs(_mixed_candidates(), extra_cli={flag: True})
+                jobs.qualify_candidates()
+                self.assertEqual(jobs.processed_data, baseline.processed_data)
+                self.assertEqual(jobs.rerun_uuids, baseline.rerun_uuids)
+
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_omitted_uuid_is_never_swept_in(self, mock_parse, mock_xunit):
+        # The CLI path over the same inputs sweeps uuid-gone into the rerun set.
+        req_urls = [
+            "https://tf.example.com/api/uuid-mix",
+            "https://tf.example.com/api/uuid-gone",
+        ]
+        mock_parse.return_value = (
+            req_urls,
+            "latest",
+            {"uuid-mix": SOURCE_PATH_MIX, "uuid-gone": "/archive/gone.json"},
+        )
+        mock_xunit.return_value = PARSED_DICT_MIXED
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+        )
+
+        from enge.rerun.__main__ import RerunJobs
+
+        cli_jobs = RerunJobs(ctx)
+        cli_jobs.qualify_results()
+        self.assertIn("uuid-gone", cli_jobs.rerun_uuids)
+
+        # The candidate path, given only uuid-mix, must not invent uuid-gone.
+        cand_jobs = _candidate_jobs(_mixed_candidates())
+        cand_jobs.qualify_candidates()
+
+        self.assertEqual(cand_jobs.rerun_uuids, ["uuid-mix"])
+        self.assertNotIn("uuid-gone", cand_jobs.processed_data)
+
+    def test_empty_plans_registers_the_fallback_tuple(self):
+        from enge.rerun.__main__ import RerunCandidate
+
+        jobs = _candidate_jobs(
+            [
+                RerunCandidate(
+                    task_id="uuid-fallback",
+                    plans=(),
+                    source_path="/archive/fallback.json",
+                )
+            ]
+        )
+        jobs.qualify_candidates()
+
+        self.assertEqual(jobs.rerun_uuids, ["uuid-fallback"])
+        self.assertEqual(
+            jobs.processed_data["uuid-fallback"],
+            (None, None, None, None, "/archive/fallback.json"),
+        )
+
+
+class TestMainStillUsesCliPath(unittest.TestCase):
+    """T14: main() is unchanged -- it qualifies via the CLI path only."""
+
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_main_calls_qualify_results_not_qualify_candidates(
+        self, mock_parse, mock_xunit, mock_submit_cls
+    ):
+        mock_parse.return_value = ([], None, {})
+        mock_xunit.return_value = {}
+        mock_submit = MagicMock()
+        mock_submit.set_tag = []
+        mock_submit_cls.return_value = mock_submit
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+        )
+
+        from enge.rerun.__main__ import RerunJobs, main
+
+        with (
+            patch.object(RerunJobs, "qualify_results") as mock_results,
+            patch.object(RerunJobs, "qualify_candidates") as mock_candidates,
+        ):
+            main(ctx)
+
+        self.assertEqual(mock_results.call_count, 1)
+        self.assertEqual(mock_candidates.call_count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
