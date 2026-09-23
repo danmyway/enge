@@ -92,6 +92,7 @@ Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs fro
 - `-w, --wait` — Wait for the job to complete. Print the table afterwards
 - `--download` — Download logs for requested run(s).
 - `--skip-pass` — Skip PASSED results in table and log downloads.
+- `--refresh` — Repair cached results for the selected run(s): recover tasks recorded with no results and fill metadata missing from caches written by older enge versions.
 - `--show-ids` — Display only a list of UUIDs queried from the requested inputs.
 - `-o, --format {terminal,gitlab,json}` — Output format. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks and tables. 'json': machine-readable JSON to stdout (suppresses other output). (default: `terminal`)
 - `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).

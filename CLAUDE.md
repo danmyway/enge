@@ -189,12 +189,28 @@ agent must not violate before opening that file:
 - **Ownership**: `enge report` writes `results.json` after parsing xunit;
   `enge dispatch` never touches it (hard invariant).
 - **`enge compare`** (`compare/loader.py`) is a second, read-only
-  consumer — it never writes, gap-fills, or re-derives verdicts.
+  consumer — it never writes, gap-fills, or re-derives verdicts. It does
+  emit the staleness WARNING (see below), which is a read, not a write.
 - **Caching failures never fail the report command.**
 - Root verdict derivation (`finalize_root_verdict`) uses severity ranking
   `ERROR > FAILED > CANCELED > PASSED > SKIPPED` — this ranking is
   specific to deriving one run-level verdict and is off-limits to
   `enge compare`'s own (different) consolidation ranking.
+- **`enge report --refresh`** is the ONLY sanctioned write to a finalized
+  file, and `rewrite_finalized_results` (`utils/results_parser.py`) is
+  the only function allowed to perform it. Its guards are contract, not
+  implementation detail: a run is refreshed only when every cached task
+  is present AND terminal in the invocation (G2); verdict/plans/duration
+  are replaced only for the recoverable `ERROR` + `[]` shape, never for
+  `CANCELED` + `[]` (G3); all other metadata is fill-only, so a
+  populated cached value beats a differing fresh one (G4); and the merge
+  happens on RAW dicts before the `TaskEntry` round-trip, which would
+  otherwise collapse absent keys into explicit nulls (G5). Staleness is
+  `stale_task_keys(raw_task)` = `TASK_ENTRY_KEYS` minus the raw entry's
+  keys, and only FINALIZED caches are ever reported as stale. The
+  ERROR+empty and staleness WARNINGs fire on every un-refreshed report
+  of an affected run by design (maintainer ruling, 2026-09-23) —
+  visibility over silence; do not add a suppression without sign-off.
 - Schema changes require maintainer sign-off — see the full doc before
   touching `utils/results_parser.py`, `report/results_cache.py`, or the
   golden fixtures in `tests/fixtures/`.
@@ -216,6 +232,11 @@ an agent must not violate before opening that file:
   one per phase index. Named phases (`/tests/…`) and unprefixed node IDs
   (`/upgrades/…`) are never stripped, and a plan where stripping would
   collide keeps verbatim names.
+- **The envelope `source`/`target` fallback and its single-set gate
+  (RULING D-2) are still live.** F7 (`--refresh`) has shipped, so the
+  sunset's precondition is met, but the deletion is queued as its own
+  PR — it changes what an existing unrefreshed cache renders. Do not
+  delete the fallback as a side effect of other work.
 - Read the full doc before touching `compare/engine.py`,
   `compare/loader.py`, or the descriptor-sourcing/artifacts-URL fallback
   rules.
