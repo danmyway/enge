@@ -190,8 +190,15 @@ renders a `None` descriptor as the em dash, never the literal string
 stored value. **Ratified sunset (RULING D-2, 2026-07-29)**: this
 envelope fallback and its single-set gate are legacy-cache support for
 results.json caches written before per-task `source`/`target` existed,
-and are slated for DELETION when the schema-staleness-warning +
-`--refresh` work ships (ledgered as F7).
+and are slated for DELETION. The precondition is met: the
+schema-staleness-warning + `--refresh` work (ledgered as F7) has
+shipped, so a stale cache now has a corrective path
+(`enge report --run <run_id> --refresh`) and `compare` warns once per
+invocation when one is selected. The deletion itself is queued as its
+own PR and is deliberately NOT part of F7 — removing the fallback
+changes what existing unrefreshed caches render, which is a separate
+user-visible behaviour change deserving its own review and CHANGELOG
+entry.
 
 **Artifacts URL sourcing**: `ExecutionColumn.artifacts_url` is sourced
 in `compare/loader.py` from the results.json cache exclusively — never

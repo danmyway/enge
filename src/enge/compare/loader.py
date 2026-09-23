@@ -54,10 +54,18 @@ never a stored value.
 
 Ratified sunset (RULING D-2, 2026-07-29): this envelope fallback and its
 single-set gate are legacy-cache support for results.json written before
-per-task `source`/`target` existed. They are slated for DELETION when the
-schema-staleness-warning + `--refresh` work ships (ledgered as F7) --
-that work gives a stale/incomplete cache a corrective path, removing the
-need to paper over it here.
+per-task `source`/`target` existed, and are slated for DELETION. The
+precondition is met -- the schema-staleness-warning + `--refresh` work
+(ledgered as F7) has shipped, giving a stale cache a corrective path
+(`enge report --run <run_id> --refresh`), and `_warn_on_stale_caches`
+below points selected-but-stale runs at it. The deletion is queued as
+its own PR: removing the fallback changes what an existing unrefreshed
+cache renders, which is a separate user-visible behaviour change and
+deserves its own review.
+
+Staleness warning (F7): one aggregated WARNING per invocation when any
+selected run's cache is finalized and missing keys the current writer
+emits. Compare only reports it -- repairing is the report side's job.
 """
 
 import logging

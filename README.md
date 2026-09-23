@@ -857,6 +857,7 @@ Default invocation `enge report` reads tasks from the latest manifest. Use `enge
 You can specify a different path to a file with `-f/--file` or pass task IDs with `-i/--input`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
 Use structured filters `--set`, `--tier`, `--arch`, `--tag` to match against manifest metadata. Legacy `--get-tag` still works for pre-migration archive files but is deprecated.<br>
 Manifest-backed invocations (default latest run, `--run`, or the structured filters above) also gap-fill a local results cache under `~/.local/share/enge/results/<run_id>.json`, plus a byte-verbatim copy of each task's xunit under `~/.local/share/enge/results/<run_id>/<task_id>.xml` — see `CLAUDE.md` "Results.json format" for the schema and write policy. This is a caching side effect only: it never changes what `enge report` prints or its exit code, and raw-input invocations (`-f/--file`, `-i/--input`) never write to the cache since they have no manifest run to key on.<br>
+Use `--refresh` to repair a run's cached results. A task harvested before Testing Farm published its xunit is cached with no results at all, and once the run is complete no ordinary re-report can replace it; caches written by older enge versions are also missing metadata the current version records. `--refresh` recovers both in place, and without it `enge report` and `enge compare` each warn when a selected run needs it. A run is only repaired when every one of its tasks is available and finished in that invocation, results already recorded are never overwritten, and a cancelled task is never treated as recoverable — so a refresh can add to a run's history but never rewrite it. `--refresh` needs a run to repair, so it is an error (exit code 2) with `-f/--file`, `-i/--input`, `--list` or `--compare`.<br>
 The tool is able to parse and report for multiple variants of values as long as they are separated by a new-line (in the files) or a `-i/--input` argument (on the commandline). Raw request_ids, artifact URLs (Testing Farm result page URLs) or request URLs are allowed.
 Use `--show-ids` to display only a list of UUIDs queried from the requested inputs, which is useful for extracting task IDs for further processing or scripting.<br>
 In case you want to get the log files stored locally, use `--download`. Log files for pytest runs will be stored in `/var/tmp/enge/logs/{request_id}_log/`. In case there are multiple plans in one pipeline, the logs should get divided in their respective plan directories.
@@ -870,6 +871,9 @@ enge report --list
 
 # Report a specific run by ID
 enge report --run <run_id>
+
+# Repair a run's cached results (recover tasks Testing Farm has since published)
+enge report --run <run_id> --refresh
 
 # Report from custom file on the test level
 enge report --show-tests --file ~/my_jobs_file
@@ -924,7 +928,7 @@ enge uses a single `ExitCode` enum (`utils/globals.py`). The universal floor app
 | 3    | Ran; at least one ERROR was hit |
 | 4    | Ran; at least one request had no results (missing/expired), or (compare only) a CANCELED task |
 
-When a report run mixes these, the most severe wins: **3 > 2 > 4 > 0** (error-dominates — missing results are rerun candidates and must not mask a real error). `enge test` also uses code 2 for partial dispatch failure (some requests submitted, some failed). `enge compare` always returns 0: it is a comparison/reporting view, not a grading command, so table content (including FAILED/ERROR rows) never changes its exit code. Code 99 still applies if the invocation itself can't be serviced (see below).
+When a report run mixes these, the most severe wins: **3 > 2 > 4 > 0** (error-dominates — missing results are rerun candidates and must not mask a real error). `enge test` also uses code 2 for partial dispatch failure (some requests submitted, some failed), and `enge report` uses it for `--refresh` on an invocation with no run to repair. `enge compare` always returns 0: it is a comparison/reporting view, not a grading command, so table content (including FAILED/ERROR rows) never changes its exit code. Code 99 still applies if the invocation itself can't be serviced (see below).
 
 ##### Compare
 

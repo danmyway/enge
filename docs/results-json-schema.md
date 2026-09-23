@@ -75,7 +75,9 @@ its table output or exit code.
   already-finalized run raises `AlreadyFinalizedError` (a
   `ConflictError` subclass) per task, caught inside
   `cache_report_results` and logged at DEBUG naming the run — the
-  expected steady state for finalized runs, not a drift signal. A
+  expected steady state for finalized runs, not a drift signal.
+  `enge report --refresh` is the one sanctioned way past it; see
+  [Refresh](#refresh) below. A
   genuine content conflict from a corrupted prior cache (or any other
   unexpected error) is caught per-task/per-run and logged at WARNING;
   `report/__main__.main()` additionally wraps the whole call in a
@@ -176,8 +178,9 @@ rejected), `run_id` (ULID; matches manifest and filename), `created_at`
 time), `event`, `source`, `target` (nullable strings, 2026-07-24 — see
 below), `verdict` (**nullable, write-once**: null = run incomplete; set
 exactly once by `finalize_root_verdict` when all manifest requests have
-entries), `results` (list of task entries; may be empty for a freshly
-initialized file).
+entries, and thereafter re-derived only by
+`rewrite_finalized_results` under [Refresh](#refresh)), `results` (list
+of task entries; may be empty for a freshly initialized file).
 
 **`event`/`source`/`target` nullability**: the envelope holds only
 things relevant to the whole run as a single batch. A single-set
@@ -333,7 +336,9 @@ arrive incrementally, one TF task at a time):
   subclass) regardless of content — the expected steady state on every
   re-report of a finalized run, not a data-drift signal; the cache layer
   logs it at DEBUG instead of WARNING for this reason (see "Caching
-  failures never fail the report command" above).
+  failures never fail the report command" above). `--refresh` does not
+  reach this function at all; it goes through
+  `rewrite_finalized_results` (see [Refresh](#refresh)).
 - `finalize_root_verdict(path, expected_count) -> Optional[str]` — see
   derivation rules above. Under count: no-op, `None`. Exact count:
   derive and write, return the value (idempotent on repeat calls once
@@ -350,6 +355,21 @@ arrive incrementally, one TF task at a time):
 - `parse_results_json(path)` — validates and returns the full nested
   dataclass structure (`ResultsJsonSchema` -> `TaskEntry` -> `PlanEntry`
   -> `TestEntry`).
+- `read_raw_results_json(path) -> dict` — same validation and same
+  `ValidationError` as `parse_results_json`, but returns the RAW parsed
+  dict. Needed because `TaskEntry.from_dict` reads every optional key
+  through `.get()`: by the time a key reaches the dataclass, an absent
+  one is indistinguishable from an explicit `null`. Staleness is only
+  visible before that (see [Refresh](#refresh)).
+- `rewrite_finalized_results(path, entries) -> str` — **the only
+  sanctioned write to a finalized file.** Replaces `results` wholesale,
+  re-derives the root verdict from the replacement entries by the same
+  severity ranking, and leaves every other envelope field untouched.
+  Refuses an unfinalized file, and refuses any change to the recorded
+  `task_id` set — additions, drops, or duplicates all raise
+  `ValidationError` and write nothing. A rewrite may change what a task
+  recorded; never which tasks a run has. It applies no merge policy of
+  its own: the caller decides what each entry holds.
 - `results_dir()` in `utils/state_paths.py` is unchanged by this rework
   (XDG behavior stays the same).
 
@@ -385,6 +405,84 @@ The coldstore hyperlink is available directly from a cached
 `results.json` entry without reconstruction or a manifest join;
 superseded is this section's original plan to construct it externally
 from `run_id`/`task_id` alone.
+
+## Refresh
+
+`enge report --refresh` is the one sanctioned path past the write-once
+fence. It exists because two states are otherwise permanent and silent:
+
+1. A task harvested before Testing Farm published its xunit is recorded
+   as `verdict: "ERROR"`, `plans: []`. Once the run finalizes, every
+   later `upsert_task_result` raises `AlreadyFinalizedError` and is
+   logged at DEBUG, so no ordinary re-report can ever repair it.
+2. A cache written by an older enge version omits keys the current
+   writer always emits. Readers tolerate the absence, but nothing told
+   the user their data was incomplete and there was no repair path.
+
+**Stale-key definition.** `TASK_ENTRY_KEYS` is every key
+`TaskEntry.to_dict` emits, derived from the dataclass so a new field
+cannot be forgotten (parity with the hand-written `to_dict` literal is
+pinned by a test, not merely assumed).
+`stale_task_keys(raw_task) -> frozenset` is
+`set(TASK_ENTRY_KEYS) - set(raw_task)`. It takes the RAW dict: the
+`TaskEntry` round-trip collapses absent into `null`, so staleness is
+undetectable afterwards. A cache is stale when it is FINALIZED and at
+least one of its entries has a non-empty stale-key set. Unfinalized
+files are excluded everywhere — `--refresh` refuses them (their
+gap-fill path is still live), so reporting one as stale would be
+pointing the user at a flag that will not act on it.
+
+**Guards.** The repair is constrained so it can never become a
+data-loss vector:
+
+- **G2 completeness.** A run is refreshed only when every task recorded
+  in its cache is present AND terminal in this invocation. A partial
+  invocation leaves the file byte-unchanged and logs
+  `results cache: cannot refresh run <id>: <n> of <m> cached task(s)
+  not available in this invocation; run is unchanged`. Refreshing from
+  a partial harvest would let one invocation's narrower selection
+  silently truncate a run.
+- **G3 content gate.** `verdict`, `plans` and `total_duration_seconds`
+  are taken from the fresh harvest **if and only if** the cached entry
+  is the recoverable `ERROR` + `[]` shape. `CANCELED` + `[]` is a
+  legitimate terminal state — a dispatch-level cancel has no results to
+  publish, ever — and is never replaced; neither is any entry that
+  already recorded plans. An `ERROR` + `[]` entry whose fresh harvest is
+  also empty stays as it is.
+- **G4 fill-only metadata.** Every other key except `task_id` is taken
+  from the fresh harvest only where the cached entry has nothing:
+  absent, `null`, or (for `build_ids` alone, whose empty state is `[]`
+  rather than `null`) empty. A populated cached value wins even when the
+  fresh harvest disagrees. The cache is the historical record of what
+  dispatch knew; a later harvest does not get to rewrite it.
+
+A fifth guard is an ordering rule rather than a policy: **the merge
+happens on raw dicts, before the `TaskEntry` round-trip**, because the
+round-trip turns an absent key into an explicit `null` and would erase
+the very staleness being repaired.
+
+The rewrite goes through `rewrite_finalized_results`, which re-derives
+the root verdict from the merged entries — a recovered task typically
+moves a run from `ERROR` to its real verdict. Recovered tasks also get
+their verbatim xunit written to the per-run archive. One INFO line per
+refreshed run reports what changed:
+`results cache: refreshed run <id>: <n> task(s) recovered, <m> task(s)
+had metadata filled; root verdict <old> -> <new>`.
+
+**Without the flag**, two WARNINGs point at it. `report` emits one per
+run holding `ERROR` + `[]` entries, and one aggregated over the
+selected runs whose caches are stale; `compare` emits the aggregated
+one only, since it is read-only and cannot repair anything. The
+per-run WARNING fires on every report of such a run, including after a
+refresh has confirmed Testing Farm still has no xunit for it. That is
+deliberate (maintainer ruling, 2026-09-23): such a run is a genuine
+gap and a rerun candidate, and visibility beats silence.
+
+`--refresh` is rejected with a `ValidationError` (exit 2), raised
+before any network fetch, when the invocation has no manifest-backed
+run to repair — raw task input (`-i`/`--input`, `-f`/`--file`) — or
+when it never reaches the cache writer at all (`--list`, `--compare`).
+A useless repair fails loudly rather than being silently ignored.
 
 **Golden fixture MD5s** (`tests/fixtures/`; updated when the
 dispatch-context-schema fields — `source`/`target`/`git_ref`/`event`/
