@@ -120,9 +120,9 @@ Field-by-field, type / nullability / producing writer:
 - `task_id` (str) — required, non-null. The TF request UUID; join key
   to `results.json`. Native (dispatch and rerun): parsed from the tail
   of the just-submitted request's `log_artifact_url`
-  (`dispatch/set_flow.py:505-507`, `rerun/__main__.py:950-952`) — a
+  (`dispatch/set_flow.py:506-508`, `rerun/__main__.py:950-952`) — a
   request is only appended to `requests[]` at all when this parse
-  succeeds (`set_flow.py:509`, `rerun/__main__.py:953`), so `task_id`
+  succeeds (`set_flow.py:510`, `rerun/__main__.py:953`), so `task_id`
   and `artifacts_url` are never independently missing on the native
   path. Migrated: the literal UUID line from the legacy archive file.
 - `set` (nullable str; `add_request`'s `set_name` keyword, stored under
@@ -163,7 +163,7 @@ Field-by-field, type / nullability / producing writer:
   `null`.
 - `artifacts_url` (nullable str) — required key, nullable value.
   Native dispatch and rerun: the submitting request's own
-  `log_artifact_url` (`dispatch/set_flow.py:520`,
+  `log_artifact_url` (`dispatch/set_flow.py:521`,
   `rerun/__main__.py:969`) — see the `task_id` note above; in practice
   always non-null when the entry exists at all on the native path.
   Migrated: `f"{log_base}/{task_id}"` constructed from
@@ -228,7 +228,7 @@ Field-by-field, type / nullability / producing writer:
   present) — optional key (absent on migrated manifests only; always
   emitted on the native path).
   Native dispatch and rerun: `[a["id"] for a in <artifacts>]`
-  (`dispatch/set_flow.py:526`, `rerun/__main__.py:976`, filtered to
+  (`dispatch/set_flow.py:527`, `rerun/__main__.py:976`, filtered to
   entries with an `id` on the rerun side). Format is
   `"<build_id>:<chroot>"` for COPR-resolved artifacts
   (`utils/tf_artifact.py:434`). **Caution**: the chroot suffix is NOT
@@ -237,6 +237,23 @@ Field-by-field, type / nullability / producing writer:
   whether any downstream consumer relies on parsing this suffix is
   unverified). State this as a caution only — this document asserts
   nothing about consumers.
+- `tests` (list of str, default `[]`, never `null` when the key is
+  present) — optional key (absent on migrated manifests only; always
+  emitted on the native path). The test NAMES the request was
+  dispatched with, as opposed to `plan`, which records the plan. Both
+  writers derive it from the payload's own `test.fmf.test_name` through
+  `split_test_filter` (`utils/manifest.py:11`): split on `|`, drop the
+  trailing `$` anchor from each part, discard empty parts, keep order
+  and duplicates. Native dispatch: `--test`
+  (`dispatch/set_flow.py:528`) — rare, but it happens. Native rerun:
+  the filter built from the parent's failed tests
+  (`rerun/__main__.py:1118`) — this is the regular case, since a rerun
+  filters to the tests that failed by design. Migrated: key absent
+  entirely.
+  The `$` anchoring is NOT preserved: it is an artifact of how the TF
+  filter string is assembled, not part of any test's name. An FMF
+  filter EXPRESSION (`--test-filter`, e.g. `tag:foo & tier:1`) names no
+  tests and is never recorded here.
 
 ### Rerun lineage (set/tier/target_compose inheritance)
 
@@ -260,15 +277,15 @@ does not match most rerun tasks, not a crash.
 
 ## Shape by origin
 
-Native `requests[]` entries carry 16 keys (`task_id` plus the 15
+Native `requests[]` entries carry 17 keys (`task_id` plus the 16
 optional keyword fields of `add_request`). Migrated entries carry 9:
 `task_id`, `set`, `tier`, `arch`, `plan`, `source_compose`,
-`target_compose`, `artifacts_url`, `dispatched_at`. The 7 keys migrated
+`target_compose`, `artifacts_url`, `dispatched_at`. The 8 keys migrated
 entries omit (`launch_uuid`, `rerun_of`, `source`, `target`, `git_ref`,
-`event`, `build_ids`) are ABSENT, not `null` and not `[]`.
+`event`, `build_ids`, `tests`) are ABSENT, not `null` and not `[]`.
 
 **Hard consumer invariant: use `.get(key, default)` on `requests[]`
-entries, never `[key]`.** Bracket access on any of the 7
+entries, never `[key]`.** Bracket access on any of the 8
 migrate-omitted keys raises `KeyError` on a legitimate manifest.
 
 `utils/task_resolver.py:84` reads `m['run_id']` with bracket access
