@@ -282,6 +282,13 @@ class TaskEntry:
     artifacts_url: Optional[str] = None
     plan: Optional[str] = None
     plan_filter: Optional[str] = None
+    # Three-valued, unlike `build_ids`: None means no manifest ever
+    # recorded what the request was filtered to (a cache written before
+    # this key existed, or one backed by a migrated manifest), while `[]`
+    # means it was recorded and there was no test filter. Collapsing the
+    # two would let a run that dispatched a whole plan look identical to
+    # one whose filter is simply unknown.
+    tests: Optional[List[str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -304,6 +311,7 @@ class TaskEntry:
             "artifacts_url": self.artifacts_url,
             "plan": self.plan,
             "plan_filter": self.plan_filter,
+            "tests": (list(self.tests) if self.tests is not None else None),
         }
 
     @classmethod
@@ -371,6 +379,18 @@ class TaskEntry:
             data.get("plan_filter"), "plan_filter", context=context
         )
 
+        # Deliberately not the `or []` shape used for build_ids above: an
+        # absent or null 'tests' must stay None so that "never recorded"
+        # survives the round trip distinct from "recorded: no filter".
+        raw_tests = data.get("tests")
+        if raw_tests is not None and (
+            not isinstance(raw_tests, list)
+            or not all(isinstance(name, str) for name in raw_tests)
+        ):
+            raise ValidationError(
+                f"{context}: 'tests' must be an array of strings, got {raw_tests!r}"
+            )
+
         return cls(
             task_id=task_id,
             set=set_name,
@@ -391,6 +411,7 @@ class TaskEntry:
             artifacts_url=artifacts_url,
             plan=plan,
             plan_filter=plan_filter,
+            tests=(list(raw_tests) if raw_tests is not None else None),
         )
 
 

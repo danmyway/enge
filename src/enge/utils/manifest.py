@@ -8,6 +8,28 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 SCHEMA_VERSION = 1
 
 
+def split_test_filter(test_name: Optional[str]) -> List[str]:
+    """The test names behind a Testing Farm `test.fmf.test_name` filter.
+
+    TF takes one string; both writers build it the same way, by joining
+    anchored names with `|` (`t1$|t2$`). This undoes that join so the
+    manifest records names rather than a regex: split on `|`, drop the
+    `$` anchor, discard empty parts, keep the order and any duplicates
+    the caller sent.
+
+    The anchoring is not preserved. It is an artifact of how the filter
+    is built, not something a consumer of the manifest needs, and a name
+    that carries a literal trailing `$` is not a thing tmt produces.
+
+    Note this takes `test_name`, never `--test-filter`: the latter is an
+    FMF filter EXPRESSION (`tag:foo & tier:1`), which names no tests and
+    is therefore never recorded.
+    """
+    if not test_name:
+        return []
+    return [part.rstrip("$") for part in test_name.split("|") if part.rstrip("$")]
+
+
 class ManifestWriter:
     def __init__(
         self,
@@ -46,6 +68,7 @@ class ManifestWriter:
         git_ref: Optional[str] = None,
         event: Optional[str] = None,
         build_ids: Optional[List[str]] = None,
+        tests: Optional[List[str]] = None,
     ) -> None:
         self._requests.append(
             {
@@ -66,6 +89,7 @@ class ManifestWriter:
                 "git_ref": git_ref,
                 "event": event,
                 "build_ids": (list(build_ids) if build_ids else []),
+                "tests": (list(tests) if tests else []),
             }
         )
 

@@ -24,6 +24,7 @@ from enge.utils.globals import (
     TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX,
     RP_COMPATIBLE_EVENT,
 )
+from enge.utils.manifest import split_test_filter
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.dispatch.artifacts import ArtifactResolver
 from enge.utils.reportportal_helper import create_launch as rp_create_launch
@@ -524,6 +525,7 @@ def _send_and_collect(
             git_ref=submit_test.tests_git_ref,
             event=event,
             build_ids=[a["id"] for a in submit_test.artifacts],
+            tests=split_test_filter(submit_test.test_name),
         )
         manifest_writer.flush(Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest))
 
