@@ -99,7 +99,7 @@ def _write_results_json(
 
 
 def _task_entry(task_id, **overrides):
-    """A task entry carrying all nineteen keys the current writer emits.
+    """A task entry carrying all twenty keys the current writer emits.
 
     The nine optional keys are spelled out as explicit nulls rather than
     left absent: `TaskEntry.from_dict` reads them through `.get()`, so the
@@ -136,6 +136,7 @@ def _task_entry(task_id, **overrides):
         "artifacts_url": None,
         "plan": None,
         "plan_filter": None,
+        "tests": [],
     }
     base.update(overrides)
     return base
@@ -748,6 +749,27 @@ class TestCompareStalenessWarning(unittest.TestCase):
         hits = matching(records, self.NEEDLE, level=logging.WARNING)
         self.assertEqual(len(hits), 1, records)
         self.assertIn("1 of 1 selected run(s)", hits[0])
+
+    def test_a_cache_missing_only_the_tests_key_is_stale(self):
+        """Compare-side half of Q-D3-2 (accepted, 2026-09-24). Compare
+        cannot repair the cache, so its only job here is to say so -- once
+        -- and point at `enge report --refresh`."""
+        _write_manifest(
+            self.runs_dir, "run1", [_request("t1")], context={"set": "setA"}
+        )
+        entry = _task_entry("t1")
+        entry.pop("tests", None)
+        _write_results_json(self.results_dir, "run1", tasks=[entry])
+        # Guard the premise: `tests` is the ONLY thing this cache lacks.
+        raw = json.loads((self.results_dir / "run1.json").read_text())
+        self.assertEqual(set(raw["results"][0]), set(_task_entry("t1")) - {"tests"})
+
+        _ctx, records = self._load()
+
+        hits = matching(records, self.NEEDLE, level=logging.WARNING)
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("1 of 1 selected run(s)", hits[0])
+        self.assertIn("--refresh", hits[0])
 
     def test_unfinalized_cache_is_never_reported_as_stale(self):
         """`--refresh` refuses an unfinalized file, so advertising it for

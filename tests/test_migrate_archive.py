@@ -75,6 +75,28 @@ class TestMigrateArchive(unittest.TestCase):
         self.assertIsNone(req["target_compose"])
         self.assertIsNone(req["plan"])
 
+    def test_tests_key_is_absent_on_migrated_requests(self):
+        """Characterization (ledger D3): `tests` is native-only.
+
+        A legacy archive file is a list of task IDs and nothing else --
+        there is no record of what test filter those requests carried. The
+        key is therefore OMITTED rather than written as `[]`, which would
+        assert "dispatched with no test filter" on no evidence. This joins
+        the seven keys migrated entries already omit; consumers reach
+        `requests[]` fields through `.get()` for exactly this reason.
+        """
+        legacy = self.archive / "enge_jobs_archive_20260622140000.tier0.x86_64"
+        legacy.write_text("uuid-aaa\nuuid-bbb\n")
+
+        ctx = _make_ctx(self.archive, self.runs)
+        migrate_main(ctx)
+
+        data = json.loads(list(self.runs.glob("*.json"))[0].read_text())
+        # Guard the premise: both requests really were written.
+        self.assertEqual(len(data["requests"]), 2)
+        for req in data["requests"]:
+            self.assertNotIn("tests", req)
+
     def test_touchfile_created(self):
         legacy = self.archive / "enge_jobs_archive_20260622140000"
         legacy.write_text("uuid-1\n")

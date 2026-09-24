@@ -372,6 +372,74 @@ class TestTaskEntryValidation(unittest.TestCase):
             self.assertIsNone(d[key])
 
 
+class TestTaskEntryTestsKey(unittest.TestCase):
+    """`tests` on a results.json task entry (ledger D3).
+
+    Deliberately NOT shaped like `build_ids`, whose absent state collapses
+    into `[]`. Here `None` and `[]` mean different things and both have to
+    survive a round-trip:
+
+    - `None` -- the manifest this entry was built from predates the key,
+      so what was dispatched is UNKNOWN.
+    - `[]`   -- recorded, and the request carried no test filter.
+
+    Collapsing the two would make every pre-D3 cache claim it dispatched
+    whole plans, which is a fact nobody has.
+
+    Not to be confused with `plans[].tests`, one nesting level down: that
+    is a list of test result OBJECTS, this is a list of dispatched test
+    NAMES.
+    """
+
+    def test_default_is_none_not_an_empty_list(self):
+        task = TaskEntry.from_dict(_task_payload())
+
+        self.assertIsNone(task.tests)
+        self.assertIsNone(task.to_dict()["tests"])
+
+    def test_to_dict_emits_a_copy_of_the_list(self):
+        names = ["a", "b"]
+        task = TaskEntry.from_dict(_task_payload(tests=names))
+
+        emitted = task.to_dict()["tests"]
+        self.assertEqual(emitted, ["a", "b"])
+        emitted.append("c")
+        self.assertEqual(task.tests, ["a", "b"])
+
+    def test_from_dict_accepts_absent_null_empty_and_populated(self):
+        payload = _task_payload()
+        self.assertNotIn("tests", payload)
+        self.assertIsNone(TaskEntry.from_dict(payload).tests)
+
+        self.assertIsNone(TaskEntry.from_dict(_task_payload(tests=None)).tests)
+        self.assertEqual(TaskEntry.from_dict(_task_payload(tests=[])).tests, [])
+        self.assertEqual(
+            TaskEntry.from_dict(_task_payload(tests=["a", "b"])).tests, ["a", "b"]
+        )
+
+    def test_the_round_trip_keeps_unknown_and_recorded_empty_distinct(self):
+        unknown = TaskEntry.from_dict(_task_payload())
+        recorded_empty = TaskEntry.from_dict(_task_payload(tests=[]))
+
+        self.assertIsNone(TaskEntry.from_dict(unknown.to_dict()).tests)
+        self.assertEqual(TaskEntry.from_dict(recorded_empty.to_dict()).tests, [])
+
+    def test_from_dict_rejects_a_bare_string(self):
+        with self.assertRaises(ValidationError) as cm:
+            TaskEntry.from_dict(_task_payload(tests="abc"))
+        self.assertIn("'tests'", str(cm.exception))
+
+    def test_from_dict_rejects_a_list_with_a_non_string(self):
+        with self.assertRaises(ValidationError) as cm:
+            TaskEntry.from_dict(_task_payload(tests=["a", 1]))
+        self.assertIn("'tests'", str(cm.exception))
+
+    def test_from_dict_rejects_an_object(self):
+        with self.assertRaises(ValidationError) as cm:
+            TaskEntry.from_dict(_task_payload(tests={}))
+        self.assertIn("'tests'", str(cm.exception))
+
+
 class TestResultsJsonSchemaValidation(unittest.TestCase):
     def test_valid_root_payload_parses(self):
         schema = ResultsJsonSchema.from_dict(_root_payload())
@@ -822,6 +890,63 @@ class TestResultsDirStatePath(unittest.TestCase):
             path = results_dir({"common": {"results_dir": str(override)}})
             self.assertEqual(path, override)
             self.assertTrue(path.exists())
+
+
+class TestGoldenResultsFixturesAreSchemaCurrent(unittest.TestCase):
+    """The pinned `results_golden*.json` fixtures document what the writer
+    emits, and their MD5s are quoted in docs/results-json-schema.md.
+
+    A schema change that adds a task-entry key without moving them leaves
+    the documentation showing a shape the code no longer produces -- and
+    leaves the fixtures themselves stale by their own staleness predicate.
+    This is the test that makes that drift fail instead of rot.
+    """
+
+    GOLDEN_NAMES = (
+        "results_golden.json",
+        "results_golden_partial.json",
+        "results_golden_canceled.json",
+        "results_golden_multiset.json",
+    )
+
+    def _golden(self, name):
+        path = Path(__file__).parent / "fixtures" / name
+        return json.loads(path.read_text())
+
+    def test_every_task_entry_carries_the_current_key_set_in_order(self):
+        from enge.utils.results_parser import TASK_ENTRY_KEYS
+
+        for name in self.GOLDEN_NAMES:
+            payload = self._golden(name)
+            # Guard the premise: a fixture with no task entries would pass
+            # every assertion below without testing anything.
+            self.assertTrue(payload["results"], name)
+            for entry in payload["results"]:
+                self.assertEqual(list(entry), list(TASK_ENTRY_KEYS), name)
+
+    def test_every_task_entry_records_the_dispatched_test_names(self):
+        """An absolute pin beside the relative ones above.
+
+        `TASK_ENTRY_KEYS` and `stale_task_keys` both move with the code, so
+        a fixture and a writer that are wrong together look right to them.
+        Naming the key outright is what makes this test fail when a golden
+        loses it."""
+        for name in self.GOLDEN_NAMES:
+            for entry in self._golden(name)["results"]:
+                self.assertIn("tests", entry, name)
+
+    def test_no_golden_fixture_is_stale(self):
+        from enge.utils.results_parser import stale_task_keys
+
+        for name in self.GOLDEN_NAMES:
+            for entry in self._golden(name)["results"]:
+                self.assertEqual(stale_task_keys(entry), frozenset(), name)
+
+    def test_every_golden_fixture_still_parses(self):
+        for name in self.GOLDEN_NAMES:
+            payload = self._golden(name)
+            schema = ResultsJsonSchema.from_dict(payload)
+            self.assertEqual(len(schema.results), len(payload["results"]), name)
 
 
 if __name__ == "__main__":

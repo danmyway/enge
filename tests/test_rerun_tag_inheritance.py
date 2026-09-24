@@ -902,5 +902,193 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
         self.assertEqual(entry["build_ids"], ["pkg-x"])
 
 
+class TestRerunRecordsDispatchedTestNames(unittest.TestCase):
+    """`tests` on a rerun child is derived from the payload actually sent.
+
+    Rerun is where individual test selection happens by design: a rerun of
+    a failed task re-dispatches the failing tests by name. Deriving the
+    manifest value from the payload rather than from the candidate data
+    means all three rerun payload shapes come out right by construction --
+    test-filtered, the plan-only extra a UNDEFINED plan adds, and the
+    fallback that resubmits the parent's own filter.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _child_requests(self, mock_parse, mock_xunit, mock_http, mock_submit_cls):
+        """Run rerun main() and return (child requests[], the mock submit).
+
+        `mock_parse`/`mock_xunit`/`mock_http` must already be configured by
+        the caller; only the boilerplate lives here.
+        """
+        api_url = f"https://tf.example.com/api/{TASK_UUID}"
+        mock_parse.return_value = ([api_url], None, {TASK_UUID: None, api_url: None})
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = []
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{TASK_UUID}"
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        main(ctx)
+
+        manifests = list(self.runs_dir.glob("*.json"))
+        self.assertEqual(len(manifests), 1, manifests)
+        return json.loads(manifests[0].read_text())["requests"], mock_submit
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_a_test_filtered_rerun_records_every_failed_test(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _repin, _rp
+    ):
+        mock_xunit.return_value = {
+            TASK_UUID: {
+                "source_compose": "RHEL-9.0",
+                "testsuites": [
+                    {
+                        "testsuite_name": "/plan/tier0",
+                        "testsuite_result": "FAILED",
+                        "testsuite_arch": "x86_64",
+                        "testcases": [
+                            {"testcase_name": "t1", "testcase_result": "FAILED"},
+                            {"testcase_name": "t2", "testcase_result": "FAILED"},
+                        ],
+                    }
+                ],
+            }
+        }
+        mock_http.return_value = _mock_tf_response()
+
+        requests, mock_submit = self._child_requests(
+            mock_parse, mock_xunit, mock_http, mock_submit_cls
+        )
+
+        # Assert against the payload that was actually sent, not only
+        # against a hard-coded expectation.
+        payload = mock_submit.send_request.call_args_list[0][0][0]
+        self.assertEqual(payload["test"]["fmf"]["test_name"], "t1$|t2$")
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["tests"], ["t1", "t2"])
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_the_plan_only_extra_payload_records_no_tests(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _repin, _rp
+    ):
+        """A UNDEFINED plan with no testcase data gets a second, plan-only
+        payload with `test_name` removed -- deliberately unfiltered, so it
+        must record `[]` and not inherit the sibling payload's names."""
+        mock_xunit.return_value = {
+            TASK_UUID: {
+                "source_compose": "RHEL-9.0",
+                "testsuites": [
+                    {
+                        "testsuite_name": "/plan/tier0",
+                        "testsuite_result": "FAILED",
+                        "testsuite_arch": "x86_64",
+                        "testcases": [
+                            {"testcase_name": "t1", "testcase_result": "FAILED"}
+                        ],
+                    },
+                    {
+                        "testsuite_name": "/plan/undef",
+                        "testsuite_result": "UNDEFINED",
+                        "testsuite_arch": "x86_64",
+                        "testcases": [],
+                    },
+                ],
+            }
+        }
+        mock_http.return_value = _mock_tf_response()
+
+        requests, mock_submit = self._child_requests(
+            mock_parse, mock_xunit, mock_http, mock_submit_cls
+        )
+
+        self.assertEqual(len(requests), 2, requests)
+        # Guard the premise: the second payload really carries no test filter.
+        plan_only = mock_submit.send_request.call_args_list[1][0][0]
+        self.assertNotIn("test_name", plan_only["test"]["fmf"])
+
+        self.assertEqual(requests[0]["tests"], ["t1"])
+        self.assertEqual(requests[1]["tests"], [])
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_the_unparseable_fallback_records_the_parents_own_filter(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _repin, _rp
+    ):
+        """A task with no parseable results is resubmitted verbatim, so
+        whatever test filter the parent carried is what gets dispatched --
+        and therefore what gets recorded."""
+        mock_xunit.return_value = {}
+        resp = MagicMock()
+        resp.json.return_value = {
+            "id": TASK_UUID,
+            "environments_requested": [
+                {"os": {"compose": "RHEL-9.0"}, "arch": "x86_64"}
+            ],
+            "test": {"fmf": {"name": "/plan/tier0", "test_name": "foo"}},
+        }
+        mock_http.return_value = resp
+
+        requests, mock_submit = self._child_requests(
+            mock_parse, mock_xunit, mock_http, mock_submit_cls
+        )
+
+        payload = mock_submit.send_request.call_args_list[0][0][0]
+        self.assertEqual(payload["test"]["fmf"]["test_name"], "foo")
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["tests"], ["foo"])
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_a_fallback_with_no_parent_filter_records_no_tests(
+        self, mock_parse, mock_xunit, mock_submit_cls, mock_http, _repin, _rp
+    ):
+        mock_xunit.return_value = {}
+        mock_http.return_value = _mock_tf_response()
+
+        requests, mock_submit = self._child_requests(
+            mock_parse, mock_xunit, mock_http, mock_submit_cls
+        )
+
+        payload = mock_submit.send_request.call_args_list[0][0][0]
+        self.assertNotIn("test_name", payload["test"]["fmf"])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["tests"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

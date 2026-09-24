@@ -136,6 +136,113 @@ class TestManifestWriter(unittest.TestCase):
         self.assertEqual(tmp_files, [])
 
 
+class TestManifestTestsKey(unittest.TestCase):
+    """`tests` -- the test NAMES a request was dispatched with (ledger D3).
+
+    Distinct from `plan`, which records the plan filter. The run loop
+    derives its per-test attempt counter from the dispatched filter, so
+    the test half has to be recorded too.
+
+    Shaped like `build_ids`: always present on a native entry, `[]` when
+    there was no test filter, never null. The reader-side null exists only
+    on the results.json side, where it means "the manifest predates this
+    key".
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _flushed_entry(self, **add_request_kwargs):
+        """The first requests[] entry as it landed on disk.
+
+        Read back from the flushed file rather than from `to_dict()`: the
+        JSON round-trip is what every consumer actually sees.
+        """
+        w = ManifestWriter(
+            run_id=generate_ulid(), command="test", argv=["enge", "test"]
+        )
+        w.add_request("uuid-1", tier="tier0", arch="x86_64", **add_request_kwargs)
+        path = w.flush(self.runs_dir, self.latest)
+        return json.loads(path.read_text())["requests"][0]
+
+    def test_tests_key_is_emitted_empty_when_not_provided(self):
+        entry = self._flushed_entry()
+
+        self.assertIn("tests", entry)
+        self.assertEqual(entry["tests"], [])
+
+    def test_tests_values_survive_the_flush(self):
+        entry = self._flushed_entry(tests=["a", "b"])
+
+        self.assertEqual(entry["tests"], ["a", "b"])
+
+    def test_the_caller_list_is_copied_not_aliased(self):
+        """Dispatch builds the list from a payload it keeps mutating; an
+        aliased entry would silently follow those later edits."""
+        names = ["a", "b"]
+        w = ManifestWriter(
+            run_id=generate_ulid(), command="test", argv=["enge", "test"]
+        )
+        w.add_request("uuid-1", tests=names)
+
+        names.append("c")
+
+        self.assertEqual(w.to_dict()["requests"][0]["tests"], ["a", "b"])
+
+    def test_none_and_empty_both_record_an_empty_list_never_null(self):
+        self.assertEqual(self._flushed_entry(tests=None)["tests"], [])
+        self.assertEqual(self._flushed_entry(tests=[])["tests"], [])
+
+
+class TestSplitTestFilter(unittest.TestCase):
+    """`split_test_filter` turns a TF `test.fmf.test_name` into the list.
+
+    The filter is a `|`-joined set of anchored names (`t1$|t2$`); the
+    recorded list is an identity, not a regex, so the anchor is stripped.
+    Order is kept and duplicates are kept -- this is what was dispatched,
+    not a set.
+    """
+
+    def _split(self, value):
+        from enge.utils.manifest import split_test_filter
+
+        return split_test_filter(value)
+
+    def test_absent_and_empty_filters_are_no_tests(self):
+        self.assertEqual(self._split(None), [])
+        self.assertEqual(self._split(""), [])
+
+    def test_a_single_anchored_name_loses_its_anchor(self):
+        self.assertEqual(self._split("t1$"), ["t1"])
+
+    def test_several_anchored_names_split_on_the_pipe(self):
+        self.assertEqual(self._split("t1$|t2$"), ["t1", "t2"])
+
+    def test_unanchored_names_pass_through(self):
+        self.assertEqual(self._split("foo"), ["foo"])
+        self.assertEqual(self._split("a|b"), ["a", "b"])
+
+    def test_filters_that_name_nothing_yield_no_tests(self):
+        self.assertEqual(self._split("|"), [])
+        self.assertEqual(self._split("$"), [])
+        self.assertEqual(self._split("$|$"), [])
+
+    def test_empty_parts_are_dropped_not_recorded_as_blanks(self):
+        self.assertEqual(self._split("a$|"), ["a"])
+
+    def test_order_is_preserved(self):
+        self.assertEqual(self._split("z$|a$|m$"), ["z", "a", "m"])
+
+    def test_duplicates_are_preserved(self):
+        self.assertEqual(self._split("a$|a$"), ["a", "a"])
+
+
 class TestManifestReader(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()

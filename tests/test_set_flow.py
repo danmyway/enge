@@ -849,5 +849,169 @@ class TestManifestDispatchContextNonCollapse(unittest.TestCase):
             self.assertNotEqual(alpha_entry["build_ids"], beta_entry["build_ids"])
 
 
+class TestManifestRecordsDispatchedTestNames(unittest.TestCase):
+    """Native dispatch records `tests` from the payload it actually sent.
+
+    `--test NAME` becomes `test.fmf.test_name` in the TF request body; the
+    manifest now carries the same names as a list. `--test-filter` is an
+    FMF filter EXPRESSION, not a test name, and is never recorded.
+    """
+
+    def _make_ctx(self, tmp_path):
+        po = MagicMock()
+        po.testing_farm = {"api_key": "token"}
+        po.testing_farm_endpoint = MagicMock(
+            log_artifact_baseurl="https://artifacts.example.com",
+            api_endpoint_url="https://api.tf.example/v0.1/requests",
+        )
+        po.tests = {
+            "git_url": "https://git.example/repo",
+            "git_ref": "main",
+            "parallel_limit": 5,
+            "tier": {},
+        }
+        po.project = {"repo_url": "https://git.example/repo", "name": "pkg"}
+        po.cli_args = MagicMock()
+        po.cli_args.dryrun = False
+        po.cli_args.testfilter = None
+        po.cli_args.test = None
+        po.cli_args.planfilter = None
+        po.cli_args.environment = None
+        po.cli_args.context = None
+        po.cli_args.git_url = None
+        po.cli_args.git_ref = None
+        po.cli_args.event = None
+        po.cli_args.only_rhsm_mock_cdn = False
+        po.cli_args.no_rhsm = False
+        po.cli_args.only_rhsm_stage_cdn = False
+        po.cli_args.auto_tag = False
+        po.cli_args.set_tag = None
+        po.cli_args.wait = False
+        po.cli_args.action = "test"
+        po.cli_args.copr = None
+        po.cli_args.brew = None
+        po.config = {}
+        po.archive_tasks_latest = str(tmp_path / "latest")
+        po.archive_tasks_default = str(tmp_path / "archive") + "/"
+        po.manifest_runs_dir = str(tmp_path / "runs")
+        po.manifest_latest = str(tmp_path / "manifest_latest")
+        po.pool = None
+        po.architectures = []
+        po.environment_variables = {}
+        po.tmt_context = {}
+        po.copr_reference = None
+        po.copr_references = []
+        po.copr_api = {}
+        po.brew_reference = None
+        po.brew_references = []
+        po.brew_api = {}
+        return po
+
+    def _resolver_stub(self):
+        def resolve_builds(compose_name, ctx):
+            return [
+                {
+                    "compose": compose_name,
+                    "distro": "rhel",
+                    "build_id": "pkg-1.0",
+                    "packages": ["pkg-1.0"],
+                    "nvr": "pkg-1.0",
+                }
+            ]
+
+        stub = MagicMock()
+        stub.resolve_builds = resolve_builds
+        return stub
+
+    def _dispatch(self, **cli_overrides):
+        """Dispatch one spec for real and return (flushed entry, payload).
+
+        The only stubs are the network boundary (`http_post`) and the
+        plan-filter/artifact resolvers; `ManifestWriter` is the real one
+        and the entry is read back from the flushed file.
+        """
+        import json
+        import tempfile
+        from pathlib import Path
+        from enge.utils.manifest import ManifestWriter
+        from enge.utils.ulid import generate_ulid
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            po = self._make_ctx(tmp_path)
+            for key, value in cli_overrides.items():
+                setattr(po.cli_args, key, value)
+
+            spec = RequestSpec(
+                set_name="alpha",
+                tier="tier0",
+                plan="/plans/p1",
+                arch="x86_64",
+                source_spec={"major": 8, "minor": 10, "compose_name": "RHEL-8.10.0"},
+                target_spec={"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"},
+                upgrade_path="8to9",
+                effective_values={"event": "nightly", "copr_api": {}, "brew_api": {}},
+            )
+
+            manifest_writer = ManifestWriter(
+                run_id=generate_ulid(),
+                command="test",
+                argv=["enge", "test"],
+            )
+
+            with (
+                patch(
+                    "enge.dispatch.set_flow.generate_tier_plan_filter",
+                    return_value="name: /plans/.*",
+                ),
+                patch(
+                    "enge.dispatch.tf_send_request.http_post",
+                    return_value=MagicMock(json=lambda: {"id": "task-alpha"}),
+                ) as mock_post,
+            ):
+                result = process_request_spec(
+                    idx=1,
+                    total_expected_requests=1,
+                    spec=spec,
+                    artifact_type="fedora-koji-build",
+                    artifact_resolver=self._resolver_stub(),
+                    ctx=po,
+                    manifest_writer=manifest_writer,
+                )
+
+            self.assertEqual(result.get("status"), "submitted", result)
+            payload = mock_post.call_args.kwargs["json"]
+            flushed = json.loads(
+                (tmp_path / "runs" / f"{manifest_writer.run_id}.json").read_text()
+            )
+            return flushed["requests"][0], payload
+
+    def test_test_option_is_recorded(self):
+        entry, payload = self._dispatch(test="foo")
+
+        # Guard the premise: the value really reached the TF request body.
+        self.assertEqual(payload["test"]["fmf"]["test_name"], "foo")
+        self.assertEqual(entry["tests"], ["foo"])
+
+    def test_no_test_option_records_an_empty_list(self):
+        entry, payload = self._dispatch()
+
+        self.assertIsNone(payload["test"]["fmf"]["test_name"])
+        self.assertEqual(entry["tests"], [])
+
+    def test_test_filter_is_not_a_test_name_and_is_not_recorded(self):
+        """`--test-filter` is an FMF filter expression (`tag:foo & ...`).
+        Recording it as a test name would put a non-name in the list the
+        run loop keys its attempt counter on."""
+        entry, payload = self._dispatch(testfilter="tag:slow & enabled:true")
+
+        # Guard the premise: the expression really was sent, in its own field.
+        self.assertEqual(
+            payload["test"]["fmf"]["test_filter"], "tag:slow & enabled:true"
+        )
+        self.assertIsNone(payload["test"]["fmf"]["test_name"])
+        self.assertEqual(entry["tests"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

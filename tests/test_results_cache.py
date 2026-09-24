@@ -1211,5 +1211,82 @@ class TestVerbatimXunitBytes(_CacheTestCase):
         self.assertFalse(run_subdir.exists() and any(run_subdir.iterdir()))
 
 
+class TestTestsKeyCopiedFromManifest(_CacheTestCase):
+    """`tests` is a straight copy from the manifest request entry.
+
+    Like `rerun_of`/`artifacts_url`/`plan`, it has no run-envelope
+    equivalent -- there is no such thing as a run's "envelope tests" -- so
+    there is nothing to fall back to and the single-set/multi-set
+    distinction does not apply.
+
+    The copy is deliberately NOT `or []`: a manifest that lacks the key
+    (written before this schema, or by `enge migrate-archive`) must yield
+    `null`, meaning "unknown", not `[]`, which would claim the request
+    carried no test filter.
+    """
+
+    def _entry(self, *requests, run_id="01RUNIDTESTSKEYAAAAAAAAAAA"):
+        """Cache one harvested task per request and return the RAW entries.
+
+        Raw, not parsed: `TaskEntry.from_dict` maps an absent key to None
+        just as it maps an explicit null to None, so only the file itself
+        distinguishes what was written.
+        """
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        _write_manifest(runs_dir, run_id, list(requests))
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        cache_report_results(
+            ctx,
+            [
+                _make_task_result(request_uuid=r["task_id"], xunit_bytes=_xunit_bytes())
+                for r in requests
+            ],
+        )
+        raw = json.loads((results_dir_path / f"{run_id}.json").read_text())
+        return raw["results"]
+
+    def test_a_recorded_list_is_copied_verbatim(self):
+        entries = self._entry(
+            _request("77777777-0000-0000-0000-000000000001", tests=["a"])
+        )
+
+        self.assertEqual(entries[0]["tests"], ["a"])
+
+    def test_a_recorded_empty_list_stays_an_empty_list(self):
+        entries = self._entry(
+            _request("77777777-0000-0000-0000-000000000002", tests=[])
+        )
+
+        self.assertEqual(entries[0]["tests"], [])
+        self.assertIsNotNone(entries[0]["tests"])
+
+    def test_a_manifest_without_the_key_writes_null_not_an_empty_list(self):
+        request = _request("77777777-0000-0000-0000-000000000003")
+        # Guard the premise: the manifest entry really lacks the key.
+        self.assertNotIn("tests", request)
+
+        entries = self._entry(request)
+
+        self.assertIn("tests", entries[0])
+        self.assertIsNone(entries[0]["tests"])
+
+    def test_a_multi_set_manifest_copies_per_request_with_no_fallback(self):
+        entries = self._entry(
+            _request(
+                "77777777-0000-0000-0000-000000000004",
+                set_name="alpha",
+                tests=["a"],
+            ),
+            _request("77777777-0000-0000-0000-000000000005", set_name="beta"),
+        )
+
+        by_id = {e["task_id"]: e for e in entries}
+        self.assertEqual(by_id["77777777-0000-0000-0000-000000000004"]["tests"], ["a"])
+        self.assertIsNone(by_id["77777777-0000-0000-0000-000000000005"]["tests"])
+
+
 if __name__ == "__main__":
     unittest.main()

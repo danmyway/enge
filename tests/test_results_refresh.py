@@ -73,6 +73,7 @@ def request_meta(task_id, **overrides):
         "git_ref": "main",
         "event": "preliminary",
         "build_ids": ["copr:12345"],
+        "tests": [],
     }
     base.update(overrides)
     return base
@@ -116,7 +117,7 @@ def plan_block(name="/plans/p1", verdict="PASSED", duration=12.0):
 
 
 def cached_task(task_id, *, drop=(), **overrides):
-    """A results.json task entry carrying all nineteen keys the current
+    """A results.json task entry carrying all twenty keys the current
     writer emits. `drop` removes keys outright -- the only faithful way to
     model a cache written by an older enge version."""
     base = {
@@ -139,6 +140,7 @@ def cached_task(task_id, *, drop=(), **overrides):
         "artifacts_url": f"https://tf.example.com/artifacts/{task_id}",
         "plan": None,
         "plan_filter": None,
+        "tests": [],
     }
     base.update(overrides)
     for key in drop:
@@ -269,6 +271,7 @@ class TestTaskEntryKeyParity(unittest.TestCase):
             artifacts_url="https://tf.example.com/artifacts/t1",
             plan="/plans/p1",
             plan_filter="tag:tier1",
+            tests=["/tests/x"],
         )
 
     def test_task_entry_keys_match_to_dict_emission(self):
@@ -308,6 +311,18 @@ class TestTaskEntryKeyParity(unittest.TestCase):
         raw["artifacts_url"] = None
 
         self.assertEqual(stale_task_keys(raw), frozenset())
+
+    def test_every_pre_tests_key_cache_is_stale(self):
+        """Adding `tests` to the writer's key set makes EVERY cache written
+        before it stale by exactly one key -- an accepted, deliberate
+        consequence (maintainer ruling Q-D3-2, 2026-09-24), not an
+        accident. Users see one aggregated WARNING per report/compare of
+        such a run until they pass `--refresh`."""
+        from enge.utils.results_parser import stale_task_keys
+
+        self.assertEqual(
+            stale_task_keys(cached_task("t1", drop=("tests",))), frozenset({"tests"})
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +744,107 @@ class TestRefreshMetadataFill(RefreshTestCase):
 
         self.assertEqual(entry["plan_filter"], "tag:tier1")
 
+    def test_an_empty_tests_list_is_kept_not_treated_as_absent(self):
+        """G4's empty-list clause is `build_ids`-only and stays that way
+        (maintainer ruling Q-D3-1, 2026-09-24).
+
+        `build_ids: []` is genuinely ambiguous -- the writer emits it both
+        for "no builds" and for "not recorded". `tests: []` is not: the
+        manifest writer distinguishes them itself, absent meaning unknown
+        and `[]` meaning recorded-as-no-filter. So `[]` here is a
+        populated value and G4 keeps it, exactly like any other."""
+        entry = self._refresh(
+            cached_task("t1", tests=[]),
+            meta_overrides={"tests": ["/tests/x"]},
+        )
+
+        self.assertEqual(entry["tests"], [])
+
+    def test_a_populated_tests_list_is_kept_when_the_fresh_value_differs(self):
+        entry = self._refresh(
+            cached_task("t1", tests=["/tests/a"]),
+            meta_overrides={"tests": ["/tests/b"]},
+        )
+
+        self.assertEqual(entry["tests"], ["/tests/a"])
+
+
+# ---------------------------------------------------------------------------
+# The `tests` key across a refresh
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshTestsKey(RefreshTestCase):
+    """What `--refresh` can and cannot repair about `tests`.
+
+    The key is sourced from the manifest, so refreshing a cache written
+    before the key existed only helps when the RUN's manifest was written
+    after it. Refreshing a pre-key cache against a pre-key manifest still
+    ends the staleness -- the entry gains the key with a null value, which
+    is honest: nobody ever recorded what that request was filtered to.
+    """
+
+    RUN = "01RUND3REFRESHAAAAAAAAAAAA"
+
+    def _refresh(self, manifest_request):
+        from enge.report.results_cache import cache_report_results
+        from enge.utils.results_parser import read_raw_results_json
+
+        write_manifest(self.runs_dir, self.RUN, [manifest_request])
+        path = write_cache(
+            self.results_dir, self.RUN, [cached_task("t1", drop=("tests",))]
+        )
+        # Guard the premise: the cache is finalized and pre-key.
+        raw = json.loads(path.read_text())
+        self.assertIsNotNone(raw["verdict"])
+        self.assertNotIn("tests", raw["results"][0])
+
+        ctx = self.ctx({"run": self.RUN, "refresh": True})
+        with captured_logs(CACHE_LOGGER) as records:
+            cache_report_results(
+                ctx, [task_result("t1", xunit_bytes=xunit_bytes())], refresh=True
+            )
+        return read_raw_results_json(path)["results"][0], records
+
+    def _plain_report(self):
+        from enge.report.results_cache import cache_report_results
+
+        ctx = self.ctx({"run": self.RUN, "refresh": False})
+        with captured_logs(CACHE_LOGGER) as records:
+            cache_report_results(ctx, [], refresh=False)
+        return records
+
+    def test_a_post_key_manifest_fills_the_recorded_test_names(self):
+        entry, records = self._refresh(request_meta("t1", tests=["/tests/x"]))
+
+        self.assertEqual(entry["tests"], ["/tests/x"])
+        hits = matching(records, "refreshed run", level=logging.INFO)
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("1 task(s) had metadata filled", hits[0])
+
+    def test_a_pre_key_manifest_fills_nothing_but_still_ends_the_staleness(self):
+        pre_key_request = {
+            key: value for key, value in request_meta("t1").items() if key != "tests"
+        }
+
+        entry, records = self._refresh(pre_key_request)
+
+        self.assertIn("tests", entry)
+        self.assertIsNone(entry["tests"])
+        hits = matching(records, "refreshed run", level=logging.INFO)
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("0 task(s) had metadata filled", hits[0])
+
+        # The key is present now, so the next plain report is silent.
+        self.assertEqual(
+            matching(
+                self._plain_report(),
+                "were cached by an older enge version",
+                level=None,
+            ),
+            [],
+        )
+
 
 # ---------------------------------------------------------------------------
 # G5 -- no silent normalization
@@ -753,6 +869,7 @@ class TestRefreshNoSilentNormalization(RefreshTestCase):
         "artifacts_url",
         "plan",
         "plan_filter",
+        "tests",
     )
 
     def _refresh_stale_run(self):
@@ -762,7 +879,7 @@ class TestRefreshNoSilentNormalization(RefreshTestCase):
         write_manifest(
             self.runs_dir,
             self.RUN,
-            [request_meta("t1", plan="/plans/p1")],
+            [request_meta("t1", plan="/plans/p1", tests=["/tests/x"])],
         )
         path = write_cache(
             self.results_dir, self.RUN, [cached_task("t1", drop=self.STALE_KEYS)]
@@ -801,6 +918,7 @@ class TestRefreshNoSilentNormalization(RefreshTestCase):
         self.assertEqual(entry["artifacts_url"], "https://tf.example.com/artifacts/t1")
         self.assertEqual(entry["plan"], "/plans/p1")
         self.assertEqual(entry["plan_filter"], "tag:tier1")
+        self.assertEqual(entry["tests"], ["/tests/x"])
 
 
 # ---------------------------------------------------------------------------
@@ -1185,6 +1303,30 @@ class TestReportStalenessWarning(RefreshTestCase):
         raw = json.loads(path.read_text())
         self.assertNotIn("artifacts_url", raw["results"][0])
         self.assertIn("artifacts_url", raw["results"][1])
+
+        ctx = self.ctx({"run": run_id, "refresh": False})
+        with captured_logs(CACHE_LOGGER) as records:
+            cache_report_results(ctx, [], refresh=False)
+
+        hits = matching(records, self.NEEDLE, level=logging.WARNING)
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("1 of 1 selected run(s)", hits[0])
+
+    def test_a_cache_missing_only_the_tests_key_is_stale(self):
+        """Q-D3-2 (accepted, 2026-09-24): adding `tests` makes every cache
+        written before it stale, including one that is otherwise byte-for-byte
+        what the current writer emits. One WARNING per report until
+        `--refresh`."""
+        from enge.report.results_cache import cache_report_results
+
+        run_id = "01RUNSTALED3AAAAAAAAAAAAAA"
+        write_manifest(self.runs_dir, run_id, [request_meta("t1")])
+        path = write_cache(
+            self.results_dir, run_id, [cached_task("t1", drop=("tests",))]
+        )
+        # Guard the premise: `tests` is the ONLY thing this cache lacks.
+        raw = json.loads(path.read_text())
+        self.assertEqual(set(raw["results"][0]), set(cached_task("t1")) - {"tests"})
 
         ctx = self.ctx({"run": run_id, "refresh": False})
         with captured_logs(CACHE_LOGGER) as records:
