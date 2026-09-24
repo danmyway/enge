@@ -701,7 +701,7 @@ class TestCompareStalenessWarning(unittest.TestCase):
 
         _ctx, records = self._load()
 
-        self.assertEqual(matching(records, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE, level=None), [])
 
     def test_a_run_with_no_cache_is_counted_but_never_stale(self):
         """A missing cache already has its own ERROR naming the fix command;
@@ -722,6 +722,33 @@ class TestCompareStalenessWarning(unittest.TestCase):
         self.assertEqual(len(hits), 1, records)
         self.assertIn("1 of 2 selected run(s)", hits[0])
 
+    def test_one_stale_entry_among_several_makes_the_run_stale(self):
+        """Compare-side mirror of the report-side rule: the staleness scan
+        is an ANY over the run's entries, not an ALL. A run whose later
+        gap-fill wrote one current entry beside an old one is still stale
+        and must still be offered the repair."""
+        _write_manifest(
+            self.runs_dir,
+            "run1",
+            [_request("t1"), _request("t2")],
+            context={"set": "setA"},
+        )
+        stale_entry = _task_entry("t1")
+        stale_entry.pop("artifacts_url", None)
+        _write_results_json(
+            self.results_dir, "run1", tasks=[stale_entry, _task_entry("t2")]
+        )
+        # Guard the premise: exactly one of the two entries is stale.
+        raw = json.loads((self.results_dir / "run1.json").read_text())
+        self.assertNotIn("artifacts_url", raw["results"][0])
+        self.assertIn("artifacts_url", raw["results"][1])
+
+        _ctx, records = self._load()
+
+        hits = matching(records, self.NEEDLE, level=logging.WARNING)
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("1 of 1 selected run(s)", hits[0])
+
     def test_unfinalized_cache_is_never_reported_as_stale(self):
         """`--refresh` refuses an unfinalized file, so advertising it for
         one would be wrong advice."""
@@ -738,7 +765,7 @@ class TestCompareStalenessWarning(unittest.TestCase):
 
         _ctx, records = self._load()
 
-        self.assertEqual(matching(records, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE, level=None), [])
 
 
 if __name__ == "__main__":

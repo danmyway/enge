@@ -39,12 +39,17 @@ def captured_logs(logger_name, level=logging.DEBUG):
         logger.setLevel(previous_level)
 
 
-def matching(records, needle, *, level=None):
+def matching(records, needle, *, level):
     """The recorded messages containing `needle`.
 
     `level` (a logging level number) additionally restricts the match to
-    records emitted at exactly that level; leave it None to match a message
-    at any level, which is what a "this never fires" assertion wants.
+    records emitted at exactly that level; pass None to match a message at
+    any level, which is what a "this never fires" assertion wants.
+
+    `level` is REQUIRED and keyword-only on purpose. A defaulted `level`
+    let a positive assertion silently accept the right message at the
+    wrong severity -- a WARNING demoted to DEBUG still matched. Callers
+    must now say which they mean, including the negatives (`level=None`).
     """
     return [
         record.getMessage()
