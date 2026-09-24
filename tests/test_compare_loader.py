@@ -27,6 +27,7 @@ None.
 """
 
 import json
+import logging
 import tempfile
 import unittest
 from pathlib import Path
@@ -670,9 +671,9 @@ class TestCompareStalenessWarning(unittest.TestCase):
         from enge.compare.loader import load_columns
 
         ctx = self._ctx()
-        with captured_logs("enge.compare.loader") as messages:
+        with captured_logs("enge.compare.loader") as records:
             load_columns(ctx)
-        return ctx, messages
+        return ctx, records
 
     def test_one_warning_for_two_stale_runs_of_three(self):
         from enge.utils.manifest_resolution import resolve_manifests_for_invocation
@@ -680,10 +681,10 @@ class TestCompareStalenessWarning(unittest.TestCase):
         stale = {"run1", "run3"}
         self._three_runs(stale)
 
-        ctx, messages = self._load()
+        ctx, records = self._load()
 
-        hits = matching(messages, self.NEEDLE)
-        self.assertEqual(len(hits), 1, messages)
+        hits = matching(records, self.NEEDLE, level=logging.WARNING)
+        self.assertEqual(len(hits), 1, records)
         self.assertTrue(hits[0].startswith("compare:"), hits[0])
         self.assertIn("2 of 3 selected run(s)", hits[0])
         self.assertIn("--refresh", hits[0])
@@ -698,9 +699,9 @@ class TestCompareStalenessWarning(unittest.TestCase):
     def test_no_warning_when_no_run_is_stale(self):
         self._three_runs(set())
 
-        _ctx, messages = self._load()
+        _ctx, records = self._load()
 
-        self.assertEqual(matching(messages, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE), [])
 
     def test_a_run_with_no_cache_is_counted_but_never_stale(self):
         """A missing cache already has its own ERROR naming the fix command;
@@ -715,10 +716,10 @@ class TestCompareStalenessWarning(unittest.TestCase):
         stale_entry.pop("artifacts_url", None)
         _write_results_json(self.results_dir, "run1", tasks=[stale_entry])
 
-        _ctx, messages = self._load()
+        _ctx, records = self._load()
 
-        hits = matching(messages, self.NEEDLE)
-        self.assertEqual(len(hits), 1, messages)
+        hits = matching(records, self.NEEDLE, level=logging.WARNING)
+        self.assertEqual(len(hits), 1, records)
         self.assertIn("1 of 2 selected run(s)", hits[0])
 
     def test_unfinalized_cache_is_never_reported_as_stale(self):
@@ -735,9 +736,9 @@ class TestCompareStalenessWarning(unittest.TestCase):
         payload["verdict"] = None
         path.write_text(json.dumps(payload))
 
-        _ctx, messages = self._load()
+        _ctx, records = self._load()
 
-        self.assertEqual(matching(messages, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE), [])
 
 
 if __name__ == "__main__":

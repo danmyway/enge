@@ -9,19 +9,23 @@ from enge.utils.opt_manager import TestingFarmEndpoint
 class _ListHandler(logging.Handler):
     def __init__(self):
         super().__init__()
-        self.messages = []
+        self.records = []
 
     def emit(self, record):
-        self.messages.append(record.getMessage())
+        self.records.append(record)
 
 
 @contextlib.contextmanager
 def captured_logs(logger_name, level=logging.DEBUG):
-    """Record every message a logger emits, including none at all.
+    """Record every record a logger emits, including none at all.
 
     unittest's assertLogs() FAILS when no record is emitted, which makes it
     unusable for asserting that a particular WARNING did *not* fire -- the
     code paths under test routinely emit other, unrelated records, or none.
+
+    Whole LogRecords are kept, not rendered messages, so a caller can pin the
+    level a line is emitted at: a WARNING demoted to DEBUG still carries the
+    same text, and a test that only looks at text cannot tell the two apart.
     """
     logger = logging.getLogger(logger_name)
     handler = _ListHandler()
@@ -29,15 +33,24 @@ def captured_logs(logger_name, level=logging.DEBUG):
     logger.addHandler(handler)
     logger.setLevel(level)
     try:
-        yield handler.messages
+        yield handler.records
     finally:
         logger.removeHandler(handler)
         logger.setLevel(previous_level)
 
 
-def matching(messages, needle):
-    """The recorded messages containing `needle`."""
-    return [m for m in messages if needle in m]
+def matching(records, needle, *, level=None):
+    """The recorded messages containing `needle`.
+
+    `level` (a logging level number) additionally restricts the match to
+    records emitted at exactly that level; leave it None to match a message
+    at any level, which is what a "this never fires" assertion wants.
+    """
+    return [
+        record.getMessage()
+        for record in records
+        if needle in record.getMessage() and (level is None or record.levelno == level)
+    ]
 
 
 def make_app_context(
