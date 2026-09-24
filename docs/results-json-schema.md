@@ -140,6 +140,7 @@ envelope -> per-task results -> per-plan -> per-test.
       "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/5d67eecf-a02d-46b7-aee2-9ffb673f40df",
       "plan": "plans",
       "plan_filter": "tag:verification_99_103_ctc2",
+      "tests": [],
       "plans": [
         {
           "name": "/plans/newstyle/nondestructive/verification_99_103_ctc2",
@@ -250,8 +251,27 @@ in its `REQUEST METADATA` table, at zero additional network cost.
 `TaskResult`'s `""` empty-string default is normalized to `null`,
 matching this schema's established none-vs-empty convention.
 
+`tests` (nullable list of strings, 2026-09-24) is **optional** on the
+same terms, and is copied verbatim from the manifest request with no
+envelope fallback, like `plan` beside it. It holds the test NAMES the
+request was dispatched with — see `docs/manifest-schema.md` for how
+both writers derive them. **Do not confuse it with `plans[].tests`**,
+which is a list of test result OBJECTS harvested from xunit. This one
+is a flat list of strings and is a dispatch fact, not a result: it says
+what was asked for, not what came back.
+
+Its three-valued nullability is deliberate and is NOT the `build_ids`
+shape: `null` (or the key absent) means no manifest ever recorded what
+the request was filtered to — a cache written before 2026-09-24, or one
+backed by a migrated manifest, which never carries the key — while `[]`
+means it WAS recorded and there was no test filter, i.e. the request
+asked for the whole plan. The harvest therefore copies the manifest
+value straight through rather than defaulting it to `[]`, which would
+assert something nobody knows.
+
 **Plan — all required**: `name` (str, verbatim `testsuite@name` from
-xunit), `verdict` (enum), `tests` (list).
+xunit), `verdict` (enum), `tests` (list of test objects — the harvested
+results, not the dispatch-time names in the task-level `tests` above).
 
 **Test — required**: `name` (str, verbatim `testcase@name`), `verdict`
 (enum), `duration_seconds` (float; `0` when not run). **Optional**:
@@ -455,6 +475,12 @@ data-loss vector:
   rather than `null`) empty. A populated cached value wins even when the
   fresh harvest disagrees. The cache is the historical record of what
   dispatch knew; a later harvest does not get to rewrite it.
+  The empty-list clause is `build_ids`-only and stays that way
+  (maintainer ruling Q-D3-1, 2026-09-24). `build_ids: []` is genuinely
+  ambiguous — the writer emits it both for "no builds" and for "not
+  recorded" — whereas `tests: []` is not, because the results-entry
+  shape distinguishes the two itself (`null` vs `[]`). An empty `tests`
+  is a populated value and G4 keeps it.
 
 A fifth guard is an ordering rule rather than a policy: **the merge
 happens on raw dicts, before the `TaskEntry` round-trip**, because the
@@ -478,6 +504,24 @@ refresh has confirmed Testing Farm still has no xunit for it. That is
 deliberate (maintainer ruling, 2026-09-23): such a run is a genuine
 gap and a rerun candidate, and visibility beats silence.
 
+**Adding a task-entry key makes every older cache stale.** This is the
+cost of the design, accepted rather than worked around (maintainer
+ruling Q-D3-2, 2026-09-24, on the `tests` key). Concretely, after such
+a key lands:
+
+- Every `results.json` written before it lacks the key, so the
+  aggregated staleness WARNING fires on every `enge report` and every
+  `enge compare` that selects one of those runs, until `--refresh`.
+- `--refresh` against a manifest that also predates the key fills
+  nothing — the INFO line reports 0 tasks had metadata filled — but it
+  still ends the staleness, because the rewrite emits the key with a
+  `null` value. That null is the honest answer: nobody ever recorded
+  it.
+- A run whose Testing Farm records have aged out cannot be refreshed at
+  all (G2 needs every cached task present and terminal in the
+  invocation), so its WARNING is permanent. The fix is to stop
+  selecting the run, not to silence the warning.
+
 `--refresh` is rejected with a `ValidationError` (exit 2), raised
 before any network fetch, when the invocation has no manifest-backed
 run to repair — raw task input (`-i`/`--input`, `-f`/`--file`) — or
@@ -486,27 +530,28 @@ A useless repair fails loudly rather than being silently ignored.
 
 **Golden fixture MD5s** (`tests/fixtures/`; updated when the
 dispatch-context-schema fields — `source`/`target`/`git_ref`/`event`/
-`build_ids` — were added to every task entry below, and later when
-`rerun_of`/`artifacts_url`/`plan`/`plan_filter` were added):
+`build_ids` — were added to every task entry below, later when
+`rerun_of`/`artifacts_url`/`plan`/`plan_filter` were added, and later
+still when `tests` was added):
 - `results_golden.json` (finalized multi-task run; 3 task entries —
   PASSED, FAILED-with-a-SKIPPED-plan, and an ERROR task with
   `plans: []`; root `verdict` = `"ERROR"`, the severity-max of
-  PASSED/FAILED/ERROR): `7731ee7227a5b18562d56dd27c9cefd9`
+  PASSED/FAILED/ERROR): `5503dbf13ecf4a316a683055ba13bdf3`
 - `results_golden_partial.json` (unfinalized run; root `verdict: null`,
   2 task entries against an assumed `expected_count=3` — a third
   tier1/aarch64 task has not reported in yet):
-  `4d21cf882dfc26fd19f6c0a3a786257a`
+  `fb818cb505540ac9bd87253e5b729e61`
 - `results_golden_canceled.json` (finalized run mixing a CANCELED task,
   `plans: []`, `total_duration_seconds: 32.4`, with a PASSED task; root
   `verdict` = `"CANCELED"`, demonstrating CANCELED outranking PASSED in
-  the severity ranking): `906acabeaec812e44f0109e64c8f7275`
+  the severity ranking): `b6a99d54677d3f88674b387e4a8305a2`
 - `results_golden_multiset.json` (finalized two-set run sharing one
   upgrade path across different tier/arch coordinates —
   `verification-alpha`/`tier0only`/`x86_64` and `verification-beta`/
   `tier1only`/`aarch64`, both `9.9`→`10.3`; root `verdict` = `"PASSED"`;
   demonstrates the envelope's `event`/`source`/`target` all `null`
   despite the matching path, while both task entries correctly carry
-  `source`/`target`/`tier`/`arch`): `2c455f543b2b9b97bce636d09ddf6f28`
+  `source`/`target`/`tier`/`arch`): `6da0daa76a1b0e343cf260a5994c466f`
 
 This schema is contract-pinned as of 2026-07-14. Cross-cutting contract:
 schema changes require maintainer sign-off.
