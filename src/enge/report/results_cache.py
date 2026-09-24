@@ -209,11 +209,14 @@ def _build_task_entry(
             value = context.get(key)
         dispatch_context[key] = value
     dispatch_context["build_ids"] = request_meta.get("build_ids") or []
-    # rerun_of/artifacts_url/plan have no run-envelope equivalent to fall
-    # back to (there is no such thing as a run's "envelope plan" or
+    # rerun_of/artifacts_url/plan/tests have no run-envelope equivalent to
+    # fall back to (there is no such thing as a run's "envelope plan" or
     # "envelope rerun_of") -- straight copy, None when the manifest entry
-    # lacks the key, regardless of single-set/multi-set.
-    for key in ("rerun_of", "artifacts_url", "plan"):
+    # lacks the key, regardless of single-set/multi-set. `tests` in
+    # particular must NOT get build_ids' `or []`: the manifest's own
+    # absent-vs-[] distinction is the only record of whether anything was
+    # ever known about the request's test filter.
+    for key in ("rerun_of", "artifacts_url", "plan", "tests"):
         dispatch_context[key] = request_meta.get(key)
     # plan_filter is deliberately never written to the manifest at
     # dispatch time (maintainer ruling: it's still in the TF API request

@@ -15,7 +15,7 @@ from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_request_xunit
 from enge.utils.task_resolver import parse_tasks_with_map
 from enge.utils.errors import ValidationError
-from enge.utils.manifest import ManifestReader
+from enge.utils.manifest import ManifestReader, split_test_filter
 from enge.utils.app_context import AppContext
 from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
 from enge.utils.console import console
@@ -1112,6 +1112,10 @@ def main(ctx: AppContext):
                 git_ref=request_data.get("tests_git_ref"),
                 event=request_data.get("event"),
                 build_ids=[a["id"] for a in artifacts if a.get("id")],
+                # From the payload actually sent, not from `request_data`,
+                # whose `test_name` is a display string built for the
+                # dry-run table.
+                tests=split_test_filter(test_fmf.get("test_name")),
             )
             manifest_writer.flush(
                 Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest)
