@@ -843,6 +843,65 @@ class TestRefreshInfoLine(RefreshTestCase):
         self.assertIn("root verdict ERROR -> PASSED", hits[0])
 
 
+class TestRefreshXunitConflict(RefreshTestCase):
+    """The xunit write that follows a recovery is best-effort.
+
+    Recovering an ERROR + [] task republishes its xunit. If a file for that
+    task is already on disk with DIFFERENT bytes, `write_xunit` refuses
+    (write-once) and raises `ConflictError`. That must not abort the
+    refresh: the results.json rewrite has already happened, and caching
+    failures never fail the report command.
+    """
+
+    RUN = "01RUNXCONFLICTAAAAAAAAAAAA"
+
+    def _refresh_over_a_conflicting_xunit(self):
+        from enge.report.results_cache import cache_report_results
+
+        write_manifest(self.runs_dir, self.RUN, [request_meta("t1")])
+        write_cache(
+            self.results_dir, self.RUN, [error_empty_task("t1")], verdict="ERROR"
+        )
+        stale_xml = b"<?xml version='1.0'?><testsuites overall-result='error'/>"
+        run_dir = self.results_dir / self.RUN
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "t1.xml").write_bytes(stale_xml)
+        ctx = self.ctx({"run": self.RUN, "refresh": True})
+
+        with captured_logs(CACHE_LOGGER) as records:
+            cache_report_results(
+                ctx, [task_result("t1", xunit_bytes=xunit_bytes())], refresh=True
+            )
+        return records, run_dir / "t1.xml", stale_xml
+
+    def test_the_conflict_does_not_abort_the_refresh(self):
+        from enge.utils.results_parser import read_raw_results_json
+
+        self._refresh_over_a_conflicting_xunit()
+
+        entry = read_raw_results_json(self.results_dir / f"{self.RUN}.json")["results"][
+            0
+        ]
+        # Premise guard: the recovery really happened, so write_xunit really
+        # was reached. Without this the test would pass on a refresh that
+        # recovered nothing.
+        self.assertEqual(entry["verdict"], "PASSED")
+        self.assertNotEqual(entry["plans"], [])
+
+    def test_the_existing_xunit_bytes_are_kept_verbatim(self):
+        _records, xml_path, stale_xml = self._refresh_over_a_conflicting_xunit()
+
+        self.assertEqual(xml_path.read_bytes(), stale_xml)
+
+    def test_the_conflict_is_reported_once_as_a_warning(self):
+        records, _xml_path, _stale = self._refresh_over_a_conflicting_xunit()
+
+        hits = matching(records, "conflicting cached xunit", level=logging.WARNING)
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("t1", hits[0])
+        self.assertIn(self.RUN, hits[0])
+
+
 class TestRefreshFallsBackToNormalGapFill(RefreshTestCase):
     RUN = "01RUNFALLBACKAAAAAAAAAAAAA"
 
@@ -938,7 +997,9 @@ class TestErrorEmptyWarning(RefreshTestCase):
     def test_no_warning_under_refresh(self):
         records = self._report([error_empty_task("t1")], "ERROR", refresh=True)
 
-        self.assertEqual(matching(records, "task(s) with no test results recorded"), [])
+        self.assertEqual(
+            matching(records, "task(s) with no test results recorded", level=None), []
+        )
 
     def test_no_warning_under_refresh_when_the_cache_is_written_by_this_run(self):
         """The suppression must hold on the path that *creates* the offending
@@ -966,7 +1027,9 @@ class TestErrorEmptyWarning(RefreshTestCase):
         self.assertEqual(schema.verdict, "ERROR")
         self.assertEqual([t.verdict for t in schema.results], ["ERROR"])
         self.assertEqual(schema.results[0].plans, [])
-        self.assertEqual(matching(records, "task(s) with no test results recorded"), [])
+        self.assertEqual(
+            matching(records, "task(s) with no test results recorded", level=None), []
+        )
 
     def test_no_warning_for_canceled_empty_entries(self):
         records = self._report(
@@ -978,7 +1041,9 @@ class TestErrorEmptyWarning(RefreshTestCase):
             "CANCELED",
         )
 
-        self.assertEqual(matching(records, "task(s) with no test results recorded"), [])
+        self.assertEqual(
+            matching(records, "task(s) with no test results recorded", level=None), []
+        )
 
     def test_no_warning_for_an_unfinalized_cache(self):
         """An unfinalized run has a live gap-fill path already; --refresh
@@ -992,7 +1057,9 @@ class TestErrorEmptyWarning(RefreshTestCase):
         # unfinalized, otherwise this test passes for the wrong reason.
         schema = parse_results_json(self.results_dir / f"{self.RUN}.json")
         self.assertIsNone(schema.verdict)
-        self.assertEqual(matching(records, "task(s) with no test results recorded"), [])
+        self.assertEqual(
+            matching(records, "task(s) with no test results recorded", level=None), []
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1054,14 +1121,14 @@ class TestReportStalenessWarning(RefreshTestCase):
 
         _ctx, records = self._report()
 
-        self.assertEqual(matching(records, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE, level=None), [])
 
     def test_no_warning_under_refresh(self):
         self._three_runs({"01RUNSTALE1AAAAAAAAAAAAAAA"})
 
         _ctx, records = self._report(refresh=True)
 
-        self.assertEqual(matching(records, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE, level=None), [])
 
     def test_no_warning_under_refresh_even_when_the_run_stays_stale(self):
         """--refresh suppresses the pointer-at-the-flag advice unconditionally,
@@ -1096,7 +1163,36 @@ class TestReportStalenessWarning(RefreshTestCase):
             1,
             records,
         )
-        self.assertEqual(matching(records, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE, level=None), [])
+
+    def test_one_stale_entry_among_several_makes_the_run_stale(self):
+        """`_has_stale_entries` is an ANY over the run's entries, not an ALL.
+
+        A run that predates a key rarely loses it on every task -- a later
+        gap-fill can have written one current entry beside an old one. If
+        the predicate demanded that every entry be stale, that run would
+        silently never be offered the repair."""
+        from enge.report.results_cache import cache_report_results
+
+        run_id = "01RUNSTALEMIXEDAAAAAAAAAAA"
+        write_manifest(self.runs_dir, run_id, [request_meta("t1"), request_meta("t2")])
+        path = write_cache(
+            self.results_dir,
+            run_id,
+            [cached_task("t1", drop=("artifacts_url",)), cached_task("t2")],
+        )
+        # Guard the premise: exactly one of the two entries is stale.
+        raw = json.loads(path.read_text())
+        self.assertNotIn("artifacts_url", raw["results"][0])
+        self.assertIn("artifacts_url", raw["results"][1])
+
+        ctx = self.ctx({"run": run_id, "refresh": False})
+        with captured_logs(CACHE_LOGGER) as records:
+            cache_report_results(ctx, [], refresh=False)
+
+        hits = matching(records, self.NEEDLE, level=logging.WARNING)
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("1 of 1 selected run(s)", hits[0])
 
     def test_an_unfinalized_cache_is_never_reported_as_stale(self):
         """Report-side mirror of the compare-side rule: --refresh refuses an
@@ -1123,7 +1219,41 @@ class TestReportStalenessWarning(RefreshTestCase):
         raw = json.loads(path.read_text())
         self.assertIsNone(raw["verdict"])
         self.assertNotIn("artifacts_url", raw["results"][0])
-        self.assertEqual(matching(records, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE, level=None), [])
+
+
+# ---------------------------------------------------------------------------
+# The log-assertion helper's own contract
+# ---------------------------------------------------------------------------
+
+
+class TestMatchingHelperRequiresALevel(unittest.TestCase):
+    """`matching`'s `level` is required and keyword-only.
+
+    Every assertion in this module and in test_compare_loader.py that the
+    right message fired leans on it. While `level` defaulted to None, a
+    WARNING demoted to DEBUG still satisfied those assertions -- the
+    severity half of the contract was untested by construction."""
+
+    def test_level_has_no_default(self):
+        import inspect
+
+        from tests._helpers import matching as helper
+
+        self.assertIs(
+            inspect.signature(helper).parameters["level"].default,
+            inspect.Parameter.empty,
+        )
+
+    def test_level_is_keyword_only(self):
+        import inspect
+
+        from tests._helpers import matching as helper
+
+        self.assertIs(
+            inspect.signature(helper).parameters["level"].kind,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
 
 
 # ---------------------------------------------------------------------------
