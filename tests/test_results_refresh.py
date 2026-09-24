@@ -37,6 +37,7 @@ erases into `None` the moment it parses.
 """
 
 import json
+import logging
 import tempfile
 import unittest
 from pathlib import Path
@@ -502,13 +503,13 @@ class TestRefreshCompleteness(RefreshTestCase):
         self._two_task_run()
         ctx = self.ctx({"run": "01RUNG2AAAAAAAAAAAAAAAAAAA", "refresh": True})
 
-        with captured_logs(CACHE_LOGGER) as messages:
+        with captured_logs(CACHE_LOGGER) as records:
             cache_report_results(
                 ctx, [task_result("t1", xunit_bytes=xunit_bytes())], refresh=True
             )
 
-        hits = matching(messages, "cannot refresh run")
-        self.assertEqual(len(hits), 1, messages)
+        hits = matching(records, "cannot refresh run", level=logging.WARNING)
+        self.assertEqual(len(hits), 1, records)
         self.assertIn("01RUNG2AAAAAAAAAAAAAAAAAAA", hits[0])
         self.assertIn("1 of 2 cached task(s) not available", hits[0])
         self.assertIn("run is unchanged", hits[0])
@@ -824,7 +825,7 @@ class TestRefreshInfoLine(RefreshTestCase):
         )
         ctx = self.ctx({"run": self.RUN, "refresh": True})
 
-        with captured_logs(CACHE_LOGGER) as messages:
+        with captured_logs(CACHE_LOGGER) as records:
             cache_report_results(
                 ctx,
                 [
@@ -834,8 +835,8 @@ class TestRefreshInfoLine(RefreshTestCase):
                 refresh=True,
             )
 
-        hits = matching(messages, "refreshed run")
-        self.assertEqual(len(hits), 1, messages)
+        hits = matching(records, "refreshed run", level=logging.INFO)
+        self.assertEqual(len(hits), 1, records)
         self.assertIn(self.RUN, hits[0])
         self.assertIn("1 task(s) recovered", hits[0])
         self.assertIn("1 task(s) had metadata filled", hits[0])
@@ -906,16 +907,16 @@ class TestErrorEmptyWarning(RefreshTestCase):
         write_cache(self.results_dir, self.RUN, tasks, verdict=root_verdict)
         ctx = self.ctx({"run": self.RUN, "refresh": refresh})
 
-        with captured_logs(CACHE_LOGGER) as messages:
+        with captured_logs(CACHE_LOGGER) as records:
             cache_report_results(
                 ctx,
                 [task_result(t["task_id"], request_state="ERROR") for t in tasks],
                 refresh=refresh,
             )
-        return messages
+        return records
 
     def test_warns_once_naming_the_run_and_the_count(self):
-        messages = self._report(
+        records = self._report(
             [
                 error_empty_task("t1"),
                 error_empty_task("t2"),
@@ -924,21 +925,51 @@ class TestErrorEmptyWarning(RefreshTestCase):
             "ERROR",
         )
 
-        hits = matching(messages, "task(s) with no test results recorded")
-        self.assertEqual(len(hits), 1, messages)
+        hits = matching(
+            records,
+            "task(s) with no test results recorded",
+            level=logging.WARNING,
+        )
+        self.assertEqual(len(hits), 1, records)
         self.assertIn(self.RUN, hits[0])
         self.assertIn("has 2 task(s)", hits[0])
         self.assertIn(f"enge report --run {self.RUN} --refresh", hits[0])
 
     def test_no_warning_under_refresh(self):
-        messages = self._report([error_empty_task("t1")], "ERROR", refresh=True)
+        records = self._report([error_empty_task("t1")], "ERROR", refresh=True)
 
-        self.assertEqual(
-            matching(messages, "task(s) with no test results recorded"), []
-        )
+        self.assertEqual(matching(records, "task(s) with no test results recorded"), [])
+
+    def test_no_warning_under_refresh_when_the_cache_is_written_by_this_run(self):
+        """The suppression must hold on the path that *creates* the offending
+        entry, not only on the one that finds it already cached.
+
+        With no cache at invocation time, --refresh falls through to the
+        normal gap-fill, which records the ERROR + [] entry and finalizes the
+        run -- so the warning's precondition is met for the first time inside
+        the very invocation that is suppressing it.
+        """
+        from enge.report.results_cache import cache_report_results
+        from enge.utils.results_parser import parse_results_json
+
+        write_manifest(self.runs_dir, self.RUN, [request_meta("t1")])
+        ctx = self.ctx({"run": self.RUN, "refresh": True})
+
+        with captured_logs(CACHE_LOGGER) as records:
+            cache_report_results(
+                ctx, [task_result("t1", request_state="ERROR")], refresh=True
+            )
+
+        # Guard the premise: the invocation must genuinely finalize a cache
+        # holding the recoverable shape, otherwise nothing was suppressed.
+        schema = parse_results_json(self.results_dir / f"{self.RUN}.json")
+        self.assertEqual(schema.verdict, "ERROR")
+        self.assertEqual([t.verdict for t in schema.results], ["ERROR"])
+        self.assertEqual(schema.results[0].plans, [])
+        self.assertEqual(matching(records, "task(s) with no test results recorded"), [])
 
     def test_no_warning_for_canceled_empty_entries(self):
-        messages = self._report(
+        records = self._report(
             [
                 cached_task(
                     "t1", verdict="CANCELED", plans=[], total_duration_seconds=0.0
@@ -947,9 +978,7 @@ class TestErrorEmptyWarning(RefreshTestCase):
             "CANCELED",
         )
 
-        self.assertEqual(
-            matching(messages, "task(s) with no test results recorded"), []
-        )
+        self.assertEqual(matching(records, "task(s) with no test results recorded"), [])
 
     def test_no_warning_for_an_unfinalized_cache(self):
         """An unfinalized run has a live gap-fill path already; --refresh
@@ -957,15 +986,13 @@ class TestErrorEmptyWarning(RefreshTestCase):
         wrong advice."""
         from enge.utils.results_parser import parse_results_json
 
-        messages = self._report([error_empty_task("t1")], None, pending=1)
+        records = self._report([error_empty_task("t1")], None, pending=1)
 
         # Guard the premise: the invocation must genuinely leave the file
         # unfinalized, otherwise this test passes for the wrong reason.
         schema = parse_results_json(self.results_dir / f"{self.RUN}.json")
         self.assertIsNone(schema.verdict)
-        self.assertEqual(
-            matching(messages, "task(s) with no test results recorded"), []
-        )
+        self.assertEqual(matching(records, "task(s) with no test results recorded"), [])
 
 
 # ---------------------------------------------------------------------------
@@ -992,13 +1019,13 @@ class TestReportStalenessWarning(RefreshTestCase):
         from enge.report.results_cache import cache_report_results
 
         ctx = self.ctx({"filter_set": ["setA"], "refresh": refresh})
-        with captured_logs(CACHE_LOGGER) as messages:
+        with captured_logs(CACHE_LOGGER) as records:
             cache_report_results(
                 ctx,
                 [task_result("t1", xunit_bytes=xunit_bytes())],
                 refresh=refresh,
             )
-        return ctx, messages
+        return ctx, records
 
     def _first_stale_in_resolution_order(self, ctx, stale_run_ids):
         from enge.utils.manifest_resolution import resolve_manifests_for_invocation
@@ -1014,10 +1041,10 @@ class TestReportStalenessWarning(RefreshTestCase):
         )
         stale = {run_ids[0], run_ids[2]}
 
-        ctx, messages = self._report()
+        ctx, records = self._report()
 
-        hits = matching(messages, self.NEEDLE)
-        self.assertEqual(len(hits), 1, messages)
+        hits = matching(records, self.NEEDLE, level=logging.WARNING)
+        self.assertEqual(len(hits), 1, records)
         self.assertIn("2 of 3 selected run(s)", hits[0])
         self.assertIn(self._first_stale_in_resolution_order(ctx, stale), hits[0])
         self.assertIn("--refresh", hits[0])
@@ -1025,16 +1052,78 @@ class TestReportStalenessWarning(RefreshTestCase):
     def test_no_warning_when_no_run_is_stale(self):
         self._three_runs(set())
 
-        _ctx, messages = self._report()
+        _ctx, records = self._report()
 
-        self.assertEqual(matching(messages, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE), [])
 
     def test_no_warning_under_refresh(self):
         self._three_runs({"01RUNSTALE1AAAAAAAAAAAAAAA"})
 
-        _ctx, messages = self._report(refresh=True)
+        _ctx, records = self._report(refresh=True)
 
-        self.assertEqual(matching(messages, self.NEEDLE), [])
+        self.assertEqual(matching(records, self.NEEDLE), [])
+
+    def test_no_warning_under_refresh_even_when_the_run_stays_stale(self):
+        """--refresh suppresses the pointer-at-the-flag advice unconditionally,
+        including when the repair it advertises did not happen.
+
+        A partial invocation makes G2 skip the run, so the stale cache is
+        still stale when the invocation ends -- and the user is still told
+        nothing about it, because they already passed the flag. What they get
+        instead is the G2 WARNING naming the run.
+        """
+        from enge.report.results_cache import cache_report_results
+
+        run_id = "01RUNSTALEG2AAAAAAAAAAAAAA"
+        write_manifest(self.runs_dir, run_id, [request_meta("t1"), request_meta("t2")])
+        path = write_cache(
+            self.results_dir,
+            run_id,
+            [cached_task("t1", drop=("artifacts_url",)), cached_task("t2")],
+        )
+        before = path.read_bytes()
+        ctx = self.ctx({"run": run_id, "refresh": True})
+
+        with captured_logs(CACHE_LOGGER) as records:
+            cache_report_results(
+                ctx, [task_result("t1", xunit_bytes=xunit_bytes())], refresh=True
+            )
+
+        # Guard the premise: G2 must genuinely have left the stale file alone.
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(
+            len(matching(records, "cannot refresh run", level=logging.WARNING)),
+            1,
+            records,
+        )
+        self.assertEqual(matching(records, self.NEEDLE), [])
+
+    def test_an_unfinalized_cache_is_never_reported_as_stale(self):
+        """Report-side mirror of the compare-side rule: --refresh refuses an
+        unfinalized cache, so advertising it against one would be advice the
+        user cannot act on. The missing key is filled by the ordinary
+        gap-fill when the remaining task lands."""
+        from enge.report.results_cache import cache_report_results
+
+        run_id = "01RUNSTALEOPENAAAAAAAAAAAA"
+        write_manifest(self.runs_dir, run_id, [request_meta("t1"), request_meta("t2")])
+        path = write_cache(
+            self.results_dir,
+            run_id,
+            [cached_task("t1", drop=("artifacts_url",))],
+            verdict=None,
+        )
+        ctx = self.ctx({"run": run_id, "refresh": False})
+
+        with captured_logs(CACHE_LOGGER) as records:
+            cache_report_results(ctx, [], refresh=False)
+
+        # Guard the premise: the file must still be unfinalized and still be
+        # missing the key, or it is not the case under test any more.
+        raw = json.loads(path.read_text())
+        self.assertIsNone(raw["verdict"])
+        self.assertNotIn("artifacts_url", raw["results"][0])
+        self.assertEqual(matching(records, self.NEEDLE), [])
 
 
 # ---------------------------------------------------------------------------
@@ -1089,7 +1178,7 @@ class TestRefreshCli(unittest.TestCase):
 
         self.assertFalse(get_arguments(args=["report"]).refresh)
 
-    def _assert_rejected_without_fetching(self, ctx):
+    def _assert_rejected_without_fetching(self, ctx, *, mentioning=None):
         import enge.report.__main__ as rm
 
         with patch.object(rm, "build_table") as mock_build_table:
@@ -1098,6 +1187,20 @@ class TestRefreshCli(unittest.TestCase):
 
         mock_build_table.assert_not_called()
         self.assertIn("--refresh", str(caught.exception))
+        if mentioning is not None:
+            self.assertIn(mentioning, str(caught.exception))
+
+    def _selected_run(self):
+        """A run this ctx resolves to.
+
+        Without it the invocation has no run selection at all, and the
+        raw-input branch of `_validate_refresh` rejects it first -- which
+        would make a --list/--compare test pass no matter what the
+        flag-combination branch does.
+        """
+        run_id = "01RUNCLIAAAAAAAAAAAAAAAAAA"
+        write_manifest(self.runs_dir, run_id, [request_meta("t1")])
+        return run_id
 
     def test_refresh_with_input_is_rejected_before_the_fetch(self):
         self._assert_rejected_without_fetching(
@@ -1108,10 +1211,14 @@ class TestRefreshCli(unittest.TestCase):
         self._assert_rejected_without_fetching(self._ctx(file=["/tmp/tasks.txt"]))
 
     def test_refresh_with_list_is_rejected(self):
-        self._assert_rejected_without_fetching(self._ctx(list=True))
+        self._assert_rejected_without_fetching(
+            self._ctx(run=self._selected_run(), list=True), mentioning="--list"
+        )
 
     def test_refresh_with_compare_is_rejected(self):
-        self._assert_rejected_without_fetching(self._ctx(compare=True))
+        self._assert_rejected_without_fetching(
+            self._ctx(run=self._selected_run(), compare=True), mentioning="--compare"
+        )
 
     @patch("enge.__main__.get_arguments")
     @patch("enge.utils.opt_manager.ParsedOpts")
