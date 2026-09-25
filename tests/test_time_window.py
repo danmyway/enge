@@ -8,17 +8,26 @@ the parts of that split which must not move.
 """
 
 import os
+import tempfile
 import time
 import unittest
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from enge.utils import parse_date_arg
+from enge.report.__main__ import _handle_list
+from enge.utils import parse_date_arg, resolve_utc_window
+from enge.utils.manifest import ManifestReader, ManifestWriter
 from enge.utils.manifest_resolution import _build_find_kwargs
+from enge.utils.ulid import generate_ulid
 
 
 HAS_TZSET = hasattr(time, "tzset")
+
+FROZEN_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
 
 
 @contextmanager
@@ -96,3 +105,184 @@ class TestAbsoluteBoundsCharacterization(unittest.TestCase):
             kwargs["since"],
             datetime(2026, 9, 20, 0, 0, 0, tzinfo=timezone.utc),
         )
+
+
+class TestResolveUtcWindow(unittest.TestCase):
+    """The helper resolves both bounds against an injected aware-UTC clock."""
+
+    def test_relative_since_counts_back_from_now(self):
+        cases = {
+            "6h": datetime(2026, 9, 25, 6, 0, tzinfo=timezone.utc),
+            "3d": datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc),
+            "2w": datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc),
+            "1m": datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc),
+            "1y": datetime(2025, 9, 25, 12, 0, tzinfo=timezone.utc),
+        }
+        for alias, expected in cases.items():
+            with self.subTest(alias=alias):
+                since, until = resolve_utc_window(alias, None, now=FROZEN_NOW)
+
+                self.assertEqual(since, expected)
+                self.assertIs(since.tzinfo, timezone.utc)
+                self.assertIsNone(until)
+
+    def test_relative_until_is_an_exact_instant_not_end_of_day(self):
+        _, until = resolve_utc_window(None, "6h", now=FROZEN_NOW)
+
+        self.assertEqual(until, datetime(2026, 9, 25, 6, 0, 0, tzinfo=timezone.utc))
+        self.assertNotEqual(
+            until, datetime(2026, 9, 25, 23, 59, 59, tzinfo=timezone.utc)
+        )
+
+    def test_absolute_since_is_start_of_the_utc_day(self):
+        since, _ = resolve_utc_window("2026-09-20", None, now=FROZEN_NOW)
+
+        self.assertEqual(since, datetime(2026, 9, 20, 0, 0, 0, tzinfo=timezone.utc))
+
+    def test_absolute_until_is_end_of_the_utc_day(self):
+        _, until = resolve_utc_window(None, "2026-09-20", now=FROZEN_NOW)
+
+        self.assertEqual(until, datetime(2026, 9, 20, 23, 59, 59, tzinfo=timezone.utc))
+        self.assertEqual(until.microsecond, 0)
+
+    def test_both_bounds_resolve_independently(self):
+        since, until = resolve_utc_window("2026-09-20", "3d", now=FROZEN_NOW)
+
+        self.assertEqual(since, datetime(2026, 9, 20, 0, 0, 0, tzinfo=timezone.utc))
+        self.assertEqual(until, datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc))
+
+    def test_absent_bounds_stay_absent(self):
+        self.assertEqual(resolve_utc_window(None, None, now=FROZEN_NOW), (None, None))
+
+    def test_default_clock_is_aware_utc(self):
+        since, _ = resolve_utc_window("6h", None)
+        expected = datetime.now(timezone.utc) - timedelta(hours=6)
+
+        self.assertIsNotNone(since.tzinfo)
+        self.assertLess(abs((since - expected).total_seconds()), 60)
+
+    def test_unparseable_value_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            resolve_utc_window("garbage", None, now=FROZEN_NOW)
+        with self.assertRaises(ValueError):
+            resolve_utc_window(None, "garbage", now=FROZEN_NOW)
+
+    def test_naive_injected_clock_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            resolve_utc_window("6h", None, now=datetime(2026, 9, 25, 12, 0))
+
+
+@unittest.skipUnless(HAS_TZSET, "requires time.tzset()")
+class TestRelativeBoundsIgnoreHostTimezone(unittest.TestCase):
+    """Relative aliases count back from the current UTC instant, not local."""
+
+    ZONES = ("Europe/Prague", "America/Los_Angeles")
+
+    def _assert_six_hours_ago(self, value):
+        expected = datetime.now(timezone.utc) - timedelta(hours=6)
+
+        self.assertIsNotNone(value.tzinfo)
+        self.assertLess(abs((value - expected).total_seconds()), 60)
+
+    def test_build_find_kwargs_since_is_six_hours_before_now_utc(self):
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), _tz(zone):
+                self.assertNotEqual(time.localtime().tm_gmtoff, 0)
+
+                kwargs = _build_find_kwargs([], [], [], [], "6h", None)
+
+                self._assert_six_hours_ago(kwargs["since"])
+
+    def test_build_find_kwargs_until_is_six_hours_before_now_utc(self):
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), _tz(zone):
+                self.assertNotEqual(time.localtime().tm_gmtoff, 0)
+
+                kwargs = _build_find_kwargs([], [], [], [], None, "6h")
+
+                self._assert_six_hours_ago(kwargs["until"])
+
+    def _handle_list_kwargs(self, **cli_overrides):
+        cli = {
+            "output_format": "terminal",
+            "filter_set": None,
+            "filter_tier": None,
+            "filter_arch": None,
+            "filter_tag": None,
+            "since": None,
+            "until": None,
+            "list": True,
+            "run": None,
+            "file": None,
+            "input": None,
+            "get_tag": [],
+        }
+        cli.update(cli_overrides)
+        ctx = SimpleNamespace(
+            manifest_runs_dir="/nonexistent/runs",
+            manifest_latest="/nonexistent/latest",
+            archive_tasks_latest="/nonexistent/legacy",
+            archive_tasks_default="/nonexistent/legacy_archive",
+            cli_args=SimpleNamespace(**cli),
+        )
+        with patch(
+            "enge.report.__main__.ManifestReader.find_runs", return_value=[]
+        ) as find_runs:
+            _handle_list(ctx)
+        return find_runs.call_args.kwargs
+
+    def test_handle_list_since_is_six_hours_before_now_utc(self):
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), _tz(zone):
+                self.assertNotEqual(time.localtime().tm_gmtoff, 0)
+
+                kwargs = self._handle_list_kwargs(since="6h")
+
+                self._assert_six_hours_ago(kwargs["since"])
+
+    def test_handle_list_until_is_six_hours_before_now_utc(self):
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), _tz(zone):
+                self.assertNotEqual(time.localtime().tm_gmtoff, 0)
+
+                kwargs = self._handle_list_kwargs(until="6h")
+
+                self._assert_six_hours_ago(kwargs["until"])
+
+
+@unittest.skipUnless(HAS_TZSET, "requires time.tzset()")
+class TestRelativeWindowSelectsRuns(unittest.TestCase):
+    """End-to-end: `--since 6h` selects the same runs in every host zone."""
+
+    ZONES = ("Europe/Prague", "America/Los_Angeles")
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _write(self, hours_ago):
+        run_id = generate_ulid()
+        writer = ManifestWriter(run_id=run_id, command="test", argv=["enge", "test"])
+        created = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+        writer.created_at = created.strftime("%Y-%m-%dT%H:%M:%SZ")
+        writer.add_request("uuid-dummy", tier="tier0", arch="x86_64")
+        writer.flush(self.runs, self.latest)
+        return run_id
+
+    def test_six_hour_window_selects_only_the_recent_run(self):
+        recent = self._write(hours_ago=5)
+        self._write(hours_ago=7)
+
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), _tz(zone):
+                self.assertNotEqual(time.localtime().tm_gmtoff, 0)
+
+                kwargs = _build_find_kwargs([], [], [], [], "6h", None)
+                found = ManifestReader.find_runs(self.runs, **kwargs)
+
+                self.assertEqual([r["run_id"] for r in found], [recent])
