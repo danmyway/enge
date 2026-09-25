@@ -954,7 +954,7 @@ class TestRerunRecordsDispatchedTestNames(unittest.TestCase):
         return json.loads(manifests[0].read_text())["requests"], mock_submit
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -992,7 +992,7 @@ class TestRerunRecordsDispatchedTestNames(unittest.TestCase):
         self.assertEqual(requests[0]["tests"], ["t1", "t2"])
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -1039,7 +1039,7 @@ class TestRerunRecordsDispatchedTestNames(unittest.TestCase):
         self.assertEqual(requests[1]["tests"], [])
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -1071,7 +1071,7 @@ class TestRerunRecordsDispatchedTestNames(unittest.TestCase):
         self.assertEqual(requests[0]["tests"], ["foo"])
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
