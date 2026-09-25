@@ -250,7 +250,7 @@ class TestQualifyResultsInfoTableText(unittest.TestCase):
 class TestBuildRerunPayloadsShape(unittest.TestCase):
     """T6: payload shape for a task with one tested plan and one UNDEFINED plan."""
 
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.parse_tasks_with_map")
     def test_undefined_plan_yields_second_plan_only_payload(
@@ -364,7 +364,7 @@ class TestCandidatePathMatchesCliPath(unittest.TestCase):
         self.assertEqual(cand_jobs.processed_data, cli_jobs.processed_data)
         self.assertEqual(cand_jobs.rerun_uuids, cli_jobs.rerun_uuids)
 
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.parse_request_xunit")
     @patch("enge.rerun.__main__.parse_tasks_with_map")
@@ -536,6 +536,133 @@ class TestMainStillUsesCliPath(unittest.TestCase):
 
         self.assertEqual(mock_results.call_count, 1)
         self.assertEqual(mock_candidates.call_count, 0)
+
+
+AGED_OUT_COMPOSE = "RHEL-9.9.0-20260101.0"
+NIGHTLY_TARGET = "RHEL-9.9.0-20260701.0"
+COMPOSES_URL = "https://composes.example.com"
+
+# The processed tuple for a single plan with one failed test; enough for
+# build_rerun_payloads() to take the specific-plan branch and emit one payload.
+AGED_OUT_PROCESSED = (
+    "/plan/with_test$",
+    AGED_OUT_COMPOSE,
+    {"/plan/with_test": ["broken$"]},
+    [],
+    SOURCE_PATH_MIX,
+)
+
+
+def _tf_response_aged_out(uuid="uuid-aged"):
+    """A request-details payload whose source compose Testing Farm dropped."""
+    response = _tf_response(uuid)
+    response["environments_requested"] = [
+        {"os": {"compose": AGED_OUT_COMPOSE}, "arch": "x86_64"}
+    ]
+    return response
+
+
+def _aged_out_composes_data():
+    """Composes payload offering only the Nightly AGED_OUT_COMPOSE fell off."""
+    return {
+        "SYMBOLIC_COMPOSES": [{"RHEL-9.9.0-Nightly": NIGHTLY_TARGET}],
+        "COMPOSES": ["RHEL-9.9.0-Nightly"],
+        "OTHER_COMPOSES": [],
+    }
+
+
+class TestRerunRepinCallShape(unittest.TestCase):
+    """build_rerun_payloads asks for rerun mode by flag, not by cli_args.
+
+    The run loop calls RerunJobs with cli_args.action != "rerun", so routing
+    the request through cli_args would silently not fire there.
+    """
+
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_repin_is_called_with_the_rerun_flag_and_no_cli_args(
+        self, mock_parse, mock_get, mock_repin
+    ):
+        mock_parse.return_value = ([], None, {})
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+        )
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = _tf_response_aged_out("uuid-aged")
+        mock_get.return_value = mock_resp
+
+        from enge.rerun.__main__ import RerunJobs
+
+        jobs = RerunJobs(ctx)
+        jobs.processed_data["uuid-aged"] = AGED_OUT_PROCESSED
+        payloads = jobs.build_rerun_payloads(["uuid-aged"])
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(mock_repin.call_count, 1)
+        args, kwargs = mock_repin.call_args
+        self.assertEqual(args, (AGED_OUT_COMPOSE, COMPOSES_URL))
+        self.assertEqual(kwargs, {"rerun": True})
+
+
+class TestRerunAgedOutComposeEndToEnd(unittest.TestCase):
+    """A real RerunJobs over the real repin_compose; only the network is faked.
+
+    Both cases matter: the CLI rerun path (cli_args.action == "rerun") and the
+    run loop's shape (cli_args.action == "run"), which the cli_args route
+    would not have covered.
+    """
+
+    def setUp(self):
+        from enge.dispatch import pin_compose
+
+        pin_compose._repin_cache.clear()
+        self.addCleanup(pin_compose._repin_cache.clear)
+
+    @staticmethod
+    def _payloads_for_action(action, mock_parse, mock_get, mock_fetch):
+        mock_parse.return_value = ([], None, {})
+        mock_fetch.return_value = _aged_out_composes_data()
+        ctx = make_app_context(
+            action=action,
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+        )
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = _tf_response_aged_out("uuid-aged")
+        mock_get.return_value = mock_resp
+
+        from enge.rerun.__main__ import RerunJobs
+
+        jobs = RerunJobs(ctx)
+        jobs.processed_data["uuid-aged"] = AGED_OUT_PROCESSED
+        return jobs.build_rerun_payloads(["uuid-aged"])
+
+    @patch("enge.dispatch.pin_compose.fetch_data_from_url")
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_rerun_action_repins_the_aged_out_compose(
+        self, mock_parse, mock_get, mock_fetch
+    ):
+        payloads = self._payloads_for_action("rerun", mock_parse, mock_get, mock_fetch)
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(
+            payloads[0]["environments"][0]["os"]["compose"], NIGHTLY_TARGET
+        )
+
+    @patch("enge.dispatch.pin_compose.fetch_data_from_url")
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.parse_tasks_with_map")
+    def test_run_action_repins_the_aged_out_compose_too(
+        self, mock_parse, mock_get, mock_fetch
+    ):
+        payloads = self._payloads_for_action("run", mock_parse, mock_get, mock_fetch)
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(
+            payloads[0]["environments"][0]["os"]["compose"], NIGHTLY_TARGET
+        )
 
 
 if __name__ == "__main__":

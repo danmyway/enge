@@ -284,7 +284,7 @@ class TestQualifyResultsTableDividers(unittest.TestCase):
 
 
 class TestBuildRerunPayloads(unittest.TestCase):
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.parse_tasks_with_map")
     def test_uses_ctx_endpoint(self, mock_parse, mock_get, _mock_repin):
@@ -316,7 +316,7 @@ class TestBuildRerunPayloads(unittest.TestCase):
             f"Expected URL to use ctx endpoint, got: {call_url}",
         )
 
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.parse_tasks_with_map")
     def test_uses_ctx_composes_prod_url(self, mock_parse, mock_get, mock_repin):
@@ -344,9 +344,13 @@ class TestBuildRerunPayloads(unittest.TestCase):
         jobs.processed_data["uuid-1"] = ("/plan/tier0$", "RHEL-9", {}, [], None)
         jobs.build_rerun_payloads(["uuid-1"])
 
-        mock_repin.assert_called_with("RHEL-9", "https://composes.custom.com")
+        # Positional args only: this test owns "the URL comes from ctx", and
+        # the keyword arguments of the call are pinned by
+        # TestRerunRepinCallShape in tests/test_rerun_candidates.py.
+        args, _kwargs = mock_repin.call_args
+        self.assertEqual(args, ("RHEL-9", "https://composes.custom.com"))
 
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.parse_tasks_with_map")
     def test_multi_env_raises_validation_error(self, mock_parse, mock_get, _):

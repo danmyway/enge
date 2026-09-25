@@ -141,7 +141,7 @@ class TestRerunManifestLineageWiring(unittest.TestCase):
         return json.loads(manifests[0].read_text())
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -190,7 +190,7 @@ class TestRerunManifestLineageWiring(unittest.TestCase):
         self.assertEqual(child["tags"], ["nightly", "milestone-x", "cli-tag", "rerun"])
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -229,7 +229,7 @@ class TestRerunManifestLineageWiring(unittest.TestCase):
         self.assertEqual(child["tags"], ["cli-tag", "rerun"])
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -325,7 +325,7 @@ class TestRerunRunIdLogging(unittest.TestCase):
         return list(self.runs_dir.glob("*.json"))
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -373,7 +373,7 @@ class TestRerunRunIdLogging(unittest.TestCase):
         self.assertIn(f"enge report --run {run_id}", hint_lines[0])
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -448,7 +448,7 @@ class TestRerunRunIdLogging(unittest.TestCase):
         )
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -533,7 +533,7 @@ class TestRerunManifestFieldInheritance(unittest.TestCase):
         return json.loads(manifests[0].read_text())
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -592,7 +592,7 @@ class TestRerunManifestFieldInheritance(unittest.TestCase):
         self.assertEqual(entry["rerun_of"], TASK_UUID)
 
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -647,7 +647,7 @@ class TestRerunManifestFieldInheritance(unittest.TestCase):
 
     @patch("enge.rerun.__main__.ManifestReader.get_run")
     @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
-    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
     @patch("enge.rerun.__main__.http_get")
     @patch("enge.rerun.__main__.SubmitTest")
     @patch("enge.rerun.__main__.parse_request_xunit")
@@ -791,7 +791,9 @@ class TestRerunDispatchContextFromPayload(unittest.TestCase):
                 "enge.rerun.__main__._create_rerun_launch_for_payload",
                 return_value=None,
             ),
-            patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u: c),
+            patch(
+                "enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c
+            ),
             patch("enge.rerun.__main__.http_get", return_value=tf_response),
             patch("enge.rerun.__main__.SubmitTest") as mock_submit_cls,
             patch(
