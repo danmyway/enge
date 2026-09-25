@@ -197,7 +197,9 @@ def find_compose(compose_arg, data):
     return None
 
 
-def _pin_compose_with_fallback(major, minor, suffix, composes_prod_url, cli_args=None):
+def _pin_compose_with_fallback(
+    major, minor, suffix, composes_prod_url, cli_args=None, *, rerun=False
+):
     """
     Attempts to pin a compose with fallback logic for different RHEL formats.
 
@@ -211,6 +213,9 @@ def _pin_compose_with_fallback(major, minor, suffix, composes_prod_url, cli_args
     - suffix (str): Compose suffix (e.g., "Nightly")
     - composes_prod_url (str): URL to fetch compose data from
     - cli_args (Namespace, optional): CLI arguments for rerun mode detection
+    - rerun (bool, keyword-only): Ask for rerun mode outright, for callers that
+      have no cli_args to infer it from, or whose cli_args say something else
+      (the run loop reruns with action != "rerun")
 
     Returns:
     - str: The found compose
@@ -231,7 +236,9 @@ def _pin_compose_with_fallback(major, minor, suffix, composes_prod_url, cli_args
     result = find_compose(compose_with_micro, data) or find_compose(
         compose_without_micro, data
     )
-    is_rerun = cli_args is not None and getattr(cli_args, "action", None) == "rerun"
+    is_rerun = rerun or (
+        cli_args is not None and getattr(cli_args, "action", None) == "rerun"
+    )
     if not result and is_rerun:
         LOGGER.warning(
             f"Rerun mode: Compose '{compose_with_micro}', '{compose_without_micro}' not found, falling back to the latest Nightly."
@@ -343,16 +350,19 @@ def _show_compose_not_found_error(attempted_composes, data, major=None, minor=No
 _repin_cache = {}
 
 
-def repin_compose(compose_name, composes_prod_url, cli_args=None):
+def repin_compose(compose_name, composes_prod_url, cli_args=None, *, rerun=False):
     """
     Re-pin a compose name to the latest available nightly version.
 
     Extracts major.minor from the original compose name and resolves it
     to the current nightly compose via the Testing Farm composes API.
 
-    Results are cached per (compose_name, composes_prod_url) to avoid
-    duplicate API requests and warnings when the same compose is validated
-    multiple times (e.g., opt_manager + set_flow).
+    Results are cached per (compose_name, composes_prod_url, rerun mode) to
+    avoid duplicate API requests and warnings when the same compose is
+    validated multiple times (e.g., opt_manager + set_flow). Rerun mode is
+    part of the key because the cache is a process-global and the two modes
+    legitimately disagree: an aged-out compose resolves to the latest Nightly
+    in rerun mode and raises outside it, and one process runs both.
 
     Non-RHEL composes (e.g., CentOS-Stream-9) are returned as-is since
     they are already symbolic and don't require re-pinning.
@@ -361,6 +371,8 @@ def repin_compose(compose_name, composes_prod_url, cli_args=None):
     - compose_name (str): Original compose name (e.g., "RHEL-8.10.0-20241215.1")
     - composes_prod_url (str): URL to fetch compose data from.
     - cli_args (Namespace, optional): CLI arguments for rerun mode detection
+    - rerun (bool, keyword-only): Ask for rerun mode outright, for callers that
+      have no cli_args to infer it from, or whose cli_args say something else
 
     Returns:
     - str: Updated compose name for RHEL composes, or the original name for non-RHEL.
@@ -370,7 +382,10 @@ def repin_compose(compose_name, composes_prod_url, cli_args=None):
     - ValidationError: If the compose cannot be resolved to an available nightly
       (propagated from _pin_compose_with_fallback).
     """
-    cache_key = (compose_name, composes_prod_url)
+    is_rerun = rerun or (
+        cli_args is not None and getattr(cli_args, "action", None) == "rerun"
+    )
+    cache_key = (compose_name, composes_prod_url, is_rerun)
     if cache_key in _repin_cache:
         return _repin_cache[cache_key]
 
@@ -399,7 +414,7 @@ def repin_compose(compose_name, composes_prod_url, cli_args=None):
         )
 
     result = _pin_compose_with_fallback(
-        major, minor, suffix, composes_prod_url, cli_args=cli_args
+        major, minor, suffix, composes_prod_url, cli_args=cli_args, rerun=rerun
     )
     if result != compose_name:
         LOGGER.warning("Compose re-pinned: %s -> %s", compose_name, result)

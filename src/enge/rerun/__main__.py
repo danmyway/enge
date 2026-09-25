@@ -766,7 +766,9 @@ class RerunJobs:
             composes_prod_url = self.ctx.config.get("testing_farm", {}).get(
                 "composes_prod_url", ""
             )
-            env["os"]["compose"] = repin_compose(original_compose, composes_prod_url)
+            env["os"]["compose"] = repin_compose(
+                original_compose, composes_prod_url, rerun=True
+            )
 
             # Append the filtered payload for re-run
             self.rerun_payloads.append(filtered_payload)
