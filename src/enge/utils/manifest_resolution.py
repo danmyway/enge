@@ -18,11 +18,10 @@ manifest-backed gap-fill); `enge compare` (`compare/loader.py`,
 read-only).
 """
 
-from datetime import timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from enge.utils import parse_date_arg
+from enge.utils import resolve_utc_window
 from enge.utils.manifest import ManifestReader
 
 if TYPE_CHECKING:
@@ -91,7 +90,8 @@ def _build_find_kwargs(
     until_str: Optional[str],
 ) -> Dict[str, Any]:
     """Build `ManifestReader.find_runs` kwargs from the non-run selectors,
-    normalizing --since/--until to tz-aware UTC bounds (until -> end of day)."""
+    resolving --since/--until to tz-aware UTC bounds (absolute dates are
+    UTC calendar days; relative aliases are exact instants)."""
     kwargs: Dict[str, Any] = {}
     if filter_set:
         kwargs["set_name"] = filter_set
@@ -101,13 +101,11 @@ def _build_find_kwargs(
         kwargs["arch"] = filter_arch
     if filter_tag:
         kwargs["tag"] = filter_tag
-    if since_str:
-        dt = parse_date_arg(since_str)
-        kwargs["since"] = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-    if until_str:
-        dt = parse_date_arg(until_str)
-        dt = dt.replace(hour=23, minute=59, second=59)
-        kwargs["until"] = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    since_dt, until_dt = resolve_utc_window(since_str or None, until_str or None)
+    if since_dt is not None:
+        kwargs["since"] = since_dt
+    if until_dt is not None:
+        kwargs["until"] = until_dt
     return kwargs
 
 

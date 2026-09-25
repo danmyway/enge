@@ -95,8 +95,8 @@ Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs fro
 - `--refresh` — Repair cached results for the selected run(s): recover tasks recorded with no results and fill metadata missing from caches written by older enge versions.
 - `--show-ids` — Display only a list of UUIDs queried from the requested inputs.
 - `-o, --format {terminal,gitlab,json}` — Output format. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks and tables. 'json': machine-readable JSON to stdout (suppresses other output). (default: `terminal`)
-- `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
-- `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
+- `--since DATE` — Only consider runs created on or after DATE, in UTC (YYYY-MM-DD = from 00:00:00 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = that long before now).
+- `--until DATE` — Only consider runs created on or before DATE, in UTC (YYYY-MM-DD = through 23:59:59 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = exactly that long before now).
 - `--list` — List all runs in the manifest store as a table. Combinable with --set/--tier/--arch/--tag/--since/--until to narrow results.
 - `--run RUN_ID` — Select a run by manifest ID (repeatable; multiple runs are unioned, and other selectors further filter within them). Use 'enge report --list' to browse available runs.
 - `--set SET` — Filter runs by test set name (repeatable, OR within).
@@ -136,8 +136,8 @@ Read cached results.json data (see 'enge report') and build a comparison table a
 - `--tier TIER` — Filter runs by tier (repeatable, OR within).
 - `--arch ARCH` — Filter runs by architecture (repeatable, OR within).
 - `--tag TAG` — Filter runs by tag (repeatable, OR within).
-- `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
-- `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
+- `--since DATE` — Only consider runs created on or after DATE, in UTC (YYYY-MM-DD = from 00:00:00 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = that long before now).
+- `--until DATE` — Only consider runs created on or before DATE, in UTC (YYYY-MM-DD = through 23:59:59 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = exactly that long before now).
 - `-s, --short` — Display shortened test and plan names. This is now the default; the flag is accepted for backward compatibility.
 - `-l, --long` — Display full, verbatim test and plan names (the previous default).
 - `--show-tests` — Display detailed test view. By default, only plan view is shown.
@@ -178,8 +178,8 @@ Rerun failed or errored tasks from previous runs.
 - `--tier TIER` — Filter runs by tier (repeatable, OR within).
 - `--arch ARCH` — Filter runs by architecture (repeatable, OR within).
 - `--tag TAG` — Filter runs by tag (repeatable, OR within).
-- `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
-- `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
+- `--since DATE` — Only consider runs created on or after DATE, in UTC (YYYY-MM-DD = from 00:00:00 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = that long before now).
+- `--until DATE` — Only consider runs created on or before DATE, in UTC (YYYY-MM-DD = through 23:59:59 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = exactly that long before now).
 
 ### Deprecated
 
@@ -289,8 +289,8 @@ Cancel running or queued Testing Farm tasks by sending DELETE requests.
 - `--tier TIER` — Filter runs by tier (repeatable, OR within).
 - `--arch ARCH` — Filter runs by architecture (repeatable, OR within).
 - `--tag TAG` — Filter runs by tag (repeatable, OR within).
-- `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
-- `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
+- `--since DATE` — Only consider runs created on or after DATE, in UTC (YYYY-MM-DD = from 00:00:00 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = that long before now).
+- `--until DATE` — Only consider runs created on or before DATE, in UTC (YYYY-MM-DD = through 23:59:59 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = exactly that long before now).
 - `-n, --dry-run, --dryrun` — Show which tasks would be cancelled without actually cancelling them.
 
 ## migrate-archive

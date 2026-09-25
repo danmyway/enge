@@ -84,20 +84,38 @@ def _add_dryrun_arg(
     )
 
 
-def _add_date_filter_args(parser: argparse.ArgumentParser) -> None:
-    """Add ``--since`` and ``--until`` date filter arguments to a parser."""
-    parser.add_argument(
-        "--since",
-        metavar="DATE",
-        help="Only consider items from on or after DATE "
-        "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).",
-    )
-    parser.add_argument(
-        "--until",
-        metavar="DATE",
-        help="Only consider items from on or before DATE "
-        "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).",
-    )
+def _add_date_filter_args(
+    parser: argparse.ArgumentParser, manifest_utc: bool = False
+) -> None:
+    """Add ``--since`` and ``--until`` date filter arguments to a parser.
+
+    Set *manifest_utc* for the subcommands that select manifests by their
+    UTC ``created_at`` (report, compare, rerun, cancel); the
+    ``reportportal`` parsers filter in local time and keep the generic
+    wording.
+    """
+    if manifest_utc:
+        since_help = (
+            "Only consider runs created on or after DATE, in UTC "
+            "(YYYY-MM-DD = from 00:00:00 UTC that day; relative: "
+            "6h, 3d, 2w, 1m, 1y = that long before now)."
+        )
+        until_help = (
+            "Only consider runs created on or before DATE, in UTC "
+            "(YYYY-MM-DD = through 23:59:59 UTC that day; relative: "
+            "6h, 3d, 2w, 1m, 1y = exactly that long before now)."
+        )
+    else:
+        since_help = (
+            "Only consider items from on or after DATE "
+            "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y)."
+        )
+        until_help = (
+            "Only consider items from on or before DATE "
+            "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y)."
+        )
+    parser.add_argument("--since", metavar="DATE", help=since_help)
+    parser.add_argument("--until", metavar="DATE", help=until_help)
 
 
 def _add_format_arg(parser: argparse.ArgumentParser, choices=None) -> None:
@@ -517,7 +535,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_format_arg(report, choices=["terminal", "gitlab", "json"])
 
-    _add_date_filter_args(report)
+    _add_date_filter_args(report, manifest_utc=True)
 
     report.add_argument(
         "--list",
@@ -628,7 +646,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filter runs by tag (repeatable, OR within).",
     )
 
-    _add_date_filter_args(compare)
+    _add_date_filter_args(compare, manifest_utc=True)
 
     compare_short_group = compare.add_mutually_exclusive_group()
     compare_short_group.add_argument(
@@ -741,7 +759,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filter runs by tag (repeatable, OR within).",
     )
 
-    _add_date_filter_args(rerun)
+    _add_date_filter_args(rerun, manifest_utc=True)
 
     # ==================== REPORTPORTAL SUBCOMMAND ====================
     reportportal = subparsers.add_parser(
@@ -920,7 +938,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filter runs by tag (repeatable, OR within).",
     )
 
-    _add_date_filter_args(cancel)
+    _add_date_filter_args(cancel, manifest_utc=True)
 
     # Cancel control
     _add_dryrun_arg(

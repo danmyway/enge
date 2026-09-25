@@ -7,6 +7,7 @@ own timezone-aware UTC bounds instead. The characterization tests here pin
 the parts of that split which must not move.
 """
 
+import argparse
 import os
 import tempfile
 import time
@@ -20,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 from enge.report.__main__ import _handle_list
 from enge.utils import parse_date_arg, resolve_utc_window
+from enge.utils.arg_parser import build_parser
 from enge.utils.manifest import ManifestReader, ManifestWriter
 from enge.utils.manifest_resolution import _build_find_kwargs
 from enge.utils.ulid import generate_ulid
@@ -60,6 +62,80 @@ def _tz(name):
         else:
             os.environ["TZ"] = previous
         time.tzset()
+
+
+def _date_filter_help(parser):
+    """Map ``{"--since": help, "--until": help}`` for one parser."""
+    return {
+        option: action.help
+        for action in parser._actions
+        for option in action.option_strings
+        if option in ("--since", "--until")
+    }
+
+
+def _subparsers(parser):
+    """Map ``{name: subparser}`` for *parser*'s subcommand action."""
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action.choices
+    raise AssertionError("parser has no subparsers")
+
+
+class TestDateFilterHelpText(unittest.TestCase):
+    """The UTC wording is scoped to the manifest subcommands only.
+
+    The ``reportportal`` parsers keep the generic wording because they
+    still filter in local time (ruling Q-C3-1). Nothing else in the suite
+    fails when that split is collapsed: `test_cli_docs_drift` compares
+    `docs/cli.md` against whatever the parser currently emits, so a flip
+    plus a regeneration stays green.
+    """
+
+    MANIFEST_SUBCOMMANDS = ("report", "compare", "rerun", "cancel")
+    RP_SUBCOMMANDS = ("finish", "enrich", "delete-stale")
+
+    def setUp(self):
+        self.top = _subparsers(build_parser())
+
+    def test_manifest_subcommands_document_utc(self):
+        for name in self.MANIFEST_SUBCOMMANDS:
+            with self.subTest(subcommand=name):
+                helps = _date_filter_help(self.top[name])
+
+                self.assertIn("runs created on or after DATE, in UTC", helps["--since"])
+                self.assertIn(
+                    "runs created on or before DATE, in UTC", helps["--until"]
+                )
+                self.assertIn("00:00:00 UTC", helps["--since"])
+                self.assertIn("23:59:59 UTC", helps["--until"])
+                self.assertIn("exactly that long before now", helps["--until"])
+
+    def test_reportportal_keeps_the_generic_local_time_wording(self):
+        parsers = {"reportportal": self.top["reportportal"]}
+        parsers.update(
+            (name, sub)
+            for name, sub in _subparsers(self.top["reportportal"]).items()
+            if name in self.RP_SUBCOMMANDS
+        )
+        self.assertEqual(len(parsers), 1 + len(self.RP_SUBCOMMANDS))
+
+        for name, parser in parsers.items():
+            with self.subTest(subcommand=name):
+                helps = _date_filter_help(parser)
+
+                self.assertEqual(
+                    helps["--since"],
+                    "Only consider items from on or after DATE "
+                    "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).",
+                )
+                self.assertEqual(
+                    helps["--until"],
+                    "Only consider items from on or before DATE "
+                    "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).",
+                )
+                self.assertNotIn("UTC", helps["--since"])
+                self.assertNotIn("UTC", helps["--until"])
 
 
 class TestParseDateArgCharacterization(unittest.TestCase):
