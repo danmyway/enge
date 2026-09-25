@@ -892,6 +892,8 @@ enge report --show-ids --file ~/my_jobs_file
 
 `--since` and `--until` filter manifests by `created_at` timestamp. Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y`). Combinable with structured filters (`--set`, `--tier`, `--arch`, `--tag`). Files provided via `-f` or `-i` are not filtered.
 
+`created_at` is recorded in UTC, and manifest selection evaluates both bounds in UTC regardless of your machine's timezone. An absolute date means the UTC calendar day (`--since` from `00:00:00` UTC, `--until` through `23:59:59` UTC), while a relative alias counts back from the current instant — including `--until`, so `--until 6h` means exactly six hours ago, not the end of that day. That applies to `--list` and to any invocation carrying a manifest selector (`--run`, `--set`, `--tier`, `--arch`, `--tag`); a bare `--since`/`--until` such as the last example below is answered from the legacy archive first, matching its filenames against local-time bounds and reaching manifest selection only if nothing there matches, as do `--get-tag` lookups and the `reportportal` subcommands.
+
 ```bash
 # Report runs from the last week for a specific set
 enge report --set base-8to9 --since 1w

@@ -1,6 +1,5 @@
 import json
 import logging
-from datetime import timezone
 from pathlib import Path
 
 from rich import box
@@ -9,7 +8,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from enge.report import results_cache
-from enge.utils import parse_date_arg
+from enge.utils import resolve_utc_window
 from enge.utils.app_context import AppContext
 from enge.utils.console import console
 from enge.utils.errors import ValidationError
@@ -214,17 +213,11 @@ def _handle_list(ctx: AppContext) -> int:
         filter_kwargs["tag"] = cli_args.filter_tag
     since_str = getattr(cli_args, "since", None)
     until_str = getattr(cli_args, "until", None)
-    if since_str:
-        dt = parse_date_arg(since_str)
-        filter_kwargs["since"] = (
-            dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-        )
-    if until_str:
-        dt = parse_date_arg(until_str)
-        dt = dt.replace(hour=23, minute=59, second=59)
-        filter_kwargs["until"] = (
-            dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-        )
+    since_dt, until_dt = resolve_utc_window(since_str or None, until_str or None)
+    if since_dt is not None:
+        filter_kwargs["since"] = since_dt
+    if until_dt is not None:
+        filter_kwargs["until"] = until_dt
 
     if filter_kwargs:
         runs = ManifestReader.find_runs(runs_dir, **filter_kwargs)
