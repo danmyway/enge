@@ -66,6 +66,7 @@ class ConcurrentRequestParser:
         self.timeout = timeout
         self.max_retries = max_retries
         self.session = None
+        self.ungraded_urls: List[str] = []
 
     def __enter__(self):
         # Create a session for connection pooling
@@ -471,8 +472,10 @@ class ConcurrentRequestParser:
                             LOGGER.debug(f"[{uuid_short}] Fetched task info")
                     else:
                         LOGGER.warning(f"Failed to fetch task info for {url}")
+                        self.ungraded_urls.append(url)
                 except Exception as e:
                     LOGGER.error(f"Exception fetching task info for {url}: {e}")
+                    self.ungraded_urls.append(url)
 
         # Filter out skipped tasks for XML processing
         tasks_for_xml = [task for task in task_results if not task.should_skip]
@@ -520,6 +523,7 @@ class ConcurrentRequestParser:
                     uuid_short = self._get_short_uuid(task.request_uuid)
                     LOGGER.error(f"[{task.request_uuid}] Exception fetching XML: {e}")
                     task.error_message = f"Exception: {e}"
+                    _raise_retval(task, ExitCode.MISSING_RESULTS)
                     # Find and update the corresponding task in task_results
                     for i, original_task in enumerate(task_results):
                         if original_task.request_uuid == task.request_uuid:
@@ -873,6 +877,13 @@ def parse_request_xunit_concurrent(
     retval = None
     for tr in task_results:
         retval = worst_exit_code(retval, tr.retval)
+
+    # A requested task that could never be fetched or graded (dropped at
+    # the task-info phase) never produced a TaskResult, so the loop above
+    # cannot see it. Grade it as missing results rather than letting it
+    # vanish from the aggregate (QA-1, 2026-09-24).
+    if parser.ungraded_urls:
+        retval = worst_exit_code(retval, ExitCode.MISSING_RESULTS)
 
     # Add enhanced summary information
     input_count = len(request_url_list)

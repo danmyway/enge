@@ -134,7 +134,10 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   Report is the ONLY subcommand that returns codes 3
   (errors in parsed results) and 4 (missing/partial results, including
   unrecognized TF overall values — rerun candidates, maintainer-ratified
-  2026-07-17), and the only one requiring severity precedence
+  2026-07-17 — and requested tasks that could not be fetched or graded:
+  dropped at the task-info fetch (404, schema miss, retries exhausted,
+  worker exception) or whose xunit fetch raised), and the only one
+  requiring severity precedence
   (3 > 2 > 4 > 0, error-dominates — missing results are rerun candidates
   and must not mask a real error), because it is the only command that
   grades multi-plan result sets.
