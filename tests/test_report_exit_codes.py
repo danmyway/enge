@@ -514,5 +514,205 @@ class TestReportExceptionMapping(unittest.TestCase):
         self.assertEqual(code, EXIT_GENERAL_ERROR)
 
 
+# ── Ungraded-task grading tests (AUD-C1) ────────────────────────────
+
+
+class TestReportGradesUngradedTasks(unittest.TestCase):
+    """A requested task that report could not fetch or grade must still
+    surface as MISSING_RESULTS in the aggregate exit code (QA-1,
+    2026-09-24) -- previously such tasks were silently dropped and the
+    run could exit 0 while a Testing Farm outage or schema miss ate one
+    of the requested tasks."""
+
+    def _run(self, urls, fetch_task_info_side_effect, fetch_xml_side_effect):
+        from enge.report.concurrent_parser import parse_request_xunit_concurrent
+
+        with (
+            patch.object(
+                ConcurrentRequestParser,
+                "_fetch_task_info",
+                side_effect=fetch_task_info_side_effect,
+            ),
+            patch.object(
+                ConcurrentRequestParser,
+                "_fetch_xml_results",
+                side_effect=fetch_xml_side_effect,
+            ),
+        ):
+            return parse_request_xunit_concurrent(
+                _report_ctx(), request_url_list=urls, tasks_source="test"
+            )
+
+    def test_dropped_task_info_yields_missing_results(self):
+        """U1: one task fetches fine, the other's task-info fetch returns
+        None (404 / schema miss / retries exhausted) -- silently dropped
+        before this fix."""
+        urls = ["http://example.com/api/00000001", "http://example.com/api/00000002"]
+        passed_task = _make_task_result(
+            xunit_content=_XML_PASSED,
+            request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+            url=urls[0],
+        )
+
+        def fetch_task_info(url, process_state=True):
+            return passed_task if url == urls[0] else None
+
+        def fetch_xml(task_result):
+            return task_result
+
+        _, retval, _ = self._run(urls, fetch_task_info, fetch_xml)
+        self.assertEqual(retval, ExitCode.MISSING_RESULTS)
+
+    def test_task_info_exception_yields_missing_results(self):
+        """U2: the task-info fetch raises instead of returning None -- the
+        pool's `except Exception` branch must grade the drop the same
+        way as a plain None."""
+        urls = ["http://example.com/api/00000001", "http://example.com/api/00000002"]
+        passed_task = _make_task_result(
+            xunit_content=_XML_PASSED,
+            request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+            url=urls[0],
+        )
+
+        def fetch_task_info(url, process_state=True):
+            if url == urls[0]:
+                return passed_task
+            raise RuntimeError("boom")
+
+        def fetch_xml(task_result):
+            return task_result
+
+        _, retval, _ = self._run(urls, fetch_task_info, fetch_xml)
+        self.assertEqual(retval, ExitCode.MISSING_RESULTS)
+
+    def test_xml_fetch_network_error_yields_missing_results(self):
+        """U3: both tasks are fetched, but one's xunit fetch raises
+        NetworkError (a dropped connection) -- it must be graded
+        MISSING_RESULTS instead of reaching the aggregate as retval=None."""
+        from enge.utils.errors import NetworkError
+
+        urls = ["http://example.com/api/00000001", "http://example.com/api/00000002"]
+        passed_task = _make_task_result(
+            xunit_content=_XML_PASSED,
+            request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+            url=urls[0],
+        )
+        broken_task = _make_task_result(
+            xunit_content=None,
+            request_uuid="bbbbbbbb-0000-0000-0000-000000000002",
+            url=urls[1],
+        )
+
+        def fetch_task_info(url, process_state=True):
+            return passed_task if url == urls[0] else broken_task
+
+        def fetch_xml(task_result):
+            if task_result.request_uuid == broken_task.request_uuid:
+                raise NetworkError("connection reset")
+            return task_result
+
+        _, retval, task_results = self._run(urls, fetch_task_info, fetch_xml)
+        self.assertEqual(retval, ExitCode.MISSING_RESULTS)
+        by_uuid = {tr.request_uuid: tr for tr in task_results}
+        self.assertEqual(
+            by_uuid[broken_task.request_uuid].retval, ExitCode.MISSING_RESULTS
+        )
+
+    def test_all_tasks_dropped_yields_missing_results_and_empty_results(self):
+        """U4: every requested task is dropped at the task-info phase --
+        the report must still grade MISSING_RESULTS instead of silently
+        succeeding with zero tasks to show."""
+        urls = ["http://example.com/api/00000001"]
+
+        def fetch_task_info(url, process_state=True):
+            return None
+
+        def fetch_xml(task_result):
+            return task_result
+
+        _, retval, task_results = self._run(urls, fetch_task_info, fetch_xml)
+        self.assertEqual(retval, ExitCode.MISSING_RESULTS)
+        self.assertEqual(task_results, [])
+
+    def test_dropped_task_does_not_mask_failure_or_error(self):
+        """U5: precedence, with a premise guard. A dropped task alone
+        grades 4 (first call proves the drop is graded at all); a
+        dropped task alongside a real FAILED/ERROR result must never
+        downgrade the aggregate below that real result
+        (TEST_ERROR > TEST_FAILURE > MISSING_RESULTS > SUCCESS)."""
+        urls = ["http://example.com/api/00000001", "http://example.com/api/00000002"]
+
+        def fetch_task_info_factory(xunit_content):
+            task = _make_task_result(
+                xunit_content=xunit_content,
+                request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+                url=urls[0],
+            )
+
+            def fetch_task_info(url, process_state=True):
+                return task if url == urls[0] else None
+
+            return fetch_task_info
+
+        def fetch_xml(task_result):
+            return task_result
+
+        _, retval, _ = self._run(urls, fetch_task_info_factory(_XML_PASSED), fetch_xml)
+        self.assertEqual(retval, ExitCode.MISSING_RESULTS)
+
+        _, retval, _ = self._run(urls, fetch_task_info_factory(_XML_FAILED), fetch_xml)
+        self.assertEqual(retval, ExitCode.TEST_FAILURE)
+
+        _, retval, _ = self._run(urls, fetch_task_info_factory(_XML_ERROR), fetch_xml)
+        self.assertEqual(retval, ExitCode.TEST_ERROR)
+
+    def test_fully_graded_run_still_uses_the_pool(self):
+        """U6: negative pin, with a premise guard. When every task is
+        fetched and graded cleanly, this fix must not introduce a false
+        MISSING_RESULTS -- and the pool must actually have run both
+        fetches, so the assertion above isn't passing vacuously."""
+        from enge.report.concurrent_parser import parse_request_xunit_concurrent
+
+        urls = ["http://example.com/api/00000001", "http://example.com/api/00000002"]
+        tasks = {
+            urls[0]: _make_task_result(
+                xunit_content=_XML_PASSED,
+                request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+                url=urls[0],
+            ),
+            urls[1]: _make_task_result(
+                xunit_content=_XML_PASSED,
+                request_uuid="bbbbbbbb-0000-0000-0000-000000000002",
+                url=urls[1],
+            ),
+        }
+
+        def fetch_task_info(url, process_state=True):
+            return tasks[url]
+
+        def fetch_xml(task_result):
+            return task_result
+
+        with (
+            patch.object(
+                ConcurrentRequestParser,
+                "_fetch_task_info",
+                side_effect=fetch_task_info,
+            ) as mock_info,
+            patch.object(
+                ConcurrentRequestParser,
+                "_fetch_xml_results",
+                side_effect=fetch_xml,
+            ) as mock_xml,
+        ):
+            _, retval, _ = parse_request_xunit_concurrent(
+                _report_ctx(), request_url_list=urls, tasks_source="test"
+            )
+
+        self.assertEqual(retval, ExitCode.SUCCESS)
+        self.assertEqual(mock_info.call_count, 2)
+        self.assertEqual(mock_xml.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
