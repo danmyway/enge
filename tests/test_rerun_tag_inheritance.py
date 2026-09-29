@@ -1092,5 +1092,298 @@ class TestRerunRecordsDispatchedTestNames(unittest.TestCase):
         self.assertEqual(requests[0]["tests"], [])
 
 
+# ==================== Q-D1-3': rerun context inheritance ====================
+
+SINGLE_SET_CONTEXT = {
+    "set": "smoke",
+    "event": "nightly",
+    "source": "RHEL-9.6",
+    "target": "RHEL-10.0",
+    "tiers": ["tier0"],
+    "architectures": ["x86_64"],
+}
+
+
+def _tf_response_for(task_uuid):
+    resp = MagicMock()
+    resp.json.return_value = {
+        "id": task_uuid,
+        "environments_requested": [{"os": {"compose": "RHEL-9.0"}, "arch": "x86_64"}],
+        "test": {"fmf": {"name": "/plan/tier0"}},
+    }
+    return resp
+
+
+def _parsed_dict_for(task_uuid):
+    return {
+        task_uuid: {
+            "source_compose": "RHEL-9.0",
+            "testsuites": [
+                {
+                    "testsuite_name": "/plan/tier0",
+                    "testsuite_result": "FAILED",
+                    "testsuite_arch": "x86_64",
+                    "testcases": [
+                        {
+                            "testcase_name": "test::failing",
+                            "testcase_result": "FAILED",
+                        },
+                    ],
+                }
+            ],
+        },
+    }
+
+
+class _RerunContextHarness:
+    """Shared harness: write a parent manifest, drive rerun main() with a
+    preset task_source, and read back the flushed rerun manifest."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _write_parent(self, requests, context, tags=("nightly",)):
+        parent_id = generate_ulid()
+        parent = ManifestWriter(
+            run_id=parent_id,
+            command="test",
+            argv=["enge", "test"],
+            tags=list(tags),
+            context=context,
+        )
+        for task_id, set_name in requests:
+            parent.add_request(task_id, set_name=set_name, tier="tier0", arch="x86_64")
+        parent.flush(self.runs_dir, self.latest)
+        return parent_id
+
+    def _find_child_manifest(self, exclude_id=None):
+        manifests = list(self.runs_dir.glob("*.json"))
+        if exclude_id:
+            manifests = [m for m in manifests if m.stem != exclude_id]
+        self.assertEqual(
+            len(manifests), 1, f"Expected 1 child manifest, got {len(manifests)}"
+        )
+        return json.loads(manifests[0].read_text())
+
+    def _run_rerun(self, source, rerun_uuid):
+        api_url = f"https://tf.example.com/api/{rerun_uuid}"
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = ["cli-tag"]
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{rerun_uuid}"
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={"error": False, "fail": False, "dryrun": False},
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        with (
+            patch(
+                "enge.rerun.__main__._create_rerun_launch_for_payload",
+                return_value=None,
+            ),
+            patch(
+                "enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c
+            ),
+            patch(
+                "enge.rerun.__main__.http_get",
+                return_value=_tf_response_for(rerun_uuid),
+            ),
+            patch("enge.rerun.__main__.SubmitTest", return_value=mock_submit),
+            patch(
+                "enge.rerun.__main__.parse_request_xunit",
+                return_value=_parsed_dict_for(rerun_uuid),
+            ),
+            patch(
+                "enge.rerun.__main__.parse_tasks_with_map",
+                return_value=(
+                    [api_url],
+                    source,
+                    {rerun_uuid: None, api_url: None},
+                ),
+            ),
+        ):
+            main(ctx)
+
+
+class TestRerunContextInheritance(_RerunContextHarness, unittest.TestCase):
+    """Q-D1-3': the parent's context is carried onto the rerun manifest only
+    when the parent's requests span at most one distinct non-null set."""
+
+    def test_single_set_parent_context_is_carried(self):
+        parent_id = self._write_parent([(TASK_UUID, "smoke")], dict(SINGLE_SET_CONTEXT))
+
+        self._run_rerun(f"manifest:{parent_id}", TASK_UUID)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        self.assertEqual(child["context"], SINGLE_SET_CONTEXT)
+
+    def test_multi_set_parent_context_is_dropped(self):
+        parent_id = self._write_parent(
+            [(TASK_UUID, "A"), (TASK_UUID_2, "B")],
+            {"set": "A", "event": "nightly", "tiers": ["tier0"]},
+        )
+
+        self._run_rerun(f"manifest:{parent_id}", TASK_UUID_2)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        self.assertEqual(child["context"], {})
+
+    def test_parent_without_request_sets_carries_context(self):
+        parent_id = self._write_parent([(TASK_UUID, None)], dict(SINGLE_SET_CONTEXT))
+
+        self._run_rerun(f"manifest:{parent_id}", TASK_UUID)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        self.assertEqual(child["context"], SINGLE_SET_CONTEXT)
+
+    def test_filter_source_yields_empty_context(self):
+        parent_id = self._write_parent([(TASK_UUID, "smoke")], dict(SINGLE_SET_CONTEXT))
+
+        self._run_rerun("manifest:filter", TASK_UUID)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        self.assertEqual(child["context"], {})
+
+    def test_raw_input_source_yields_empty_context(self):
+        parent_id = self._write_parent([(TASK_UUID, "smoke")], dict(SINGLE_SET_CONTEXT))
+
+        self._run_rerun(None, TASK_UUID)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        self.assertEqual(child["context"], {})
+
+
+class TestRerunContextMultiSetHazard(_RerunContextHarness, unittest.TestCase):
+    """Q-D1-3' end to end: a carried context must never make ``find_runs``
+    match a rerun on a set it does not cover."""
+
+    def test_multi_set_parent_rerun_is_not_selected_by_the_other_set(self):
+        from enge.utils.manifest import ManifestReader
+
+        parent_id = self._write_parent(
+            [(TASK_UUID, "A"), (TASK_UUID_2, "B")],
+            {"set": "A", "event": "nightly"},
+        )
+
+        self._run_rerun(f"manifest:{parent_id}", TASK_UUID_2)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        matched_a = {
+            r["run_id"] for r in ManifestReader.find_runs(self.runs_dir, set_name=["A"])
+        }
+        self.assertNotIn(child["run_id"], matched_a)
+
+    def test_multi_set_parent_rerun_is_selected_by_its_own_set(self):
+        from enge.utils.manifest import ManifestReader
+
+        parent_id = self._write_parent(
+            [(TASK_UUID, "A"), (TASK_UUID_2, "B")],
+            {"set": "A", "event": "nightly"},
+        )
+
+        self._run_rerun(f"manifest:{parent_id}", TASK_UUID_2)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        matched_b = {
+            r["run_id"] for r in ManifestReader.find_runs(self.runs_dir, set_name=["B"])
+        }
+        self.assertIn(child["run_id"], matched_b)
+
+    def test_single_set_parent_rerun_is_selected_by_that_set(self):
+        from enge.utils.manifest import ManifestReader
+
+        parent_id = self._write_parent([(TASK_UUID, "smoke")], dict(SINGLE_SET_CONTEXT))
+
+        self._run_rerun(f"manifest:{parent_id}", TASK_UUID)
+
+        child = self._find_child_manifest(exclude_id=parent_id)
+        matched = {
+            r["run_id"]
+            for r in ManifestReader.find_runs(self.runs_dir, set_name=["smoke"])
+        }
+        self.assertIn(child["run_id"], matched)
+
+
+class TestRerunRealResolverSetFilterLineage(unittest.TestCase):
+    """Q-D1-1 end to end: ``enge rerun --set smoke`` matching exactly one run
+    resolves that run as parent, through the real task resolver."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    @patch("enge.rerun.__main__._create_rerun_launch_for_payload", return_value=None)
+    @patch("enge.rerun.__main__.repin_compose", side_effect=lambda c, u, **kw: c)
+    @patch("enge.rerun.__main__.http_get")
+    @patch("enge.rerun.__main__.SubmitTest")
+    @patch("enge.rerun.__main__.parse_request_xunit")
+    def test_set_filter_matching_one_run_wires_full_lineage(
+        self, mock_xunit, mock_submit_cls, mock_http, _mock_repin, _mock_rp
+    ):
+        import uuid as uuid_mod
+
+        task_uuid = str(uuid_mod.uuid4())
+
+        parent_id = generate_ulid()
+        parent = ManifestWriter(
+            run_id=parent_id,
+            command="test",
+            argv=["enge", "test"],
+            tags=["nightly", "milestone-x"],
+            context=dict(SINGLE_SET_CONTEXT),
+        )
+        parent.add_request(task_uuid, set_name="smoke", tier="tier0", arch="x86_64")
+        parent.flush(self.runs_dir, self.latest)
+
+        mock_xunit.return_value = _parsed_dict_for(task_uuid)
+        mock_http.return_value = _tf_response_for(task_uuid)
+
+        mock_submit = MagicMock()
+        mock_submit.set_tag = ["cli-tag"]
+        mock_submit.log_artifact_url = f"https://artifacts.example.com/{task_uuid}"
+        mock_submit_cls.return_value = mock_submit
+
+        ctx = make_app_context(
+            action="rerun",
+            extra_cli={
+                "error": False,
+                "fail": False,
+                "dryrun": False,
+                "filter_set": "smoke",
+            },
+            manifest_runs_dir=str(self.runs_dir),
+            manifest_latest=str(self.latest),
+        )
+
+        from enge.rerun.__main__ import main
+
+        main(ctx)
+
+        manifests = [m for m in self.runs_dir.glob("*.json") if m.stem != parent_id]
+        self.assertEqual(len(manifests), 1)
+        child = json.loads(manifests[0].read_text())
+
+        self.assertEqual(child["parent_run_id"], parent_id)
+        self.assertEqual(child["tags"], ["nightly", "milestone-x", "cli-tag", "rerun"])
+        self.assertEqual(child["requests"][0]["set"], "smoke")
+        self.assertEqual(child["context"], SINGLE_SET_CONTEXT)
+
+
 if __name__ == "__main__":
     unittest.main()

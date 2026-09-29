@@ -384,11 +384,42 @@ class TestTaskResolverMultiRunAndFilters(unittest.TestCase):
         self.assertEqual(source, "manifest:filter")
         self.assertEqual(set(task_ids), {"id-a", "id-b"})
 
-    def test_filter_source_is_filter_sentinel(self):
-        self._write(["id-a"], set_name="smoke")
+    def test_filter_narrowing_to_one_run_preserves_lineage_id(self):
+        # Q-D1-1: a filter that resolves to exactly one run is lineage-bearing.
+        rid = self._write(["id-a"], set_name="smoke")
         ctx = _make_ctx(self.runs, self.latest, filter_set="smoke")
         _, source = _resolve_manifest_tasks(ctx)
+        self.assertEqual(source, f"manifest:{rid}")
+
+    def test_date_only_selection_of_one_run_preserves_lineage_id(self):
+        # Q-D1-1: a date flag alone, resolving to one run, is lineage-bearing.
+        rid = self._write(["id-a"])
+        ctx = _make_ctx(self.runs, self.latest, since="1d")
+        _, source = _resolve_manifest_tasks(ctx)
+        self.assertEqual(source, f"manifest:{rid}")
+
+    def test_repeated_identical_run_preserves_lineage_id(self):
+        # Q-D1-1: --run A --run A dedupes to one run, so lineage survives.
+        rid = self._write(["id-a"])
+        ctx = _make_ctx(self.runs, self.latest, run=[rid, rid])
+        _, source = _resolve_manifest_tasks(ctx)
+        self.assertEqual(source, f"manifest:{rid}")
+
+    def test_run_plus_matching_tier_preserves_lineage_id(self):
+        # Q-D1-1: --run plus a filter that keeps it still yields one run.
+        rid = self._write(["id-a"], tier="tier0")
+        ctx = _make_ctx(self.runs, self.latest, run=[rid], filter_tier="tier0")
+        _, source = _resolve_manifest_tasks(ctx)
+        self.assertEqual(source, f"manifest:{rid}")
+
+    def test_filter_matching_two_runs_is_filter_sentinel(self):
+        # Q-D1-2: two or more runs keep the sentinel -- no parent.
+        self._write(["id-a"], set_name="smoke")
+        self._write(["id-b"], set_name="smoke")
+        ctx = _make_ctx(self.runs, self.latest, filter_set="smoke")
+        task_ids, source = _resolve_manifest_tasks(ctx)
         self.assertEqual(source, "manifest:filter")
+        self.assertEqual(set(task_ids), {"id-a", "id-b"})
 
     def test_task_ids_are_deduplicated_across_runs(self):
         shared = "shared-task-id"
