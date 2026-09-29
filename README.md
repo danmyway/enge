@@ -966,7 +966,7 @@ Use `--error` or `--fail` if you want to further specify which type of non-zero 
 Use `--dry-run` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
 Use `--set-tag` to attach custom tags to the rerun manifest.
 
-Rerun manifests carry `parent_run_id` linking to the original run, and inherit the parent's tags plus `"rerun"`. This happens for any selection that resolves to exactly one run — a lone `--run`, a `--set`/`--tier`/`--arch`/`--tag` filter, a date window, or the default no-selector rerun — while a selection matching two or more runs records no parent and inherits nothing. See the [Manifest Store and Run History](#manifest-store-and-run-history) section for details.
+Rerun manifests carry `parent_run_id` linking to the original run, and inherit the parent's tags plus `"rerun"`. This happens for any selection that resolves to exactly one run — a lone `--run`, a `--set`/`--tier`/`--arch`/`--tag` filter (with or without `--since`/`--until`), or the default no-selector rerun — while a selection matching two or more runs records no parent and inherits nothing. A bare `--since`/`--until` with no manifest selector reads the legacy archive first and is not covered by this. See the [Manifest Store and Run History](#manifest-store-and-run-history) section for details.
 
 ```
 # Rerun from the latest run
