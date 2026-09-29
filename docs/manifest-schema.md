@@ -279,10 +279,13 @@ Lineage resolves whenever the selection resolved to exactly ONE run,
 whatever selector produced it: the default no-selector `enge rerun`
 (which takes the latest-pointer path and has always resolved a
 parent), a lone `--run <id>`, a repeated identical `--run`, a
-`--set`/`--tier`/`--arch`/`--tag` filter, a `--since`/`--until` date
-window, or `--run` combined with filters. `_resolve_manifest_tasks`
-(`utils/task_resolver.py:56`) emits `manifest:<run_id>` for all of
-them.
+`--set`/`--tier`/`--arch`/`--tag` filter (with or without a
+`--since`/`--until` window), or `--run` combined with filters.
+`_resolve_manifest_tasks` (`utils/task_resolver.py:56`) emits
+`manifest:<run_id>` for all of them. A bare `--since`/`--until` with no
+manifest selector is routed to the legacy archive first
+(`utils/task_resolver.py:149`) and reaches `_resolve_manifest_tasks`
+only when that archive exists and yields no task IDs.
 
 When lineage does not resolve, `_build_parent_request_index`
 (`rerun/__main__.py:135`) returns `{}` and the rerun manifest's
