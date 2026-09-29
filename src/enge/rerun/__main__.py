@@ -84,27 +84,52 @@ def _extract_tags_from_filename(path: Path) -> List[str]:
     return [part for part in tag_parts if part]
 
 
+def _rerun_context_from_parent(parent_manifest: Mapping[str, Any]) -> Dict[str, Any]:
+    """Decide whether the parent's context may be carried onto the rerun.
+
+    Dispatch writes ``context.set`` as the *first* requested set only, and
+    ``ManifestReader.find_runs`` treats a ``context.set`` match as sufficient,
+    skipping the per-request check.  Copying a multi-set parent's context onto
+    a rerun covering only one of those sets would therefore make the rerun
+    answer ``--set`` for a set it does not cover.  So the context is carried
+    only when the parent's requests span at most one distinct non-null set.
+    """
+    sets = {r.get("set") for r in parent_manifest.get("requests", []) if r.get("set")}
+    if len(sets) <= 1:
+        return copy.deepcopy(parent_manifest.get("context") or {})
+    return {}
+
+
 def _resolve_parent_lineage(
     task_source: Optional[Any], runs_dir: str
-) -> "tuple[Optional[str], List[str]]":
-    """Derive parent_run_id and inherited tags from the task resolution source.
+) -> "tuple[Optional[str], List[str], Dict[str, Any]]":
+    """Derive parent_run_id, inherited tags and context from the task source.
 
-    When tasks were resolved from a single manifest (default latest or --run),
-    returns (parent_run_id, parent_tags).  Otherwise returns (None, []).
+    Any selection that resolved to exactly one manifest -- the default latest
+    run, or a ``--run``/filter/date selection that narrowed to one run --
+    yields ``manifest:<run_id>`` and returns (parent_run_id, parent_tags,
+    parent_context).  A selection of two or more runs yields the
+    ``manifest:filter`` sentinel and returns (None, [], {}), as does any
+    non-manifest source.  The context is subject to the single-set rule in
+    ``_rerun_context_from_parent``.
     """
     if not isinstance(task_source, str) or not task_source.startswith("manifest:"):
-        return None, []
+        return None, [], {}
 
     source_id = task_source[len("manifest:") :]
     if source_id in ("filter", "latest"):
-        return None, []
+        return None, [], {}
 
     try:
         manifest = ManifestReader.get_run(Path(runs_dir), source_id)
     except Exception:
-        return None, []
+        return None, [], {}
 
-    return manifest.get("run_id", source_id), manifest.get("tags", [])
+    return (
+        manifest.get("run_id", source_id),
+        manifest.get("tags", []),
+        _rerun_context_from_parent(manifest),
+    )
 
 
 def _build_parent_request_index(
@@ -962,7 +987,7 @@ def main(ctx: AppContext):
     from enge.utils.ulid import generate_ulid
     import sys
 
-    parent_run_id, inherited_tags = _resolve_parent_lineage(
+    parent_run_id, inherited_tags, parent_context = _resolve_parent_lineage(
         jobs.task_source, ctx.manifest_runs_dir
     )
     parent_request_index = _build_parent_request_index(
@@ -975,6 +1000,7 @@ def main(ctx: AppContext):
         argv=sys.argv,
         tags=_unique_preserve([*inherited_tags, *base_tags, "rerun"]),
         parent_run_id=parent_run_id,
+        context=parent_context,
     )
 
     manifest_flushed = False

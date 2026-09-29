@@ -70,7 +70,7 @@ closed.
 - `parent_run_id` (nullable str, ULID) — required key, nullable value.
   Native dispatch: always `null` (a dispatch is never a rerun of
   anything). Native rerun: from `_resolve_parent_lineage`
-  (`rerun/__main__.py:86`) — see "Rerun lineage" under `requests[]`
+  (`rerun/__main__.py:103`) — see "Rerun lineage" under `requests[]`
   below for when this resolves vs. stays `null`. Migrated: hardcoded
   `null` (`migrate/__main__.py:96`).
 - `origin` (str enum: `"native"` | `"migrated"`) — required, non-null.
@@ -98,10 +98,21 @@ only when `--set` was passed on the CLI, holding the first requested
 set name — a convenience value for the fast-path filter below, not
 necessarily representative of every request in a multi-set run),
 `source` (`:343-345`), `target` (`:346-348`), `tiers` (`:349-353`), and
-`architectures` (`:354-355`). Native rerun constructs its
-`ManifestWriter` with no `context` argument at all
-(`rerun/__main__.py:832-837`), so every rerun manifest's `context` is
-`{}`. Migrated manifests populate `set`, `tiers`, `architectures` only,
+`architectures` (`:354-355`). Native rerun passes the parent manifest's
+`context` through `_rerun_context_from_parent`
+(`rerun/__main__.py:87`) into its `ManifestWriter`
+(`rerun/__main__.py:997-1003`): a deep copy of the parent's `context`
+when the parent's `requests[]` carry at most ONE distinct non-null
+`set`, and `{}` otherwise. `{}` is also the value whenever no parent
+resolved at all (see "Rerun lineage" below).
+
+The single-set condition is not cosmetic. Dispatch records
+`context.set` as the FIRST requested set only, and the `find_runs`
+fast path below treats a `context.set` match as sufficient — it never
+re-checks `requests[]`. Copying a multi-set parent's `context` onto a
+rerun that covers only set B would therefore make `--set A` select
+that rerun (ruling Q-D1-3′, 2026-09-25). Migrated manifests populate
+`set`, `tiers`, `architectures` only,
 via `_parse_context_from_tags` (`migrate/__main__.py:19-38`) —
 `event`/`source`/`target` are never derivable from a legacy archive
 filename and are always absent.
@@ -130,7 +141,7 @@ Field-by-field, type / nullability / producing writer:
   `spec.set_name`, `null` for a no-set CLI invocation (the
   test-development workflow). Native rerun: `parent_entry.get("set")`
   from the parent manifest's matching request
-  (`rerun/__main__.py:959`) — `null` whenever rerun lineage did not
+  (`rerun/__main__.py:1125`) — `null` whenever rerun lineage did not
   resolve (see "Rerun lineage" below), regardless of what the original
   dispatch's `set` was. Migrated: `context.get("set")`
   (`migrate/__main__.py:108`) — `null` unless a tag matched as the set
@@ -228,7 +239,7 @@ Field-by-field, type / nullability / producing writer:
   present) — optional key (absent on migrated manifests only; always
   emitted on the native path).
   Native dispatch and rerun: `[a["id"] for a in <artifacts>]`
-  (`dispatch/set_flow.py:527`, `rerun/__main__.py:976`, filtered to
+  (`dispatch/set_flow.py:527`, `rerun/__main__.py:1142`, filtered to
   entries with an `id` on the rerun side). Format is
   `"<build_id>:<chroot>"` for COPR-resolved artifacts
   (`utils/tf_artifact.py:434`). **Caution**: the chroot suffix is NOT
@@ -257,16 +268,26 @@ Field-by-field, type / nullability / producing writer:
 
 ### Rerun lineage (set/tier/target_compose inheritance)
 
-`_resolve_parent_lineage` (`rerun/__main__.py:86`) is the sole source of
-`parent_run_id`, and it returns `(None, [])` in three cases: (i)
+`_resolve_parent_lineage` (`rerun/__main__.py:103`) is the sole source
+of `parent_run_id`, and it returns `(None, [], {})` in two cases: (i)
 `task_source` is not a `"manifest:<id>"` string (the `-i`/raw-input
-path), (ii) `task_source == "manifest:latest"` (the default `enge
-rerun` with no selector), (iii) `task_source == "manifest:filter"` (any
-`--run`-multi / `--set` / `--tier` / `--tag` / date-driven rerun). Only
-a lone explicit `--run <id>` rerun resolves lineage. When it doesn't,
-`_build_parent_request_index` (`rerun/__main__.py:109`) returns `{}`
-and the rerun manifest's `set`/`tier`/`target_compose` are all `null`
-for every request in that manifest.
+path), (ii) `task_source == "manifest:filter"` — which, per ruling
+Q-D1-1 (2026-09-25), now means only that the selection resolved to TWO
+OR MORE runs.
+
+Lineage resolves whenever the selection resolved to exactly ONE run,
+whatever selector produced it: the default no-selector `enge rerun`
+(which takes the latest-pointer path and has always resolved a
+parent), a lone `--run <id>`, a repeated identical `--run`, a
+`--set`/`--tier`/`--arch`/`--tag` filter, a `--since`/`--until` date
+window, or `--run` combined with filters. `_resolve_manifest_tasks`
+(`utils/task_resolver.py:56`) emits `manifest:<run_id>` for all of
+them.
+
+When lineage does not resolve, `_build_parent_request_index`
+(`rerun/__main__.py:135`) returns `{}` and the rerun manifest's
+`set`/`tier`/`target_compose` are all `null` for every request in that
+manifest, and its `context` is `{}`.
 
 As of `f8fcdfb` (2026-08-25, `set`) and `cb01b83` (2026-08-31, `tier`),
 all three of these fields are required-key/nullable-value on both the
@@ -288,7 +309,7 @@ entries omit (`launch_uuid`, `rerun_of`, `source`, `target`, `git_ref`,
 entries, never `[key]`.** Bracket access on any of the 8
 migrate-omitted keys raises `KeyError` on a legitimate manifest.
 
-`utils/task_resolver.py:84` reads `m['run_id']` with bracket access
+`utils/task_resolver.py:87` reads `m['run_id']` with bracket access
 over the manifests returned by `select_runs`, and this is legitimate —
 it is NOT an exception to the rule above, because `run_id` is an
 **envelope** field, and the Envelope section above establishes it as
