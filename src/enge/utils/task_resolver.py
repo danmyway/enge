@@ -59,10 +59,13 @@ def _resolve_manifest_tasks(ctx):
     Delegates run/filter selection to ``manifest_resolution.select_runs`` --
     the same repeatable ``--run`` + AND-composed filter selection ``enge
     report``/``compare`` use -- then flattens the selected runs' task_ids
-    (de-duplicated, order preserved).  Source lineage is preserved for a lone
-    ``--run`` (``manifest:<run_id>``); multi-run or any filter collapses to
-    the ``manifest:filter`` sentinel.  Returns None only when no selector at
-    all is present; an empty selection with selectors raises ``ValidationError``.
+    (de-duplicated, order preserved).  Source lineage is preserved whenever
+    the selection resolves to exactly one run (``manifest:<run_id>``), no
+    matter which selectors produced it -- a filter, a date flag, a repeated
+    ``--run``, or ``--run`` plus filters.  Only a selection of two or more
+    runs collapses to the ``manifest:filter`` sentinel.  Returns None only
+    when no selector at all is present; an empty selection with selectors
+    raises ``ValidationError``.
     """
     from enge.utils.manifest_resolution import _as_list, select_runs
 
@@ -91,10 +94,7 @@ def _resolve_manifest_tasks(ctx):
                 seen.add(tid)
                 task_ids.append(tid)
 
-    single_run = (
-        len(selected) == 1 and len(run_values) == 1 and not has_filters and not has_date
-    )
-    if single_run:
+    if len(selected) == 1:
         source = f"manifest:{selected[0]['run_id']}"
     else:
         source = "manifest:filter"

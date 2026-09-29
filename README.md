@@ -966,7 +966,7 @@ Use `--error` or `--fail` if you want to further specify which type of non-zero 
 Use `--dry-run` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
 Use `--set-tag` to attach custom tags to the rerun manifest.
 
-Rerun manifests carry `parent_run_id` linking to the original run, and inherit the parent's tags plus `"rerun"`. See the [Manifest Store and Run History](#manifest-store-and-run-history) section for details.
+Rerun manifests carry `parent_run_id` linking to the original run, and inherit the parent's tags plus `"rerun"`. This happens for any selection that resolves to exactly one run — a lone `--run`, a `--set`/`--tier`/`--arch`/`--tag` filter, a date window, or the default no-selector rerun — while a selection matching two or more runs records no parent and inherits nothing. See the [Manifest Store and Run History](#manifest-store-and-run-history) section for details.
 
 ```
 # Rerun from the latest run
@@ -1047,7 +1047,7 @@ Context (set name, architecture, tier) is now always recorded in the manifest. `
 Use `--tag` for native manifests. `--get-tag` still works for pre-migration archive files via the legacy bridge.
 
 **Rerun lineage:**
-Rerun manifests carry `parent_run_id` linking to the original run, replacing the old `.rerun` filename suffix. Inherited tags are copied from parent to child.
+Rerun manifests carry `parent_run_id` linking to the original run, replacing the old `.rerun` filename suffix. Whenever the rerun's selection resolves to exactly one run, that run becomes the parent and the child inherits its tags, its per-request `set`/`tier`/`target_compose`, and (for a single-set parent) its `context`; a selection matching two or more runs has no parent and inherits none of these.
 
 **Migrating legacy archives:**
 
