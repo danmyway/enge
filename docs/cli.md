@@ -16,7 +16,6 @@ Send requests to and get results back from Testing Farm conveniently.
 - `rerun` — Parse given tasks and rerun specified jobs.
 - `reportportal` — Manage ReportPortal launches.
 - `cancel` — Cancel Testing Farm tasks.
-- `migrate-archive` — Convert legacy archive files to JSON manifests.
 
 ## test
 
@@ -53,7 +52,7 @@ Send requests to Testing Farm conveniently.
 - `--rp-description RP_DESCRIPTION` — Override ReportPortal description from configuration. Sets TMT_PLUGIN_REPORT_REPORTPORTAL_DESCRIPTION environment variable.
 - `--wait` — Wait for successful API response after submitting request.
 - `-n, --dry-run, --dryrun` — Print the payload that would be sent to Testing Farm without sending it.
-- `--set-tag TAG` — Tag the archived task file with a custom tag. Can be used multiple times.
+- `--set-tag TAG` — Tag the run's manifest with a custom tag (select it later with --tag). Can be used multiple times.
 - `-o, --format {terminal,gitlab,json}` — Output format. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks and tables. 'json': machine-readable JSON to stdout (suppresses other output). (default: `terminal`)
 - `--list-sets` — List available test sets from config and exit.
 - `--list-sets-detail` — List available test sets with full configuration detail and exit.
@@ -84,8 +83,6 @@ Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs fro
 - `-v, --verbose` — Increase output verbosity. -v for verbose, -vv for full debug.
 - `-f, --file FILE` — Filepath containing request IDs, artifact URLs, or request URLs to parse. Can be provided multiple times: -f file1 -f ~/file2
 - `-i, --input ID_OR_URL` — Request ID, artifact URL, or request URL to parse from command line. Can be provided multiple times: -i id1 -i id2
-- `--get-tag TAG` — Query for all task results under a given tag. Can be used multiple times.
-- `--path PATH` — Custom path to archived task files directory.
 - `--show-tests` — Display detailed test view. By default, only plan view is shown.
 - `-s, --short` — Display shortened test and plan names. This is now the default; the flag is accepted for backward compatibility.
 - `-l, --long` — Display full, verbatim test and plan names (the previous default).
@@ -167,8 +164,7 @@ Rerun failed or errored tasks from previous runs.
 - `-v, --verbose` — Increase output verbosity. -v for verbose, -vv for full debug.
 - `-f, --file FILE` — Filepath containing request IDs, artifact URLs, or request URLs to parse. Can be provided multiple times: -f file1 -f ~/file2
 - `-i, --input ID_OR_URL` — Request ID, artifact URL, or request URL to parse from command line. Can be provided multiple times: -i id1 -i id2
-- `--get-tag TAG` — Query for all task results under a given tag. Can be used multiple times.
-- `--set-tag TAG` — Tag the archived task file with a custom tag. Can be used multiple times.
+- `--set-tag TAG` — Tag the run's manifest with a custom tag (select it later with --tag). Can be used multiple times.
 - `-n, --dry-run, --dryrun` — Print the payload that would be sent to Testing Farm without sending it.
 - `-o, --format {terminal,gitlab,json}` — Output format. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks and tables. 'json': machine-readable JSON to stdout (suppresses other output). (default: `terminal`)
 - `--error` — Rerun only jobs that reported ERROR state.
@@ -196,7 +192,6 @@ Create and manage ReportPortal launches through the ReportPortal API.
 - `-v, --verbose` — Increase output verbosity. -v for verbose, -vv for full debug.
 - `-f, --file FILE` — Filepath containing request IDs, artifact URLs, or request URLs to parse. Can be provided multiple times: -f file1 -f ~/file2
 - `-i, --input ID_OR_URL` — Request ID, artifact URL, or request URL to parse from command line. Can be provided multiple times: -i id1 -i id2
-- `--get-tag TAG` — Query for all task results under a given tag. Can be used multiple times.
 - `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `-n, --dry-run, --dryrun` — Show what would be sent to ReportPortal without actually sending it.
@@ -220,7 +215,6 @@ Create and manage ReportPortal launches through the ReportPortal API.
 - `--all` — Operate on all IN_PROGRESS launches (no task input needed).
 - `-f, --file FILE` — Filepath containing request IDs, artifact URLs, or request URLs to parse. Can be provided multiple times: -f file1 -f ~/file2
 - `-i, --input ID_OR_URL` — Request ID, artifact URL, or request URL to parse from command line. Can be provided multiple times: -i id1 -i id2
-- `--get-tag TAG` — Query for all task results under a given tag. Can be used multiple times.
 - `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `-n, --dry-run, --dryrun` — Show what would be sent to ReportPortal without actually sending it.
@@ -235,7 +229,6 @@ Create and manage ReportPortal launches through the ReportPortal API.
 - `--all` — Enrich all launches (any status, no task input needed).
 - `-f, --file FILE` — Filepath containing request IDs, artifact URLs, or request URLs to parse. Can be provided multiple times: -f file1 -f ~/file2
 - `-i, --input ID_OR_URL` — Request ID, artifact URL, or request URL to parse from command line. Can be provided multiple times: -i id1 -i id2
-- `--get-tag TAG` — Query for all task results under a given tag. Can be used multiple times.
 - `--since DATE` — Only consider items from on or after DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `--until DATE` — Only consider items from on or before DATE (YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y).
 - `-n, --dry-run, --dryrun` — Show what would be sent to ReportPortal without actually sending it.
@@ -250,7 +243,6 @@ Create and manage ReportPortal launches through the ReportPortal API.
 - `--all` — Delete logs from all IN_PROGRESS launches.
 - `-f, --file FILE` — Filepath containing request IDs, artifact URLs, or request URLs to parse. Can be provided multiple times: -f file1 -f ~/file2
 - `-i, --input ID_OR_URL` — Request ID, artifact URL, or request URL to parse from command line. Can be provided multiple times: -i id1 -i id2
-- `--get-tag TAG` — Query for all task results under a given tag. Can be used multiple times.
 - `-n, --dry-run, --dryrun` — Show which logs would be deleted without actually deleting them.
 
 #### delete-stale
@@ -283,7 +275,6 @@ Cancel running or queued Testing Farm tasks by sending DELETE requests.
 - `-v, --verbose` — Increase output verbosity. -v for verbose, -vv for full debug.
 - `-f, --file FILE` — Filepath containing request IDs, artifact URLs, or request URLs to parse. Can be provided multiple times: -f file1 -f ~/file2
 - `-i, --input ID_OR_URL` — Request ID, artifact URL, or request URL to parse from command line. Can be provided multiple times: -i id1 -i id2
-- `--get-tag TAG` — Query for all task results under a given tag. Can be used multiple times.
 - `--run RUN_ID` — Select a run by manifest ID to cancel (repeatable; multiple runs are unioned, and other selectors further filter within them).
 - `--set SET` — Filter runs by test set name (repeatable, OR within).
 - `--tier TIER` — Filter runs by tier (repeatable, OR within).
@@ -292,13 +283,3 @@ Cancel running or queued Testing Farm tasks by sending DELETE requests.
 - `--since DATE` — Only consider runs created on or after DATE, in UTC (YYYY-MM-DD = from 00:00:00 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = that long before now).
 - `--until DATE` — Only consider runs created on or before DATE, in UTC (YYYY-MM-DD = through 23:59:59 UTC that day; relative: 6h, 3d, 2w, 1m, 1y = exactly that long before now).
 - `-n, --dry-run, --dryrun` — Show which tasks would be cancelled without actually cancelling them.
-
-## migrate-archive
-
-One-time migration of ~/.enge/jobs_archive/ files into the manifest store. Non-destructive and idempotent.
-
-### Options
-
-- `-h, --help` — show this help message and exit
-- `-c, --config CONFIG` — Custom path to the config file.
-- `-v, --verbose` — Increase output verbosity. -v for verbose, -vv for full debug.

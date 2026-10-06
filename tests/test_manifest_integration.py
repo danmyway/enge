@@ -29,14 +29,11 @@ def _make_ctx(runs_dir, latest, **cli_overrides):
         "run": None,
         "file": None,
         "input": None,
-        "get_tag": [],
     }
     cli.update(cli_overrides)
     return SimpleNamespace(
         manifest_runs_dir=str(runs_dir),
         manifest_latest=str(latest),
-        archive_tasks_latest="/nonexistent/legacy",
-        archive_tasks_default="/nonexistent/legacy_archive",
         cli_args=SimpleNamespace(**cli),
         testing_farm_endpoint=SimpleNamespace(
             api_endpoint_url="https://api.example.com",
@@ -267,35 +264,17 @@ class TestDefaultResolutionPriority(unittest.TestCase):
     def tearDown(self):
         self._tmpdir.cleanup()
 
-    def test_manifest_latest_preferred_over_legacy(self):
+    def test_manifest_latest_is_used(self):
         manifest_uuid = str(uuid_mod.uuid4())
-        legacy_uuid = str(uuid_mod.uuid4())
 
         w = ManifestWriter(run_id=generate_ulid(), command="test", argv=[])
         w.add_request(manifest_uuid)
         w.flush(self.runs, self.latest)
 
-        legacy_file = self.tmp / "legacy_latest"
-        legacy_file.write_text(f"{legacy_uuid}\n")
-
         ctx = _make_ctx(self.runs, self.latest)
-        ctx.archive_tasks_latest = str(legacy_file)
         urls, _, _ = _parse_tasks_impl(ctx)
         resolved_uuids = {u.rsplit("/", 1)[-1] for u in urls}
         self.assertIn(manifest_uuid, resolved_uuids)
-        self.assertNotIn(legacy_uuid, resolved_uuids)
-
-    def test_falls_back_to_legacy_when_no_manifest(self):
-        legacy_uuid = str(uuid_mod.uuid4())
-
-        legacy_file = self.tmp / "legacy_latest"
-        legacy_file.write_text(f"{legacy_uuid}\n")
-
-        ctx = _make_ctx(self.runs, self.latest)
-        ctx.archive_tasks_latest = str(legacy_file)
-        urls, _, _ = _parse_tasks_impl(ctx)
-        resolved_uuids = {u.rsplit("/", 1)[-1] for u in urls}
-        self.assertIn(legacy_uuid, resolved_uuids)
 
 
 class TestAmbiguousPrefixIntegration(unittest.TestCase):
@@ -336,7 +315,7 @@ class TestAmbiguousPrefixIntegration(unittest.TestCase):
 
 
 class TestSinceUntilManifestRouting(unittest.TestCase):
-    """--since/--until with manifest filters must not scan legacy archive."""
+    """--since/--until compose with manifest filters over the store."""
 
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -347,7 +326,7 @@ class TestSinceUntilManifestRouting(unittest.TestCase):
     def tearDown(self):
         self._tmpdir.cleanup()
 
-    def test_since_with_set_filter_skips_legacy(self):
+    def test_since_with_set_filter_routes_to_manifest(self):
         task_uuid = str(uuid_mod.uuid4())
         w = ManifestWriter(
             run_id=generate_ulid(),
@@ -359,7 +338,6 @@ class TestSinceUntilManifestRouting(unittest.TestCase):
         w.flush(self.runs, self.latest)
 
         ctx = _make_ctx(self.runs, self.latest, filter_set="smoke", since="1d")
-        ctx.archive_tasks_default = "/nonexistent/should_not_be_read"
         urls, _, _ = _parse_tasks_impl(ctx)
         resolved_uuids = {u.rsplit("/", 1)[-1] for u in urls}
         self.assertIn(task_uuid, resolved_uuids)
@@ -376,7 +354,6 @@ class TestSinceUntilManifestRouting(unittest.TestCase):
         w.flush(self.runs, self.latest)
 
         ctx = _make_ctx(self.runs, self.latest, filter_tag="nightly", since="1d")
-        ctx.archive_tasks_default = "/nonexistent/should_not_be_read"
         urls, _, _ = _parse_tasks_impl(ctx)
         resolved_uuids = {u.rsplit("/", 1)[-1] for u in urls}
         self.assertIn(task_uuid, resolved_uuids)

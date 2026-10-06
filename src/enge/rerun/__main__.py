@@ -39,51 +39,6 @@ def _unique_preserve(values: Iterable[str]) -> List[str]:
     return ordered
 
 
-def _resolve_archive_sources(
-    task_source: Optional[Any],
-    archive_default_path: Optional[str],
-    cli_args: Any,
-) -> List[Path]:
-    """
-    Resolve archive file paths that were used as rerun inputs.
-
-    Args:
-        task_source: Metadata returned by parse_tasks (file list, filenames, or None)
-        archive_default_path: Configured archive directory path
-
-    Returns:
-        List of Path objects pointing to archive files associated with the rerun input.
-    """
-    paths: List[Path] = []
-
-    file_args = getattr(cli_args, "file", None) or []
-    for entry in file_args:
-        if entry:
-            paths.append(Path(entry).expanduser())
-
-    get_tag_args = getattr(cli_args, "get_tag", None)
-    if get_tag_args and task_source and archive_default_path:
-        if isinstance(task_source, str):
-            filenames = [task_source]
-        else:
-            filenames = list(task_source)
-        archive_root = Path(archive_default_path).expanduser()
-        for filename in filenames:
-            if filename:
-                paths.append(archive_root / filename)
-
-    return paths
-
-
-def _extract_tags_from_filename(path: Path) -> List[str]:
-    """Extract appended tags from an archive filename."""
-    name = path.name
-    if "." not in name:
-        return []
-    _, *tag_parts = name.split(".")
-    return [part for part in tag_parts if part]
-
-
 def _rerun_context_from_parent(parent_manifest: Mapping[str, Any]) -> Dict[str, Any]:
     """Decide whether the parent's context may be carried onto the rerun.
 
@@ -173,7 +128,7 @@ class RerunCandidate:
         UNDEFINED-plan path of build_rerun_payloads).
     source_compose: the compose to report in the qualifying table /
         processed tuple; may be None.
-    source_path: the archive path the task was resolved from; may be None.
+    source_path: the -f file the task was read from; may be None.
     """
 
     task_id: str

@@ -25,8 +25,6 @@ _STUB_CONFIG = {
         "log_artifact_baseurl": "https://tf.example.com/artifacts",
     },
     "common": {
-        "archive_tasks_latest": "/tmp/l",
-        "archive_tasks_default": "/tmp/d",
         "logs_directory": "/tmp/logs",
     },
     "project": {},
@@ -43,8 +41,6 @@ def _make_stub_po(action="cancel"):
             "https://tf.example.com/api",
             "https://tf.example.com/artifacts",
         ),
-        archive_tasks_latest="/tmp/l",
-        archive_tasks_default="/tmp/d",
     )
 
 

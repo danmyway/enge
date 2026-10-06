@@ -62,13 +62,6 @@ class ParsedOpts:
             tf_cfg.get("api_endpoint_url"), tf_cfg.get("log_artifact_baseurl")
         )
 
-        # Initialize archive paths after validation
-        archive_latest = self.common.get("archive_tasks_latest")
-        archive_default = self.common.get("archive_tasks_default")
-        # These are validated to be strings in _validate_static_configuration
-        self.archive_tasks_latest = os.path.expanduser(str(archive_latest))
-        self.archive_tasks_default = os.path.expanduser(str(archive_default))
-
     def _apply_env_var_fallbacks(self):
         """Populate missing API tokens from environment variables.
 
@@ -236,8 +229,6 @@ class ParsedOpts:
         # Only core operational defaults here; other requirements are validated contextually
         operational_defaults = {
             "common": [
-                "archive_tasks_latest",
-                "archive_tasks_default",
                 "logs_directory",
             ],
         }
@@ -440,15 +431,6 @@ class ParsedOpts:
     def _validate_static_configuration(self):
         """Validate all static configuration rules."""
         errors = []
-
-        # Validate archive paths type (consolidating assert statements)
-        archive_latest = self.common.get("archive_tasks_latest")
-        archive_default = self.common.get("archive_tasks_default")
-
-        if not isinstance(archive_latest, str):
-            errors.append("archive_tasks_latest must be a string")
-        if not isinstance(archive_default, str):
-            errors.append("archive_tasks_default must be a string")
 
         if not self.testing_farm or not self.testing_farm.get("api_key"):
             errors.append(

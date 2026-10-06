@@ -249,23 +249,6 @@ class TestUnifiedFloorAndMissingCache(unittest.TestCase):
         with self.assertRaises(ValidationError):
             load_columns(self._ctx())
 
-    def test_bare_date_flags_log_warning_and_hit_config_error_floor(self):
-        # F2-f: compare has no legacy-archive path, so bare --since/--until
-        # with no manifest selector select no runs. The loader logs a single
-        # WARNING and falls through to the comparability floor (CONFIG_ERROR),
-        # never the empty-selection ValidationError.
-        from enge.compare.loader import load_columns
-
-        with self.assertLogs("enge.compare.loader", level="WARNING") as cm:
-            columns, error_code = load_columns(self._ctx(filter_set=None, since="3d"))
-
-        self.assertEqual(error_code, ExitCode.CONFIG_ERROR)
-        self.assertEqual(columns, [])
-        self.assertTrue(
-            any("--since" in msg or "--until" in msg for msg in cm.output),
-            f"Expected a bare-date WARNING, got: {cm.output}",
-        )
-
     def test_a_single_manifest_fanned_across_many_arches_is_sufficient(self):
         """Generalizes the old AMENDMENT-1 flakiness-only case: one enge
         dispatch producing one manifest with N requests (e.g. per arch)

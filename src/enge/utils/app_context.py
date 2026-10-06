@@ -9,8 +9,6 @@ class AppContext:
     cli_args: Any
     config: Dict[str, Any]
     testing_farm_endpoint: TestingFarmEndpoint
-    archive_tasks_latest: str
-    archive_tasks_default: str
 
     copr_api: Dict[str, Any] = field(default_factory=dict)
     brew_api: Dict[str, Any] = field(default_factory=dict)
@@ -47,8 +45,6 @@ class AppContext:
             cli_args=po.cli_args,
             config=po.config,
             testing_farm_endpoint=po.testing_farm_endpoint,
-            archive_tasks_latest=po.archive_tasks_latest,
-            archive_tasks_default=po.archive_tasks_default,
             manifest_runs_dir=str(resolve_runs_dir(po.config)),
             manifest_latest=str(resolve_latest_pointer(po.config)),
             **derived,

@@ -122,7 +122,6 @@ Key default paths from the bundled defaults (can be overridden in your `enge.tom
 
 - **Manifest store**: `~/.local/share/enge/runs/` (XDG_DATA_HOME respected)
 - **Latest pointer**: `~/.local/state/enge/latest`
-- **Legacy archive** (read-only bridge): `~/.enge/jobs_archive/`
 - **Logs directory**: `/var/tmp/enge/logs/`
 - **Results store**: `~/.local/share/enge/results/` (XDG_DATA_HOME respected; `enge report` gap-fills `<run_id>.json` + verbatim xunit here for manifest-backed invocations — see `CLAUDE.md` "Results.json format")
 
@@ -806,7 +805,7 @@ enge reportportal delete-stale --since 2025-01-01 --until 2025-06-30
 
 **Date Filters (`--since` / `--until`):**
 
-Narrow any launch-listing operation by date. Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y` — meaning "that many units ago from now"). Effective with `--all` and `delete-stale`; ignored for task-based operations.
+Narrow any launch-listing operation by date. Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y` — meaning "that many units ago from now"). With `--all` and `delete-stale` they narrow the launches themselves, by local start time. On task-based operations they instead select manifest runs in UTC, exactly as on `report`.
 
 ```bash
 # Finish only launches started after a date
@@ -862,8 +861,8 @@ You can chain the report command with test command and use the `-w/--wait` argum
 `enge test` writes a JSON manifest to `~/.local/share/enge/runs/` for each dispatch invocation. The latest pointer at `~/.local/state/enge/latest` tracks the newest run.
 Default invocation `enge report` reads tasks from the latest manifest. Use `enge report --list` to browse all runs, then `enge report --run <run_id>` to report a specific one.<br>
 You can specify a different path to a file with `-f/--file` or pass task IDs with `-i/--input`. Both can be used multiple times, the task IDs will get aggregated and reported in a single table.<br>
-Use structured filters `--set`, `--tier`, `--arch`, `--tag` to match against manifest metadata. Legacy `--get-tag` still works for pre-migration archive files but is deprecated.<br>
-Manifest-backed invocations (default latest run, `--run`, or the structured filters above) also gap-fill a local results cache under `~/.local/share/enge/results/<run_id>.json`, plus a byte-verbatim copy of each task's xunit under `~/.local/share/enge/results/<run_id>/<task_id>.xml` — see `CLAUDE.md` "Results.json format" for the schema and write policy. This is a caching side effect only: it never changes what `enge report` prints or its exit code, and raw-input invocations (`-f/--file`, `-i/--input`) never write to the cache since they have no manifest run to key on.<br>
+Use structured filters `--set`, `--tier`, `--arch`, `--tag` to match against manifest metadata.<br>
+Manifest-backed invocations (default latest run, `--run`, the structured filters above, or `--since`/`--until`) also gap-fill a local results cache under `~/.local/share/enge/results/<run_id>.json`, plus a byte-verbatim copy of each task's xunit under `~/.local/share/enge/results/<run_id>/<task_id>.xml` — see `CLAUDE.md` "Results.json format" for the schema and write policy. This is a caching side effect only: it never changes what `enge report` prints or its exit code, and raw-input invocations (`-f/--file`, `-i/--input`) never write to the cache since they have no manifest run to key on.<br>
 Use `--refresh` to repair a run's cached results. A task harvested before Testing Farm published its xunit is cached with no results at all, and once the run is complete no ordinary re-report can replace it; caches written by older enge versions are also missing metadata the current version records. `--refresh` recovers both in place, and without it `enge report` and `enge compare` each warn when a selected run needs it. A run is only repaired when every one of its tasks is available and finished in that invocation. Only a task recorded with no results at all (`ERROR` with no plans) can have its result replaced; a cancelled task, any recorded plan results, and any metadata already present are kept as they are, and the run's overall verdict is recomputed from the repaired tasks. `--refresh` needs a run to repair, so it is an error (exit code 2) with `-f/--file`, `-i/--input`, `--list` or `--compare`.<br>
 The tool is able to parse and report for multiple variants of values as long as they are separated by a new-line (in the files) or a `-i/--input` argument (on the commandline). Raw request_ids, artifact URLs (Testing Farm result page URLs) or request URLs are allowed.
 Use `--show-ids` to display only a list of UUIDs queried from the requested inputs, which is useful for extracting task IDs for further processing or scripting.<br>
@@ -899,7 +898,7 @@ enge report --show-ids --file ~/my_jobs_file
 
 `--since` and `--until` filter manifests by `created_at` timestamp. Accepts absolute dates (`YYYY-MM-DD`) or relative aliases (`6h`, `3d`, `2w`, `1m`, `1y`). Combinable with structured filters (`--set`, `--tier`, `--arch`, `--tag`). Files provided via `-f` or `-i` are not filtered.
 
-`created_at` is recorded in UTC, and manifest selection evaluates both bounds in UTC regardless of your machine's timezone. An absolute date means the UTC calendar day (`--since` from `00:00:00` UTC, `--until` through `23:59:59` UTC), while a relative alias counts back from the current instant — including `--until`, so `--until 6h` means exactly six hours ago, not the end of that day. That applies to `--list` and to any invocation carrying a manifest selector (`--run`, `--set`, `--tier`, `--arch`, `--tag`); a bare `--since`/`--until` such as the last example below is answered from the legacy archive first, matching its filenames against local-time bounds and reaching manifest selection only if nothing there matches, as do `--get-tag` lookups and the `reportportal` subcommands.
+`created_at` is recorded in UTC, and manifest selection evaluates both bounds in UTC regardless of your machine's timezone. An absolute date means the UTC calendar day (`--since` from `00:00:00` UTC, `--until` through `23:59:59` UTC), while a relative alias counts back from the current instant — including `--until`, so `--until 6h` means exactly six hours ago, not the end of that day. That applies to `--list`, to any invocation carrying another manifest selector (`--run`, `--set`, `--tier`, `--arch`, `--tag`), and to a bare `--since`/`--until` such as the last example below: a date window on its own is an ordinary manifest selection, evaluated in UTC like any other, and a window matching no runs is an error (exit code 2). The `reportportal` subcommands' `--all`/`delete-stale` launch filters remain local-time.
 
 ```bash
 # Report runs from the last week for a specific set
@@ -973,7 +972,7 @@ Use `--error` or `--fail` if you want to further specify which type of non-zero 
 Use `--dry-run` to only display the qualified plans, don't actually send any payload to the Testing Farm.<br>
 Use `--set-tag` to attach custom tags to the rerun manifest.
 
-Rerun manifests carry `parent_run_id` linking to the original run, and inherit the parent's tags plus `"rerun"`. This happens for any selection that resolves to exactly one run — a lone `--run`, a `--set`/`--tier`/`--arch`/`--tag` filter (with or without `--since`/`--until`), or the default no-selector rerun — while a selection matching two or more runs records no parent and inherits nothing. A bare `--since`/`--until` with no manifest selector reads the legacy archive first and is not covered by this. See the [Manifest Store and Run History](#manifest-store-and-run-history) section for details.
+Rerun manifests carry `parent_run_id` linking to the original run, and inherit the parent's tags plus `"rerun"`. This happens for any selection that resolves to exactly one run — a lone `--run`, a `--set`/`--tier`/`--arch`/`--tag` filter (with or without `--since`/`--until`), a bare `--since`/`--until` date window, or the default no-selector rerun — while a selection matching two or more runs records no parent and inherits nothing. See the [Manifest Store and Run History](#manifest-store-and-run-history) section for details.
 
 ```
 # Rerun from the latest run
@@ -992,13 +991,12 @@ enge rerun --run <run_id> --fail
 # Rerun with custom tags
 enge rerun --run <run_id> --set-tag rc-revalidation
 
-# Legacy: query pre-migration archive files (deprecated, use --run instead)
-enge rerun --get-tag "rc.*" --set-tag rerun
 ```
 
 ##### Cancel
 Cancel running or queued Testing Farm tasks.
 Reads the same input as report and rerun — default is the latest manifest; use `--run <id>`, `--file`, or `--input` to select specific runs.
+A bare `--since`/`--until` date window cancels every task of every local run inside it, so preview it with `--dry-run` first.
 Use `--dry-run` to preview which tasks would be cancelled without sending DELETE requests.
 
 ```
@@ -1020,7 +1018,7 @@ enge cancel --run <run_id> --dry-run
 
 Each `enge test` or `enge rerun` invocation writes a JSON manifest to `~/.local/share/enge/runs/`. Manifests record structured per-request metadata (task ID, set, tier, architecture, plan, composes, artifacts URL) and are identified by a time-sortable ULID. A latest pointer at `~/.local/state/enge/latest` tracks the newest run.
 
-> **MIGRATION NOTE**: The old `/tmp/enge_latest_jobs` file and `~/.enge/jobs_archive/` filename-tagged files are no longer written. External scripts that read these files must migrate to `enge report --list`/`--run` or read the manifest JSON directly. The read-only legacy bridge inside enge still reads old files so `enge report`, `enge rerun`, and `enge cancel` work against pre-migration runs.
+> **MIGRATION NOTE**: The old `/tmp/enge_latest_jobs` file and `~/.enge/jobs_archive/` filename-tagged files are no longer written. External scripts that read these files must migrate to `enge report --list`/`--run` or read the manifest JSON directly. enge no longer reads them either.
 
 **Browsing and filtering runs:**
 
@@ -1050,20 +1048,11 @@ enge rerun --run <run_id>
 **`--auto-tag` (deprecated):**
 Context (set name, architecture, tier) is now always recorded in the manifest. `--auto-tag` is a no-op and will be removed in a future release.
 
-**`--get-tag` (deprecated):**
-Use `--tag` for native manifests. `--get-tag` still works for pre-migration archive files via the legacy bridge.
-
 **Rerun lineage:**
 Rerun manifests carry `parent_run_id` linking to the original run, replacing the old `.rerun` filename suffix. Whenever the rerun's selection resolves to exactly one run, that run becomes the parent and the child inherits its tags, its per-request `set`/`tier`/`target_compose`, and (for a single-set parent) its `context`; a selection matching two or more runs has no parent and inherits none of these.
 
-**Migrating legacy archives:**
-
-```bash
-# Convert ~/.enge/jobs_archive/ files to manifests (non-destructive, idempotent)
-enge migrate-archive
-```
-
-This creates synthetic manifests with `origin="migrated"`. Task IDs and artifacts URLs are populated; compose/event/plan fields are null (not recoverable offline). Original archive files are not deleted.
+**Migrated manifests:**
+Manifests with `origin="migrated"`, written by the removed `enge migrate-archive` subcommand, are still read like any other. There is no longer a way to convert `~/.enge/jobs_archive/` files, which enge ignores.
 
 **Manifest store locations (XDG-compliant, config-overridable):**
 - Manifests: `~/.local/share/enge/runs/<run_id>.json`

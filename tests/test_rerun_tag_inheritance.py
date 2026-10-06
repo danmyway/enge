@@ -10,7 +10,6 @@ from tests._helpers import make_app_context
 
 from enge.rerun.__main__ import (
     _build_parent_request_index,
-    _extract_tags_from_filename,
     _get_next_rerun_tag,
     _unique_preserve,
 )
@@ -18,11 +17,7 @@ from enge.utils.manifest import ManifestWriter
 from enge.utils.ulid import generate_ulid
 
 
-class TestLegacyRerunTagInheritance(unittest.TestCase):
-    def test_extract_tags_from_filename(self):
-        path = Path("enge_jobs_archive_20260611.rerun.tier0")
-        self.assertEqual(_extract_tags_from_filename(path), ["rerun", "tier0"])
-
+class TestRerunTagProgression(unittest.TestCase):
     def test_get_next_rerun_tag_progression(self):
         self.assertEqual(_get_next_rerun_tag([]), "rerun")
         self.assertEqual(_get_next_rerun_tag(["rerun"]), "rerun1")

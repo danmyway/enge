@@ -21,8 +21,6 @@ from enge.utils.source_target_parser import resolve_effective_values
 
 MINIMAL_CONFIG = {
     "common": {
-        "archive_tasks_latest": "/tmp/enge_latest_jobs",
-        "archive_tasks_default": "~/.enge/jobs_archive/",
         "logs_directory": "/var/tmp/enge/logs/",
     },
     "testing_farm": {
@@ -77,8 +75,6 @@ def _make_ctx(**cli_overrides):
     ctx.tests = MINIMAL_CONFIG["tests"]
     ctx.project = MINIMAL_CONFIG["project"]
     ctx.config = MINIMAL_CONFIG
-    ctx.archive_tasks_latest = "/tmp/enge_test_latest"
-    ctx.archive_tasks_default = "/tmp/enge_test_archive/"
 
     cli = MagicMock()
     cli.planfilter = cli_overrides.get("planfilter", None)

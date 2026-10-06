@@ -42,14 +42,13 @@ src/enge/
   cancel/            cancel TF tasks
   reportportal/      launch finish/enrich/delete subcommands (unified pipeline
                      via operations.py + utils.py)
-  migrate/           migrate-archive subcommand (legacy → manifest conversion)
   utils/             opt_manager (config loading + validation: ParsedOpts), app_context
                      (runtime DI container), globals (ExitCode + worst_exit_code),
-                     task_resolver (shared task-ID resolution: manifest, legacy, -i/-f),
+                     task_resolver (shared task-ID resolution: manifest, -i/-f),
                      manifest_resolution (shared invocation→manifest-object
                      resolution: report results cache, future `enge compare`),
                      test_attribute_builder (computed test attrs for AppContext),
-                     manifest/state_paths/ulid/legacy_archive (manifest store + XDG paths),
+                     manifest/state_paths/ulid (manifest store + XDG paths),
                      arg_parser, console, source_target_parser, tf_artifact (COPR/Brew),
                      config_parser, http_client (use this, never raw requests), errors
 tests/               unittest.TestCase style ONLY (see Conventions)
@@ -146,11 +145,11 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   one versioned manifest (schema_version=1) with structured per-request
   metadata. A latest pointer at `~/.local/state/enge/latest` tracks the
   newest run. The old `/tmp/enge_latest_jobs` + `~/.enge/jobs_archive/`
-  filename-tagged model is retired; a read-only legacy bridge
-  (`utils/legacy_archive.py`) provides backward-compatible reading for
-  pre-migration runs. `enge migrate-archive` converts old files to synthetic
-  manifests with `origin="migrated"`. Manifests carry dispatch facts only
-  (no result fields) — a results cache is a separate future PR.
+  filename-tagged model is retired: those files are neither written nor
+  read, and manifests with `origin="migrated"`, written by the retired
+  `enge migrate-archive`, remain valid input. Manifests carry dispatch
+  facts only (no result fields) — a results cache is a separate future
+  PR.
 - **Short flags are case-paired**: `-s/--source` and `-t/--target` (compose
   pair), `-S/--set` and `-T/--tier` (selection pair). `-t tier0` is a
   silently-accepted wrong compose name — keep help text and README examples
@@ -250,17 +249,17 @@ Full contract: `docs/manifest-schema.md` (envelope + `requests[]`
 shape, per-field nullability, shape-by-origin contrast, dated rulings).
 Invariants an agent must not violate before opening that file:
 
-- Manifests are written ONLY by dispatch (`dispatch/set_flow.py`),
-  rerun (`rerun/__main__.py`), and migrate-archive
-  (`migrate/__main__.py`) — no other code path writes a manifest.
+- Manifests are written ONLY by dispatch (`dispatch/set_flow.py`) and
+  rerun (`rerun/__main__.py`) — no other code path writes a manifest.
+  Manifests with `origin="migrated"` were written by the retired
+  `enge migrate-archive`, which no longer exists.
 - **Consumers must `.get()` `requests[]` entry fields, never `[key]`**
   — migrated manifests omit several keys entirely rather than nulling
   them, so bracket access can raise `KeyError` on a legitimate
   manifest.
 - Schema changes require maintainer sign-off — see the full doc before
   touching `utils/manifest.py`, `dispatch/set_flow.py`'s
-  `add_request` call, `rerun/__main__.py`'s `add_request` call, or
-  `migrate/__main__.py`'s hand-built request dict.
+  `add_request` call, or `rerun/__main__.py`'s `add_request` call.
 
 ## Conventions
 

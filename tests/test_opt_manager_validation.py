@@ -35,8 +35,6 @@ from enge.utils.arg_parser import get_arguments
 
 MINIMAL_CONFIG = {
     "common": {
-        "archive_tasks_latest": "/tmp/enge_latest_jobs",
-        "archive_tasks_default": "~/.enge/jobs_archive/",
         "logs_directory": "/var/tmp/enge/logs/",
     },
     "testing_farm": {

@@ -10,9 +10,9 @@ time — this file does not restate that contract.
 
 `schema_version` is the literal integer `1` (`src/enge/utils/manifest.py:8`,
 exported as `SCHEMA_VERSION` and emitted by `ManifestWriter.to_dict` at
-line 74). `migrate/__main__.py` does not import this constant; it
-hardcodes the same literal `1` at its own envelope construction
-(`migrate/__main__.py:90`). A bump would signal a breaking change to the
+line 74). The retired `enge migrate-archive` writer did not import
+this constant; it hardcoded the same literal `1` at its own envelope
+construction. A bump would signal a breaking change to the
 envelope or `requests[]` shape that existing readers cannot tolerate
 un-migrated. Consistent with the established precedent in the
 results.json contract (`f8fcdfb`, 2026-08-25; `cb01b83`, 2026-08-31 —
@@ -23,7 +23,8 @@ relaxation.
 ## Envelope
 
 Written by `ManifestWriter.to_dict` (`utils/manifest.py:72`) for native
-manifests and hand-built at `migrate/__main__.py:89` for migrated ones.
+manifests and hand-built by the retired `enge migrate-archive` writer
+for migrated ones.
 The two constructions currently emit the same 10 keys; nothing enforces
 that they always will, and L14 (`feat/manifest-config-snapshot`,
 maintainer-ruled 2026-08-31: audit-only, a new top-level key) is queued
@@ -34,8 +35,8 @@ closed.
   the manifest's filename and the `latest` pointer's target. Native:
   supplied by the writer's caller at construction
   (`dispatch/__main__.py:358`, `rerun/__main__.py:833`, both via
-  `generate_ulid()`). Migrated: freshly generated at
-  `migrate/__main__.py:88`, matching the migrated file's own name — a
+  `generate_ulid()`). Migrated: freshly generated at migration time,
+  matching the migrated file's own name — a
   migrated manifest's `run_id` has no relationship to the original
   legacy archive filename. This is the one envelope field guaranteed
   present and non-null regardless of origin — see "Shape by origin"
@@ -46,37 +47,34 @@ closed.
   dispatch/rerun invocation begins building its manifest — NOT when
   `flush()` later writes the file to disk. Migrated: parsed from the
   legacy archive filename's embedded timestamp when the
-  `enge_jobs_archive_<14 digits>` pattern matches
-  (`migrate/__main__.py:75-83`); falls back to
+  `enge_jobs_archive_<14 digits>` pattern matched; falls back to
   `datetime.now(timezone.utc)` at migration time only when the filename
   doesn't match.
 - `command` (str) — required, non-null. Native: the writer's caller
   passes the CLI subcommand's dispatch verb literally — `"test"` from
   dispatch (`dispatch/__main__.py:359`), `"rerun"` from rerun
-  (`rerun/__main__.py:834`). Migrated: hardcoded `"test"`
-  (`migrate/__main__.py:93`) — a migrated manifest cannot know whether
-  the original archive came from a dispatch or a since-superseded
+  (`rerun/__main__.py:834`). Migrated: hardcoded `"test"` — a migrated
+  manifest cannot know whether the original archive came from a
+  dispatch or a since-superseded
   legacy rerun, so it always claims dispatch origin.
 - `argv` (list of str) — required, non-null (may be empty). Native:
-  the real `sys.argv` at invocation. Migrated: hardcoded `[]`
-  (`migrate/__main__.py:94`) — no original argv survives in a legacy
-  archive file.
+  the real `sys.argv` at invocation. Migrated: hardcoded `[]` — no
+  original argv survived in a legacy archive file.
 - `tags` (list of str) — required, non-null (may be empty). Native
   dispatch: `--set-tag` values. Native rerun: inherited parent tags
   (only when lineage resolves — see `requests[]` below) plus the
   invoking run's own tags plus the literal `"rerun"`. Migrated: tags
-  extracted from the legacy archive filename
-  (`extract_tags_from_filename`).
+  extracted from the legacy archive filename by the retired writer.
 - `parent_run_id` (nullable str, ULID) — required key, nullable value.
   Native dispatch: always `null` (a dispatch is never a rerun of
   anything). Native rerun: from `_resolve_parent_lineage`
   (`rerun/__main__.py:103`) — see "Rerun lineage" under `requests[]`
   below for when this resolves vs. stays `null`. Migrated: hardcoded
-  `null` (`migrate/__main__.py:96`).
+  `null`.
 - `origin` (str enum: `"native"` | `"migrated"`) — required, non-null.
   The discriminator for every shape difference in this document.
-  Hardcoded per writer (`utils/manifest.py:81`,
-  `migrate/__main__.py:97`).
+  Hardcoded per writer: `"native"` at `utils/manifest.py:81`,
+  `"migrated"` by the retired `enge migrate-archive` writer.
 - `context` (dict) — required, non-null (may be empty `{}`). See
   "Context" below.
 - `requests` (list of dict) — required, non-null (may be empty). See
@@ -113,7 +111,7 @@ re-checks `requests[]`. Copying a multi-set parent's `context` onto a
 rerun that covers only set B would therefore make `--set A` select
 that rerun (ruling Q-D1-3′, 2026-09-25). Migrated manifests populate
 `set`, `tiers`, `architectures` only,
-via `_parse_context_from_tags` (`migrate/__main__.py:19-38`) —
+via the retired writer's filename-tag parsing —
 `event`/`source`/`target` are never derivable from a legacy archive
 filename and are always absent.
 
@@ -143,9 +141,8 @@ Field-by-field, type / nullability / producing writer:
   from the parent manifest's matching request
   (`rerun/__main__.py:1125`) — `null` whenever rerun lineage did not
   resolve (see "Rerun lineage" below), regardless of what the original
-  dispatch's `set` was. Migrated: `context.get("set")`
-  (`migrate/__main__.py:108`) — `null` unless a tag matched as the set
-  name.
+  dispatch's `set` was. Migrated: `context.get("set")` — `null` unless
+  a tag matched as the set name.
 - `tier` (nullable str) — required key, nullable value. Native
   dispatch: `spec.tier`, `null` for `--plan`-only dispatch. Native
   rerun: `parent_entry.get("tier")` — same lineage-resolution
@@ -161,7 +158,7 @@ Field-by-field, type / nullability / producing writer:
 - `plan` (nullable str) — required key, nullable value. Native
   dispatch: `spec.plan`. Native rerun: built from the rerun payload's
   own `test.fmf.name` (`rerun/__main__.py:900-909`). Migrated: always
-  `null` (`migrate/__main__.py:119`) — never known from a legacy
+  `null` — never known from a legacy
   archive.
 - `source_compose` (nullable str) — required key, nullable value.
   Native dispatch: `submit_test.compose`. Native rerun: the rerun
@@ -178,9 +175,8 @@ Field-by-field, type / nullability / producing writer:
   `rerun/__main__.py:969`) — see the `task_id` note above; in practice
   always non-null when the entry exists at all on the native path.
   Migrated: `f"{log_base}/{task_id}"` constructed from
-  `testing_farm_endpoint.log_artifact_baseurl`
-  (`migrate/__main__.py:104`), or `null` if that config value is
-  falsy.
+  `testing_farm_endpoint.log_artifact_baseurl`, or `null` if that
+  config value was falsy.
 - `dispatched_at` (str, ISO 8601) — required, non-null; defaulted by
   `add_request` itself (`utils/manifest.py:60-61`) to
   `datetime.now(timezone.utc)` when the caller doesn't pass it. Neither
@@ -188,10 +184,9 @@ Field-by-field, type / nullability / producing writer:
   native path this is the real per-request submission time (the moment
   `add_request` runs, immediately after that request's own TF submit
   call) — NOT the run-level `created_at`. Migrated: passed explicitly
-  as the same value as the envelope's `created_at`
-  (`migrate/__main__.py:123`) — every request in a migrated manifest
-  shares one timestamp, even if the original requests were dispatched
-  at slightly different times.
+  as the same value as the envelope's `created_at` — every request in a
+  migrated manifest shares one timestamp, even if the original requests
+  were dispatched at slightly different times.
 - `launch_uuid` (nullable str) — optional key (absent on migrated
   manifests only; always emitted on the native path) (`.get` default
   `None`).
@@ -280,12 +275,12 @@ whatever selector produced it: the default no-selector `enge rerun`
 (which takes the latest-pointer path and has always resolved a
 parent), a lone `--run <id>`, a repeated identical `--run`, a
 `--set`/`--tier`/`--arch`/`--tag` filter (with or without a
-`--since`/`--until` window), or `--run` combined with filters.
-`_resolve_manifest_tasks` (`utils/task_resolver.py:56`) emits
-`manifest:<run_id>` for all of them. A bare `--since`/`--until` with no
-manifest selector is routed to the legacy archive first
-(`utils/task_resolver.py:149`) and reaches `_resolve_manifest_tasks`
-only when that archive exists and yields no task IDs.
+`--since`/`--until` window), `--run` combined with filters, or a bare
+`--since`/`--until` window with no other selector.
+`_resolve_manifest_tasks` (`utils/task_resolver.py`) emits
+`manifest:<run_id>` for all of them: a date window is an ordinary
+manifest selection and resolves a parent exactly like any other
+single-run selection.
 
 When lineage does not resolve, `_build_parent_request_index`
 (`rerun/__main__.py:135`) returns `{}` and the rerun manifest's

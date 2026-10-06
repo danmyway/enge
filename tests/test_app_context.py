@@ -15,10 +15,7 @@ class TestAppContext(unittest.TestCase):
                     "api_endpoint_url": "https://tf.example.com/api",
                     "log_artifact_baseurl": "https://tf.example.com/artifacts",
                 },
-                "common": {
-                    "archive_tasks_latest": "/tmp/latest",
-                    "archive_tasks_default": "/tmp/default",
-                },
+                "common": {"logs_directory": "/tmp/enge_logs"},
                 "project": {"name": "test"},
                 "tests": {},
                 "reportportal": {},
@@ -27,8 +24,6 @@ class TestAppContext(unittest.TestCase):
                 "https://tf.example.com/api",
                 "https://tf.example.com/artifacts",
             ),
-            "archive_tasks_latest": "/tmp/latest",
-            "archive_tasks_default": "/tmp/default",
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
@@ -39,8 +34,6 @@ class TestAppContext(unittest.TestCase):
         self.assertIs(ctx.cli_args, po.cli_args)
         self.assertIs(ctx.config, po.config)
         self.assertIs(ctx.testing_farm_endpoint, po.testing_farm_endpoint)
-        self.assertEqual(ctx.archive_tasks_latest, "/tmp/latest")
-        self.assertEqual(ctx.archive_tasks_default, "/tmp/default")
 
     def test_testing_farm_property(self):
         po = self._make_po()

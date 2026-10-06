@@ -6,7 +6,6 @@ import unittest
 import uuid as uuid_mod
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from enge.utils.manifest import ManifestWriter
 from enge.utils.task_resolver import _parse_tasks_impl
@@ -18,7 +17,6 @@ def _make_ctx(runs_dir, latest, **cli_overrides):
         "action": "cancel",
         "file": None,
         "input": None,
-        "get_tag": [],
         "run": None,
         "filter_set": None,
         "filter_tier": None,
@@ -34,8 +32,6 @@ def _make_ctx(runs_dir, latest, **cli_overrides):
     return SimpleNamespace(
         manifest_runs_dir=str(runs_dir),
         manifest_latest=str(latest),
-        archive_tasks_latest="/nonexistent/legacy",
-        archive_tasks_default="/nonexistent/legacy_archive",
         cli_args=SimpleNamespace(**cli),
         testing_farm_endpoint=SimpleNamespace(
             api_endpoint_url="https://api.example.com",
@@ -163,8 +159,8 @@ class TestCancelAmbiguousPrefix(unittest.TestCase):
         self.assertIn("No run matching", str(cm.exception))
 
 
-class TestCancelLegacyFallback(unittest.TestCase):
-    """Legacy fallback works when no manifest exists."""
+class TestCancelDefaultResolution(unittest.TestCase):
+    """With no selector, cancel resolves the latest manifest."""
 
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -175,84 +171,17 @@ class TestCancelLegacyFallback(unittest.TestCase):
     def tearDown(self):
         self._tmpdir.cleanup()
 
-    def test_falls_back_to_legacy_when_no_manifest(self):
-        legacy_uuid = str(uuid_mod.uuid4())
-        legacy_file = self.tmp / "legacy_latest"
-        legacy_file.write_text(f"{legacy_uuid}\n")
-
-        ctx = _make_ctx(self.runs, self.latest)
-        ctx.archive_tasks_latest = str(legacy_file)
-        urls, _, _ = _parse_tasks_impl(ctx)
-        resolved = {u.rsplit("/", 1)[-1] for u in urls}
-        self.assertIn(legacy_uuid, resolved)
-
-    def test_manifest_preferred_over_legacy(self):
+    def test_latest_manifest_is_used(self):
         manifest_uuid = str(uuid_mod.uuid4())
-        legacy_uuid = str(uuid_mod.uuid4())
 
         w = ManifestWriter(run_id=generate_ulid(), command="test", argv=[])
         w.add_request(manifest_uuid)
         w.flush(self.runs, self.latest)
 
-        legacy_file = self.tmp / "legacy_latest"
-        legacy_file.write_text(f"{legacy_uuid}\n")
-
         ctx = _make_ctx(self.runs, self.latest)
-        ctx.archive_tasks_latest = str(legacy_file)
         urls, _, _ = _parse_tasks_impl(ctx)
         resolved = {u.rsplit("/", 1)[-1] for u in urls}
         self.assertIn(manifest_uuid, resolved)
-        self.assertNotIn(legacy_uuid, resolved)
-
-
-class TestGetTagDeprecationWarning(unittest.TestCase):
-    """--get-tag emits a deprecation warning; --tag (filter_tag) does not."""
-
-    def setUp(self):
-        self._tmpdir = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmpdir.name)
-        self.runs = self.tmp / "runs"
-        self.latest = self.tmp / "latest"
-        self.archive = self.tmp / "archive"
-        self.archive.mkdir()
-
-    def tearDown(self):
-        self._tmpdir.cleanup()
-
-    def test_get_tag_emits_warning(self):
-        task_uuid = str(uuid_mod.uuid4())
-        archive_file = self.archive / "enge_jobs_archive_20260701120000.nightly"
-        archive_file.write_text(f"{task_uuid}\n")
-
-        ctx = _make_ctx(self.runs, self.latest, get_tag=["nightly"])
-        ctx.archive_tasks_default = str(self.archive)
-
-        with self.assertLogs("enge.utils.task_resolver", level="WARNING") as cm:
-            _parse_tasks_impl(ctx)
-        self.assertTrue(
-            any("--get-tag is deprecated" in msg for msg in cm.output),
-            f"Expected deprecation warning, got: {cm.output}",
-        )
-
-    def test_filter_tag_no_warning(self):
-        task_uuid = str(uuid_mod.uuid4())
-        w = ManifestWriter(
-            run_id=generate_ulid(),
-            command="test",
-            argv=[],
-            tags=["nightly"],
-        )
-        w.add_request(task_uuid)
-        w.flush(self.runs, self.latest)
-
-        ctx = _make_ctx(self.runs, self.latest, filter_tag="nightly")
-        import logging
-
-        logger = logging.getLogger("enge.utils.task_resolver")
-        with patch.object(logger, "warning") as mock_warn:
-            _parse_tasks_impl(ctx)
-            for call in mock_warn.call_args_list:
-                self.assertNotIn("--get-tag is deprecated", str(call))
 
 
 class TestCancelRunThroughCancelModule(unittest.TestCase):
