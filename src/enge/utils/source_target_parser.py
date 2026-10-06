@@ -7,7 +7,7 @@ and derive all necessary values for Testing Farm payloads.
 """
 
 import re
-from typing import Dict, Tuple, Optional, Any, List
+from typing import Dict, Set, Tuple, Optional, Any, List
 from logging import getLogger
 
 from enge.utils.globals import TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX
@@ -18,17 +18,40 @@ from enge.utils.errors import ConfigurationError, ValidationError
 LOGGER = getLogger(__name__)
 
 # AMI source regex patterns (without architecture suffix) for sanity validation.
-# These mirror the regexes used on the Testing Farm backend.
+# These mirror the regexes used on the Testing Farm backend, with one
+# deliberate narrowing for Oracle Linux (see the comment on its entry).
 AMI_SOURCE_PATTERNS = {
     "alma": re.compile(r"^AlmaLinux OS (\d+)\.(\d+)\.\d+$"),
     "rocky": re.compile(r"^Rocky-\d+-[eE][cC]2(?:-Base|-LVM)?-(\d+)\.(\d+)-\d+\.\d+$"),
+    # Testing Farm backend:
+    #   ^(Oracle:Oracle-Linux:ol\d+-(?:arm64-)?lvm(?:-gen2)?:\d+\.\d+\.\d+)$
+    # The arm64- variant is deliberately not accepted: Oracle is x86_64 only
+    # for now (maintainer ruling 2026-10-06). Major/minor come from the
+    # trailing image version, not from the SKU (ol810 is ambiguous).
+    "oracle": re.compile(
+        r"^Oracle:Oracle-Linux:ol\d+-lvm(?:-gen2)?:(\d+)\.(\d+)\.\d+$"
+    ),
 }
 
-# Architecture suffix separators per AMI os_type
-AMI_ARCH_SEPARATORS = {"alma": " ", "rocky": "."}
+# Architecture suffix separators per AMI os_type.
+# None means the image name already carries its architecture (Azure URNs).
+AMI_ARCH_SEPARATORS: Dict[str, Optional[str]] = {
+    "alma": " ",
+    "rocky": ".",
+    "oracle": None,
+}
 
 # Only these architectures are available for AMI sources on AWS EC2
 VALID_AMI_ARCHITECTURES = {"x86_64", "aarch64"}
+
+# Architectures available per source os_type. Every AMI os_type must be listed:
+# this is indexed directly so an unlisted one fails loudly rather than silently
+# accepting whatever was requested.
+AMI_ARCHITECTURES_BY_OS: Dict[str, Set[str]] = {
+    "alma": {"x86_64", "aarch64"},
+    "rocky": {"x86_64", "aarch64"},
+    "oracle": {"x86_64"},
+}
 
 # Symbolic RHEL composes (pass-through to Testing Farm, no repinning).
 # RHEL-<major>[-<dash-separated-middle>]-rhui (e.g. RHEL-8-rhui, RHEL-8-sap-hana-rhui).
@@ -56,7 +79,7 @@ def _strip_ami_arch_suffix(spec: str) -> str:
 
 def _parse_ami_source(spec: str, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Try to parse spec as an AMI source (Alma Linux or Rocky Linux).
+    Try to parse spec as an AMI source (Alma Linux, Rocky Linux or Oracle Linux).
 
     Resolution order:
     1. Alias lookup in config [sources.ami]
@@ -101,7 +124,7 @@ def _parse_ami_source(spec: str, config: Dict[str, Any]) -> Optional[Dict[str, A
     if spec in ami_aliases:
         raise ValueError(
             f"AMI alias '{spec}' resolved to '{base_name}' which does not match "
-            f"any known AMI name pattern (Alma Linux or Rocky Linux)"
+            f"any known AMI name pattern (Alma Linux, Rocky Linux or Oracle Linux)"
         )
 
     return None
@@ -113,9 +136,13 @@ def format_ami_compose_name(source_spec: Dict[str, Any], arch: str) -> str:
 
     Alma uses space separator: 'AlmaLinux OS 9.7.20251118 x86_64'
     Rocky uses dot separator: 'Rocky-9-EC2-Base-9.7-20251123.2.x86_64'
+    Oracle Azure URNs already carry their architecture and are returned
+    unchanged: 'Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2'
     """
     base = source_spec["compose_name"]
     sep = AMI_ARCH_SEPARATORS[source_spec["os_type"]]
+    if sep is None:
+        return str(base)
     return f"{base}{sep}{arch}"
 
 
@@ -125,17 +152,52 @@ def validate_ami_architectures(
     """
     Validate that requested architectures are available for AMI sources.
 
-    Only x86_64 and aarch64 are available for Alma/Rocky on AWS EC2.
+    Alma/Rocky are available for x86_64 and aarch64 on AWS EC2; Oracle Linux
+    Azure images are published for x86_64 only.
     Raises ValidationError for any unsupported architecture.
     """
     if not source_spec.get("is_ami_source"):
         return
-    invalid = set(architectures) - VALID_AMI_ARCHITECTURES
+    supported = AMI_ARCHITECTURES_BY_OS[source_spec["os_type"]]
+    invalid = set(architectures) - supported
     if invalid:
         raise ValidationError(
             f"Architecture(s) {', '.join(sorted(invalid))} not available for "
             f"{source_spec['os_type'].title()} Linux AMI sources. "
-            f"Supported: {', '.join(sorted(VALID_AMI_ARCHITECTURES))}"
+            f"Supported: {', '.join(sorted(supported))}"
+        )
+
+
+# Source os_types whose images Testing Farm provisions only from a
+# dedicated pool. The pool is configuration (--pool, a set's `pool`, or
+# [tests].pool), never a code default (maintainer ruling 2026-10-06).
+POOL_REQUIRED_OS_TYPES = frozenset({"oracle"})
+
+
+def validate_source_pool(
+    source_spec: Dict[str, Any],
+    pool: Optional[str],
+    *,
+    set_name: Optional[str] = None,
+) -> None:
+    """
+    Validate that a provisioning pool is configured for sources that need one.
+
+    Oracle Linux images are provisionable only from a dedicated Testing Farm
+    pool. enge supplies no default: the pool must come from --pool, a test
+    set's 'pool' key, or [tests].pool.
+    Raises ValidationError when such a source has no pool configured.
+    """
+    os_type = source_spec.get("os_type")
+    if os_type not in POOL_REQUIRED_OS_TYPES:
+        return
+    if not pool:
+        where = f" for test set '{set_name}'" if set_name else ""
+        raise ValidationError(
+            f"{os_type.title()} Linux sources require a Testing Farm "
+            f"provisioning pool{where}, but none is configured. Set one with "
+            f"--pool, a test set's 'pool' key, or [tests].pool in the "
+            f"configuration file."
         )
 
 
@@ -148,8 +210,9 @@ def parse_compose_spec(
     Args:
         spec: Either a version string like "8.10", full compose name like "RHEL-8.10.0-Nightly",
               symbolic RHUI compose like "RHEL-8-rhui", CentOS Stream format like "CentOS-Stream-9",
-              or an AMI source alias/name for Alma Linux or Rocky Linux
-              (e.g., "alma97", "AlmaLinux OS 9.7.20251118 x86_64")
+              or an AMI source alias/name for Alma Linux, Rocky Linux or Oracle Linux
+              (e.g., "alma97", "AlmaLinux OS 9.7.20251118 x86_64", "oracle9",
+              "Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2")
         config: Configuration dictionary (optional, will be loaded if not provided)
 
     Returns:
@@ -160,9 +223,9 @@ def parse_compose_spec(
           for AMI sources this is the base AMI name without architecture suffix
         - is_version_only: True if input was just version, False if full compose name
         - is_centos_stream: True if source is CentOS Stream, False otherwise
-        - is_ami_source: True if source is an AMI-based system (Alma/Rocky), False otherwise
+        - is_ami_source: True if source is an AMI-based system (Alma/Rocky/Oracle), False otherwise
         - is_major_only: True if only a major version was requested, False otherwise
-        - os_type: OS type string ("rhel", "centos", "alma", "rocky") for context generation
+        - os_type: OS type string ("rhel", "centos", "alma", "rocky", "oracle") for context generation
 
     Raises:
         ValueError: If the specification format is invalid
