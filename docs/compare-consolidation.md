@@ -147,11 +147,10 @@ combination (`--run`/`--set`/`--tier`/`--arch`/`--tag`/`--since`/`--until`)
 that matches no runs raises `ValidationError` (exit 2, F2,
 maintainer-ratified 2026-07-29), distinct from the floor's `CONFIG_ERROR`
 (99) which governs a selection that *matched* runs but yielded no
-comparable columns. Bare `--since`/`--until` with no manifest selector
-select no runs via the legacy-archive path rather than the selector path,
-so they reach the `CONFIG_ERROR` floor (not `ValidationError`); `compare`
-logs a WARNING there, since unlike `report`/`rerun`/`cancel` it has no
-legacy archive to read.
+comparable columns. A bare `--since`/`--until` with no other selector
+is an ordinary selector too (Q-L30'f, 2026-09-29), so a window matching
+no runs raises `ValidationError` before the floor is reached, exactly
+like every other selector.
 
 The old consolidation-mode worst-mapped-`ExitCode` reduction (and its
 2026-07-17 `CANCELED`→`MISSING_RESULTS` ratification) is deleted along

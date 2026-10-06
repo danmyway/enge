@@ -183,8 +183,6 @@ class TestCompareSubcommandRegistered(unittest.TestCase):
                 cli_args=ctx.cli_args,
                 config=ctx.config,
                 testing_farm_endpoint=ctx.testing_farm_endpoint,
-                archive_tasks_latest=ctx.archive_tasks_latest,
-                archive_tasks_default=ctx.archive_tasks_default,
             )
 
             code = enge_main.main()

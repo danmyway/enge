@@ -70,10 +70,7 @@ CONFIG = {
         "owner": "oamg",
         "repo_url": "https://github.com/oamg/leapp",
     },
-    "common": {
-        "archive_tasks_latest": "/tmp/enge_multiset_test_latest",
-        "archive_tasks_default": "/tmp/enge_multiset_test_archive/",
-    },
+    "common": {},
     "copr_api": {},
     "brew_api": {},
     "reportportal": {},
@@ -134,8 +131,6 @@ def _build_resolved_opts(cli_args, individual_test_sets):
         log_artifact_baseurl="https://artifacts.tf.example",
         api_endpoint_url="https://api.tf.example/v0.1/requests",
     )
-    mock.archive_tasks_latest = "/tmp/enge_multiset_test_latest"
-    mock.archive_tasks_default = "/tmp/enge_multiset_test_archive/"
     mock.pool = None
     mock.architectures = []
     mock.environment_variables = {}

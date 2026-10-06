@@ -13,19 +13,11 @@
 
 # ============================================================================
 # COMMON (Global paths and storage locations)
-# - Controls where enge stores job IDs, archives, and downloaded logs
+# - Controls where enge stores manifests, results and downloaded logs
 # - Overrides default_config.toml post install script
 # - INFO: The default paths are defined in the default_config.toml, use this section to override.
 # ============================================================================
 [common]
-# Path for temporary latest jobs file
-# Default: /tmp/enge_latest_jobs
-# archive_tasks_latest = ''
-
-# Directory for archived job files
-# Default: ~/.enge/jobs_archive/
-# archive_tasks_default = ''
-
 # Directory for downloaded log files
 # Default: /var/tmp/enge/logs/
 # logs_directory = ''

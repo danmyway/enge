@@ -702,8 +702,9 @@ def op_check(rp: ReportPortalLaunch, ctx) -> int:
                 LOGGER.info(f"  Task URL {i + 1}: {url}")
         else:
             LOGGER.warning(
-                "No task URLs found - you may need to provide "
-                "task IDs via -i, -f, or --get-tag"
+                "No task URLs found - you may need to provide task IDs via "
+                "-i, -f, or a manifest selector "
+                "(--run/--set/--tier/--arch/--tag/--since/--until)"
             )
         return ExitCode.SUCCESS
     except Exception as e:

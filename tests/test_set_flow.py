@@ -69,8 +69,6 @@ class TestSetFlow(unittest.TestCase):
         po.cli_args.rp = False
         po.cli_args.dryrun = True
         po.config = {}
-        po.archive_tasks_latest = "/tmp/enge_test_latest"
-        po.archive_tasks_default = "/tmp/enge_test_archive/"
         po.pool = None
         po.architectures = []
         po.environment_variables = {}
@@ -151,8 +149,6 @@ class TestSetFlow(unittest.TestCase):
         po.cli_args.rp = False
         po.cli_args.dryrun = False
         po.config = {}
-        po.archive_tasks_latest = "/tmp/enge_test_latest"
-        po.archive_tasks_default = "/tmp/enge_test_archive/"
         po.pool = None
         po.architectures = []
         po.environment_variables = {}
@@ -219,8 +215,6 @@ class TestSetFlow(unittest.TestCase):
         po.cli_args.test = None
         po.cli_args.auto_tag = False
         po.cli_args.set_tag = None
-        po.archive_tasks_latest = "/tmp/enge_test_latest"
-        po.archive_tasks_default = "/tmp/enge_test_archive/"
         po.pool = None
         po.architectures = []
         po.environment_variables = {}
@@ -717,8 +711,6 @@ class TestManifestDispatchContextNonCollapse(unittest.TestCase):
         po.cli_args.copr = None
         po.cli_args.brew = None
         po.config = {}
-        po.archive_tasks_latest = str(tmp_path / "latest")
-        po.archive_tasks_default = str(tmp_path / "archive") + "/"
         po.manifest_runs_dir = str(tmp_path / "runs")
         po.manifest_latest = str(tmp_path / "manifest_latest")
         po.pool = None
@@ -891,8 +883,6 @@ class TestManifestRecordsDispatchedTestNames(unittest.TestCase):
         po.cli_args.copr = None
         po.cli_args.brew = None
         po.config = {}
-        po.archive_tasks_latest = str(tmp_path / "latest")
-        po.archive_tasks_default = str(tmp_path / "archive") + "/"
         po.manifest_runs_dir = str(tmp_path / "runs")
         po.manifest_latest = str(tmp_path / "manifest_latest")
         po.pool = None

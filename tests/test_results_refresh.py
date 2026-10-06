@@ -1522,10 +1522,7 @@ class TestRefreshCli(unittest.TestCase):
                     "api_endpoint_url": "https://tf.example.com/api",
                     "log_artifact_baseurl": "https://tf.example.com/artifacts",
                 },
-                "common": {
-                    "archive_tasks_latest": "/tmp/l",
-                    "archive_tasks_default": "/tmp/d",
-                },
+                "common": {},
                 "project": {},
                 "tests": {},
                 "reportportal": {},
@@ -1534,8 +1531,6 @@ class TestRefreshCli(unittest.TestCase):
                 "https://tf.example.com/api",
                 "https://tf.example.com/artifacts",
             ),
-            archive_tasks_latest="/tmp/l",
-            archive_tasks_default="/tmp/d",
         )
 
         import enge.report.__main__ as rm

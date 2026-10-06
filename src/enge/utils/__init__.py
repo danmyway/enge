@@ -60,10 +60,10 @@ def parse_date_arg(value: str) -> datetime:
     - ``y`` — years  (e.g. ``1y``)
 
     The result is naive and, for a relative alias, anchored to local
-    time. That is what the ``reportportal`` subcommands and the legacy
-    archive lookup in ``utils/task_resolver.py`` need, because both
-    compare it against local-time values. Manifest selection compares
-    against UTC ``created_at`` instead and uses `resolve_utc_window`.
+    time. That is what the ``reportportal`` subcommands' launch filters
+    need, because they compare it against local-time values. Manifest
+    selection compares against UTC ``created_at`` instead and uses
+    `resolve_utc_window`.
 
     Raises:
         ValueError: If *value* matches neither format.

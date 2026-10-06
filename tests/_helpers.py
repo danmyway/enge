@@ -63,8 +63,6 @@ def make_app_context(
     api_key="test-api-key",
     api_endpoint_url="https://tf.example.com/api",
     log_artifact_baseurl="https://tf.example.com/artifacts",
-    archive_tasks_latest="/tmp/enge_latest_jobs",
-    archive_tasks_default="/tmp/enge_archive",
     extra_cli=None,
     extra_config=None,
     **ctx_overrides,
@@ -76,7 +74,6 @@ def make_app_context(
         "verbose": 0,
         "file": None,
         "input": None,
-        "get_tag": [],
     }
     if extra_cli:
         cli_attrs.update(extra_cli)
@@ -91,8 +88,6 @@ def make_app_context(
             "composes_prod_url": "https://composes.example.com",
         },
         "common": {
-            "archive_tasks_latest": archive_tasks_latest,
-            "archive_tasks_default": archive_tasks_default,
             "logs_directory": "/tmp/enge_logs",
         },
         "project": {},
@@ -109,8 +104,6 @@ def make_app_context(
         cli_args=cli_args,
         config=config,
         testing_farm_endpoint=endpoint,
-        archive_tasks_latest=archive_tasks_latest,
-        archive_tasks_default=archive_tasks_default,
         manifest_runs_dir=ctx_overrides.pop("manifest_runs_dir", "/tmp/enge_test_runs"),
         manifest_latest=ctx_overrides.pop("manifest_latest", "/tmp/enge_test_latest"),
         **ctx_overrides,

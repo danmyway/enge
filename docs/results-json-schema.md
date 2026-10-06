@@ -38,9 +38,10 @@ its table output or exit code.
   across possibly-multiple matched runs, not `task_resolver`'s flat
   task_id list. Shared with the planned `enge compare` subcommand so
   that selector precedence isn't reimplemented a third time.
-- **Raw-input invocations** (`-f/--file`, `-i/--input`, or the legacy
-  `--get-tag`/bare-date archive path) never write a cache — there is no
-  resolvable run_id to key on. No flag opts out of caching for
+- **Raw-input invocations** (`-f/--file`, `-i/--input`) never write a
+  cache — there is no resolvable run_id to key on. A bare
+  `--since`/`--until` is manifest-backed like any other selector and
+  does gap-fill the cache. No flag opts out of caching for
   manifest-backed invocations; there is no cache-disable switch.
 - **Terminality predicate** (`_is_task_terminal` in
   `report/results_cache.py`): a task is terminal iff its TF state is

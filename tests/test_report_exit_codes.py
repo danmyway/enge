@@ -491,10 +491,7 @@ class TestReportExceptionMapping(unittest.TestCase):
                     "api_endpoint_url": "https://tf.example.com/api",
                     "log_artifact_baseurl": "https://tf.example.com/artifacts",
                 },
-                "common": {
-                    "archive_tasks_latest": "/tmp/l",
-                    "archive_tasks_default": "/tmp/d",
-                },
+                "common": {},
                 "project": {},
                 "tests": {},
                 "reportportal": {},
@@ -503,8 +500,6 @@ class TestReportExceptionMapping(unittest.TestCase):
                 "https://tf.example.com/api",
                 "https://tf.example.com/artifacts",
             ),
-            archive_tasks_latest="/tmp/l",
-            archive_tasks_default="/tmp/d",
         )
 
         from enge.utils.errors import NetworkError

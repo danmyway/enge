@@ -7,7 +7,6 @@ ensuring clear, consistent, and conflict-free argument definitions.
 """
 
 import argparse
-import pathlib
 
 try:
     import argcomplete
@@ -32,7 +31,7 @@ def _brew_ref_type(value):
 
 def _add_input_source_args(parser: argparse.ArgumentParser) -> None:
     """
-    Add common input source arguments (-f/--file, -i/--input, --get-tag)
+    Add common input source arguments (-f/--file, -i/--input)
     to a parser. Used by report, rerun, reportportal, and cancel subcommands.
     """
     parser.add_argument(
@@ -51,13 +50,6 @@ def _add_input_source_args(parser: argparse.ArgumentParser) -> None:
         metavar="ID_OR_URL",
         help="Request ID, artifact URL, or request URL to parse from command line. "
         "Can be provided multiple times: -i id1 -i id2",
-    )
-
-    parser.add_argument(
-        "--get-tag",
-        action="append",
-        metavar="TAG",
-        help="Query for all task results under a given tag. Can be used multiple times.",
     )
 
 
@@ -143,7 +135,8 @@ def _add_tagging_args(parser: argparse.ArgumentParser) -> None:
         "--set-tag",
         action="append",
         metavar="TAG",
-        help="Tag the archived task file with a custom tag. Can be used multiple times.",
+        help="Tag the run's manifest with a custom tag (select it later with "
+        "--tag). Can be used multiple times.",
     )
 
     parser.add_argument(
@@ -463,13 +456,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_input_source_args(report)
 
     # Output control
-    report.add_argument(
-        "--path",
-        type=pathlib.Path,
-        metavar="PATH",
-        help="Custom path to archived task files directory.",
-    )
-
     report.add_argument(
         "--show-tests",
         action="store_true",
@@ -946,15 +932,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dryrun_arg(
         cancel,
         help_text="Show which tasks would be cancelled without actually cancelling them.",
-    )
-
-    # ==================== MIGRATE-ARCHIVE SUBCOMMAND ====================
-    subparsers.add_parser(
-        "migrate-archive",
-        help="Convert legacy archive files to JSON manifests.",
-        description="One-time migration of ~/.enge/jobs_archive/ files into "
-        "the manifest store. Non-destructive and idempotent.",
-        parents=[common],
     )
 
     return parser

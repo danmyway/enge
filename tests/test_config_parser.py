@@ -362,7 +362,7 @@ class TestConfigLayering(unittest.TestCase):
                 'version = "1.0.0"\n'
                 "[common]\n"
                 "logs_directory = '/var/tmp/enge/logs/'\n"
-                "archive_tasks_latest = '/tmp/enge_latest_jobs'\n"
+                "results_dir = '/tmp/enge_results'\n"
                 "\n[tests]\n"
                 "git_url = 'https://default.git'\n"
                 "git_ref = 'main'\n"
@@ -391,7 +391,7 @@ class TestConfigLayering(unittest.TestCase):
                 "bundled.toml",
                 "[common]\n"
                 "logs_directory = '/var/tmp/enge/logs/'\n"
-                "archive_tasks_latest = '/tmp/enge_latest_jobs'\n"
+                "results_dir = '/tmp/enge_results'\n"
                 "\n[tests]\n"
                 "git_url = ''\n"
                 "git_ref = 'main'\n",

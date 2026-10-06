@@ -29,7 +29,6 @@ def _make_ctx(runs_dir, latest, **cli_overrides):
         "action": "cancel",
         "file": None,
         "input": None,
-        "get_tag": [],
         "run": None,
         "filter_set": None,
         "filter_tier": None,
@@ -45,8 +44,6 @@ def _make_ctx(runs_dir, latest, **cli_overrides):
     return SimpleNamespace(
         manifest_runs_dir=str(runs_dir),
         manifest_latest=str(latest),
-        archive_tasks_latest="/nonexistent/legacy",
-        archive_tasks_default="/nonexistent/legacy_archive",
         cli_args=SimpleNamespace(**cli),
         testing_farm_endpoint=SimpleNamespace(
             api_endpoint_url="https://api.example.com",
@@ -297,17 +294,6 @@ class TestResolveManifestsForInvocation(unittest.TestCase):
         w.add_request(str(uuid_mod.uuid4()))
         w.flush(self.runs, self.latest)
         return run_id
-
-    def test_bare_since_takes_legacy_path_returns_empty(self):
-        # Characterization pin (RULING F2-f): bare date flags with no
-        # manifest selector still short-circuit to the legacy archive and
-        # yield [] -- NOT the ValidationError selector path. Passes both
-        # pre- and post-change.
-        from enge.utils.manifest_resolution import resolve_manifests_for_invocation
-
-        self._write("01AAA", set="smoke")
-        ctx = _make_ctx(self.runs, self.latest, since="1d")
-        self.assertEqual(resolve_manifests_for_invocation(ctx), [])
 
     def test_empty_selector_raises(self):
         from enge.utils.manifest_resolution import resolve_manifests_for_invocation

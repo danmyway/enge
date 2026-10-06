@@ -41,8 +41,6 @@ from enge.utils.source_target_parser import resolve_effective_values
 # ---------------------------------------------------------------------------
 MINIMAL_CONFIG = {
     "common": {
-        "archive_tasks_latest": "/tmp/enge_latest_jobs",
-        "archive_tasks_default": "~/.enge/jobs_archive/",
         "logs_directory": "/var/tmp/enge/logs/",
     },
     "testing_farm": {
@@ -344,19 +342,19 @@ class TestOperationalDefaults(unittest.TestCase):
         # checks for None; "" reaching it directly (bypassing merge) no longer
         # triggers an error.
         cfg = copy.deepcopy(MINIMAL_CONFIG)
-        cfg["common"]["archive_tasks_latest"] = ""
+        cfg["common"]["logs_directory"] = ""
         po = _make_partial_opts(config=cfg)
         po._validate_operational_defaults()  # must not raise
 
     def test_none_key_still_raises_configuration_error(self):
         # When no layer provides a value (None), the validator fires.
         cfg = copy.deepcopy(MINIMAL_CONFIG)
-        cfg["common"]["archive_tasks_latest"] = None
+        cfg["common"]["logs_directory"] = None
         po = _make_partial_opts(config=cfg)
         with self.assertRaises(ConfigurationError) as ctx:
             po._validate_operational_defaults()
         self.assertIn("Operational defaults", str(ctx.exception))
-        self.assertIn("archive_tasks_latest", str(ctx.exception))
+        self.assertIn("logs_directory", str(ctx.exception))
 
     def test_none_key_raises_configuration_error(self):
         cfg = copy.deepcopy(MINIMAL_CONFIG)
@@ -607,7 +605,7 @@ class TestDynamicGetattr(unittest.TestCase):
 
     def test_common_section_returned_correctly(self):
         po = _make_partial_opts()
-        self.assertIn("archive_tasks_latest", po.common)
+        self.assertIn("logs_directory", po.common)
 
     def test_key_within_section_accessible_via_options_fallback(self):
         # api_key is NOT a top-level config key, so __getattr__ falls through
@@ -631,7 +629,7 @@ class TestDynamicGetattr(unittest.TestCase):
         result = po.common
         # Should be the top-level [common] section dict, not "shadow-value"
         self.assertIsInstance(result, dict)
-        self.assertIn("archive_tasks_latest", result)
+        self.assertIn("logs_directory", result)
 
 
 # ---------------------------------------------------------------------------
@@ -647,15 +645,6 @@ class TestFullConstructorReport(unittest.TestCase):
         mock_load.return_value = copy.deepcopy(MINIMAL_CONFIG)
         po = ParsedOpts(cli_args=get_arguments(args=["report"]))
         self.assertIsInstance(po, ParsedOpts)
-
-    @patch("enge.utils.opt_manager.load_config")
-    def test_archive_tasks_latest_tilde_expanded(self, mock_load):
-        cfg = copy.deepcopy(MINIMAL_CONFIG)
-        cfg["common"]["archive_tasks_latest"] = "~/custom_latest"
-        mock_load.return_value = cfg
-        po = ParsedOpts(cli_args=get_arguments(args=["report"]))
-        self.assertNotIn("~", po.archive_tasks_latest)
-        self.assertTrue(po.archive_tasks_latest.startswith("/"))
 
     @patch("enge.utils.opt_manager.load_config")
     def test_testing_farm_endpoint_initialized(self, mock_load):

@@ -55,10 +55,6 @@ def _make_ctx(runs_dir, latest, **cli_overrides):
         "action": "report",
         "file": None,
         "input": None,
-        # Retired flag.  `_parse_tasks_impl` reads it with bracket access
-        # before the retirement, so omitting it would fail these tests with
-        # AttributeError instead of on the behaviour under test.
-        "get_tag": [],
         "run": None,
         "filter_set": None,
         "filter_tier": None,

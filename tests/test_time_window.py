@@ -291,14 +291,11 @@ class TestRelativeBoundsIgnoreHostTimezone(unittest.TestCase):
             "run": None,
             "file": None,
             "input": None,
-            "get_tag": [],
         }
         cli.update(cli_overrides)
         ctx = SimpleNamespace(
             manifest_runs_dir="/nonexistent/runs",
             manifest_latest="/nonexistent/latest",
-            archive_tasks_latest="/nonexistent/legacy",
-            archive_tasks_default="/nonexistent/legacy_archive",
             cli_args=SimpleNamespace(**cli),
         )
         with patch(
