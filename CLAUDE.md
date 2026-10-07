@@ -128,7 +128,8 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   (test failures), and cancel (some cancellations failed); it is also the
   `ValidationError` exit for a run-selector combination
   (`--run`/`--set`/`--tier`/`--arch`/`--tag`/`--since`/`--until`) that
-  matches no runs on report, compare, rerun, or cancel — nothing ran at
+  matches no runs on report, compare, rerun, or cancel, and for report's
+  raw `-i`/`-f` input holding no parseable task ID — nothing ran at
   all (an unknown or ambiguous `--run` value already exited 2 this way).
   Report is the ONLY subcommand that returns codes 3
   (errors in parsed results) and 4 (missing/partial results, including
