@@ -14,7 +14,7 @@ from requests.exceptions import ConnectionError, RequestException
 from rich.markup import escape
 from enge.utils.app_context import AppContext
 from enge.utils.console import console
-from enge.utils.errors import NetworkError
+from enge.utils.errors import NetworkError, ValidationError
 from enge.utils.globals import ExitCode, worst_exit_code
 
 LOGGER = logging.getLogger(__name__)
@@ -815,8 +815,17 @@ def parse_request_xunit_concurrent(
     request_url_list: Optional[List[str]] = None,
     tasks_source: Optional[str] = None,
     skip_pass: bool = False,
+    *,
+    raise_on_unparseable_input: bool = False,
 ):
     """Parse request xunit with concurrent requests.
+
+    Args:
+        raise_on_unparseable_input: when True and the task list is resolved
+            here from -i/--input or -f/--file but yields no task ID, raise
+            ValidationError instead of logging CRITICAL and returning empty
+            (DX-14). Only `enge report` passes it; the rerun path keeps the
+            log-and-return behavior.
 
     Returns:
         Tuple of (parsed_dict, retval, task_results) where retval is the
@@ -825,7 +834,8 @@ def parse_request_xunit_concurrent(
         parsed_dict excludes) -- enge.report.results_cache needs this raw
         list to cache terminal tasks that never make it into parsed_dict.
     """
-    if request_url_list is None or tasks_source is None:
+    resolved_here = request_url_list is None or tasks_source is None
+    if resolved_here:
         from enge.utils.task_resolver import parse_tasks
 
         parsed_result = parse_tasks(ctx)
@@ -837,6 +847,17 @@ def parse_request_xunit_concurrent(
             tasks_source = raw_tasks_source or ""
 
     if not request_url_list or all(element == "" for element in request_url_list):
+        given = [
+            flag
+            for flag, attr in (("-i/--input", "input"), ("-f/--file", "file"))
+            if getattr(ctx.cli_args, attr, None)
+        ]
+        if raise_on_unparseable_input and resolved_here and given:
+            raise ValidationError(
+                "No Testing Farm task IDs could be parsed from "
+                f"{' and '.join(given)}; expected task UUIDs or "
+                "request/result URLs ending in one."
+            )
         LOGGER.critical("There are no tasks to report for!")
         return {}, None, []
 

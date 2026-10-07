@@ -38,7 +38,11 @@ def _parse_request_xunit_with_retval(
     from enge.report.concurrent_parser import parse_request_xunit_concurrent
 
     return parse_request_xunit_concurrent(
-        ctx, request_url_list, tasks_source, skip_pass
+        ctx,
+        request_url_list,
+        tasks_source,
+        skip_pass,
+        raise_on_unparseable_input=True,
     )
 
 
