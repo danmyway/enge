@@ -629,37 +629,50 @@ class TestReportGradesUngradedTasks(unittest.TestCase):
         self.assertEqual(retval, ExitCode.MISSING_RESULTS)
         self.assertEqual(task_results, [])
 
-    def test_dropped_task_does_not_mask_failure_or_error(self):
-        """U5: precedence, with a premise guard. A dropped task alone
-        grades 4 (first call proves the drop is graded at all); a
-        dropped task alongside a real FAILED/ERROR result must never
-        downgrade the aggregate below that real result
-        (TEST_ERROR > TEST_FAILURE > MISSING_RESULTS > SUCCESS)."""
+    def _run_with_one_dropped(self, xunit_content):
+        """Two requested tasks: the first is fetched with *xunit_content*,
+        the second is dropped at the task-info phase (fetch returns None).
+        Returns the aggregate retval."""
         urls = ["http://example.com/api/00000001", "http://example.com/api/00000002"]
+        task = _make_task_result(
+            xunit_content=xunit_content,
+            request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
+            url=urls[0],
+        )
 
-        def fetch_task_info_factory(xunit_content):
-            task = _make_task_result(
-                xunit_content=xunit_content,
-                request_uuid="aaaaaaaa-0000-0000-0000-000000000001",
-                url=urls[0],
-            )
-
-            def fetch_task_info(url, process_state=True):
-                return task if url == urls[0] else None
-
-            return fetch_task_info
+        def fetch_task_info(url, process_state=True):
+            return task if url == urls[0] else None
 
         def fetch_xml(task_result):
             return task_result
 
-        _, retval, _ = self._run(urls, fetch_task_info_factory(_XML_PASSED), fetch_xml)
-        self.assertEqual(retval, ExitCode.MISSING_RESULTS)
+        _, retval, _ = self._run(urls, fetch_task_info, fetch_xml)
+        return retval
 
-        _, retval, _ = self._run(urls, fetch_task_info_factory(_XML_FAILED), fetch_xml)
-        self.assertEqual(retval, ExitCode.TEST_FAILURE)
+    def test_dropped_task_alone_grades_missing_results(self):
+        """U5a: a dropped task next to a PASSED result grades 4 -- proves
+        the drop is graded at all, which U5b/U5c rely on as a premise."""
+        self.assertEqual(
+            self._run_with_one_dropped(_XML_PASSED), ExitCode.MISSING_RESULTS
+        )
 
-        _, retval, _ = self._run(urls, fetch_task_info_factory(_XML_ERROR), fetch_xml)
-        self.assertEqual(retval, ExitCode.TEST_ERROR)
+    def test_dropped_task_does_not_mask_test_failure(self):
+        """U5b: precedence, with a premise guard. A dropped task alongside
+        a real FAILED result must never downgrade the aggregate below it
+        (TEST_FAILURE > MISSING_RESULTS)."""
+        self.assertEqual(
+            self._run_with_one_dropped(_XML_PASSED), ExitCode.MISSING_RESULTS
+        )
+        self.assertEqual(self._run_with_one_dropped(_XML_FAILED), ExitCode.TEST_FAILURE)
+
+    def test_dropped_task_does_not_mask_test_error(self):
+        """U5c: precedence, with a premise guard. A dropped task alongside
+        a real ERROR result must never downgrade the aggregate below it
+        (TEST_ERROR > MISSING_RESULTS)."""
+        self.assertEqual(
+            self._run_with_one_dropped(_XML_PASSED), ExitCode.MISSING_RESULTS
+        )
+        self.assertEqual(self._run_with_one_dropped(_XML_ERROR), ExitCode.TEST_ERROR)
 
     def test_fully_graded_run_still_uses_the_pool(self):
         """U6: negative pin, with a premise guard. When every task is
