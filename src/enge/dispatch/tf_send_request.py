@@ -352,7 +352,7 @@ class SubmitTest:
                 )
                 time.sleep(1)
                 response_timeout -= 1
-                if response_status > 200 and response_timeout == 0:
+                if response_status != 200 and response_timeout <= 0:
                     break
                 elif response_status == 200:
                     break
