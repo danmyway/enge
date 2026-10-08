@@ -136,8 +136,9 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   unrecognized TF overall values — rerun candidates, maintainer-ratified
   2026-07-17 — and requested tasks that could not be fetched or graded:
   dropped at the task-info fetch (404, schema miss, retries exhausted,
-  worker exception) or whose xunit fetch raised), and the only one
-  requiring severity precedence
+  worker exception) or whose xunit fetch raised or failed transiently —
+  HTTP 5xx, 408, 429, a read timeout; a 404 or another 4xx stays 3), and
+  the only one requiring severity precedence
   (3 > 2 > 4 > 0, error-dominates — missing results are rerun candidates
   and must not mask a real error), because it is the only command that
   grades multi-plan result sets.

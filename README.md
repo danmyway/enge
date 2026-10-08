@@ -934,7 +934,7 @@ enge uses a single `ExitCode` enum (`utils/globals.py`). The universal floor app
 |------|---------|
 | 2    | Ran; at least one test FAILED (no errors) |
 | 3    | Ran; at least one ERROR was hit |
-| 4    | Ran; at least one request had no results (missing/expired) or could not be fetched or graded (Testing Farm unreachable, a 404 for that task), or (compare only) a CANCELED task |
+| 4    | Ran; at least one request had no results (missing/expired) or could not be fetched or graded (Testing Farm unreachable, a 404 for that task, a task's result file failing to download on a server error or timeout — HTTP 5xx, 408, 429, a read timeout; a missing (404) or refused (other 4xx) result file stays an ERROR, 3), or (compare only) a CANCELED task |
 
 When a report run mixes these, the most severe wins: **3 > 2 > 4 > 0** (error-dominates — missing results are rerun candidates and must not mask a real error). `enge test` also uses code 2 for partial dispatch failure (some requests submitted, some failed), and `enge report` uses it for `--refresh` on an invocation with no run to repair, and for `-i/--input` or `-f/--file` input holding no parseable task ID. `enge compare` always returns 0: it is a comparison/reporting view, not a grading command, so table content (including FAILED/ERROR rows) never changes its exit code. Code 99 still applies if the invocation itself can't be serviced (see below).
 

@@ -9,7 +9,13 @@ from dataclasses import dataclass
 import lxml.etree  # type: ignore
 import requests
 import requests.adapters
-from requests.exceptions import ConnectionError, RequestException
+from requests.exceptions import (
+    ChunkedEncodingError,
+    ConnectionError,
+    ContentDecodingError,
+    RequestException,
+    Timeout,
+)
 
 from rich.markup import escape
 from enge.utils.app_context import AppContext
@@ -18,6 +24,17 @@ from enge.utils.errors import NetworkError, ValidationError
 from enge.utils.globals import ExitCode, worst_exit_code
 
 LOGGER = logging.getLogger(__name__)
+
+# An xunit fetch that fails for one of these reasons says nothing about the
+# test run itself, so the task is "results missing" (a rerun candidate), not
+# an error.  ConnectionError is deliberately absent: it raises NetworkError,
+# which the worker pool already grades MISSING_RESULTS.
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
+_TRANSIENT_FETCH_EXCEPTIONS = (Timeout, ChunkedEncodingError, ContentDecodingError)
+
+
+def _is_transient_status(status: int) -> bool:
+    return status >= 500 or status in _TRANSIENT_HTTP_STATUSES
 
 
 def _raise_retval(task_result: "TaskResult", code: ExitCode) -> None:
@@ -382,6 +399,8 @@ class ConcurrentRequestParser:
             return task_result
 
         uuid_short = self._get_short_uuid(task_result.request_uuid)
+        code = ExitCode.TEST_ERROR
+        detail = "unknown error"
 
         try:
             response = self.session.get(
@@ -403,6 +422,9 @@ class ConcurrentRequestParser:
                     f"[{uuid_short}] XML fetch returned status {response.status_code}"
                 )
                 LOGGER.debug(f"[{uuid_short}] URL: {task_result.results_xml_url}")
+                detail = f"HTTP {response.status_code}"
+                if _is_transient_status(response.status_code):
+                    code = ExitCode.MISSING_RESULTS
 
         except ConnectionError as err:
             LOGGER.critical("Connection Error")
@@ -418,6 +440,9 @@ class ConcurrentRequestParser:
             LOGGER.warning(f"[{task_result.request_uuid}] Failed to fetch XML")
             LOGGER.debug(f"[{uuid_short}]    URL: {task_result.results_xml_url}")
             LOGGER.debug(f"[{uuid_short}]    Error: {e}")
+            detail = type(e).__name__
+            if isinstance(e, _TRANSIENT_FETCH_EXCEPTIONS):
+                code = ExitCode.MISSING_RESULTS
 
         # Fallback handling when XML is not available
         LOGGER.debug(f"[{uuid_short}] Unable to find the xml to parse")
@@ -438,8 +463,13 @@ class ConcurrentRequestParser:
                 f"[{task_result.request_uuid}]    Please consult with {task_result.url}"
             )
 
-        _raise_retval(task_result, ExitCode.TEST_ERROR)
-        task_result.error_message = "XML not available, using fallback"
+        if code == ExitCode.MISSING_RESULTS:
+            LOGGER.warning(
+                f"[{task_result.request_uuid}] XML fetch failed ({detail}); "
+                "graded as missing results"
+            )
+        _raise_retval(task_result, code)
+        task_result.error_message = f"XML not available ({detail}), using fallback"
         return task_result
 
     def parse_tasks_concurrent(self, request_url_list: List[str]) -> List[TaskResult]:
