@@ -20,7 +20,7 @@ LOGGER = getLogger(__name__)
 # AMI source regex patterns (without architecture suffix) for sanity validation.
 # These mirror the regexes used on the Testing Farm backend, with one
 # deliberate narrowing for Oracle Linux (see the comment on its entry).
-AMI_SOURCE_PATTERNS = {
+CLOUD_IMAGE_SOURCE_PATTERNS = {
     "alma": re.compile(r"^AlmaLinux OS (\d+)\.(\d+)\.\d+$"),
     "rocky": re.compile(r"^Rocky-\d+-[eE][cC]2(?:-Base|-LVM)?-(\d+)\.(\d+)-\d+\.\d+$"),
     # Testing Farm backend:
@@ -35,19 +35,19 @@ AMI_SOURCE_PATTERNS = {
 
 # Architecture suffix separators per AMI os_type.
 # None means the image name already carries its architecture (Azure URNs).
-AMI_ARCH_SEPARATORS: Dict[str, Optional[str]] = {
+CLOUD_IMAGE_ARCH_SEPARATORS: Dict[str, Optional[str]] = {
     "alma": " ",
     "rocky": ".",
     "oracle": None,
 }
 
 # Only these architectures are available for AMI sources on AWS EC2
-VALID_AMI_ARCHITECTURES = {"x86_64", "aarch64"}
+VALID_CLOUD_IMAGE_ARCHITECTURES = {"x86_64", "aarch64"}
 
 # Architectures available per source os_type. Every AMI os_type must be listed:
 # this is indexed directly so an unlisted one fails loudly rather than silently
 # accepting whatever was requested.
-AMI_ARCHITECTURES_BY_OS: Dict[str, Set[str]] = {
+CLOUD_IMAGE_ARCHITECTURES_BY_OS: Dict[str, Set[str]] = {
     "alma": {"x86_64", "aarch64"},
     "rocky": {"x86_64", "aarch64"},
     "oracle": {"x86_64"},
@@ -67,17 +67,19 @@ def is_rhui_compose_name(name: str) -> bool:
     return name.endswith("-rhui")
 
 
-def _strip_ami_arch_suffix(spec: str) -> str:
+def _strip_cloud_image_arch_suffix(spec: str) -> str:
     """Strip a trailing architecture suffix (space- or dot-separated) from an AMI name."""
     for sep in (" ", "."):
-        for arch in VALID_AMI_ARCHITECTURES:
+        for arch in VALID_CLOUD_IMAGE_ARCHITECTURES:
             suffix = f"{sep}{arch}"
             if spec.endswith(suffix):
                 return spec[: -len(suffix)]
     return spec
 
 
-def _parse_ami_source(spec: str, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _parse_cloud_image_source(
+    spec: str, config: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     """
     Try to parse spec as an AMI source (Alma Linux, Rocky Linux or Oracle Linux).
 
@@ -87,20 +89,20 @@ def _parse_ami_source(spec: str, config: Dict[str, Any]) -> Optional[Dict[str, A
 
     Returns parsed spec dict or None if not an AMI source.
     """
-    ami_aliases = config.get("sources", {}).get("ami", {})
+    cloud_image_aliases = config.get("sources", {}).get("ami", {})
     base_name = None
 
     # 1. Alias lookup (e.g., "alma97" -> "AlmaLinux OS 9.7.20251118")
-    if spec in ami_aliases:
-        base_name = str(ami_aliases[spec]).strip()
+    if spec in cloud_image_aliases:
+        base_name = str(cloud_image_aliases[spec]).strip()
         LOGGER.debug(f"Resolved AMI alias '{spec}' to: {base_name}")
 
     if base_name is None:
         # 2. Direct AMI name: strip arch suffix if present, then try regex
-        base_name = _strip_ami_arch_suffix(spec)
+        base_name = _strip_cloud_image_arch_suffix(spec)
 
     # Validate base name against known AMI patterns
-    for os_type, pattern in AMI_SOURCE_PATTERNS.items():
+    for os_type, pattern in CLOUD_IMAGE_SOURCE_PATTERNS.items():
         match = pattern.match(base_name)
         if match:
             major = int(match.group(1))
@@ -115,13 +117,13 @@ def _parse_ami_source(spec: str, config: Dict[str, Any]) -> Optional[Dict[str, A
                 "compose_name": base_name,
                 "is_version_only": False,
                 "is_centos_stream": False,
-                "is_ami_source": True,
+                "is_cloud_image_source": True,
                 "is_major_only": False,
                 "os_type": os_type,
             }
 
     # If the alias resolved but didn't match any AMI pattern, fail with a clear message
-    if spec in ami_aliases:
+    if spec in cloud_image_aliases:
         raise ValueError(
             f"AMI alias '{spec}' resolved to '{base_name}' which does not match "
             f"any known AMI name pattern (Alma Linux, Rocky Linux or Oracle Linux)"
@@ -130,7 +132,7 @@ def _parse_ami_source(spec: str, config: Dict[str, Any]) -> Optional[Dict[str, A
     return None
 
 
-def format_ami_compose_name(source_spec: Dict[str, Any], arch: str) -> str:
+def format_cloud_image_compose_name(source_spec: Dict[str, Any], arch: str) -> str:
     """
     Construct the full AMI compose name by appending the architecture suffix.
 
@@ -140,13 +142,13 @@ def format_ami_compose_name(source_spec: Dict[str, Any], arch: str) -> str:
     unchanged: 'Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2'
     """
     base = source_spec["compose_name"]
-    sep = AMI_ARCH_SEPARATORS[source_spec["os_type"]]
+    sep = CLOUD_IMAGE_ARCH_SEPARATORS[source_spec["os_type"]]
     if sep is None:
         return str(base)
     return f"{base}{sep}{arch}"
 
 
-def validate_ami_architectures(
+def validate_cloud_image_architectures(
     source_spec: Dict[str, Any], architectures: List[str]
 ) -> None:
     """
@@ -156,9 +158,9 @@ def validate_ami_architectures(
     Azure images are published for x86_64 only.
     Raises ValidationError for any unsupported architecture.
     """
-    if not source_spec.get("is_ami_source"):
+    if not source_spec.get("is_cloud_image_source"):
         return
-    supported = AMI_ARCHITECTURES_BY_OS[source_spec["os_type"]]
+    supported = CLOUD_IMAGE_ARCHITECTURES_BY_OS[source_spec["os_type"]]
     invalid = set(architectures) - supported
     if invalid:
         raise ValidationError(
@@ -223,7 +225,7 @@ def parse_compose_spec(
           for AMI sources this is the base AMI name without architecture suffix
         - is_version_only: True if input was just version, False if full compose name
         - is_centos_stream: True if source is CentOS Stream, False otherwise
-        - is_ami_source: True if source is an AMI-based system (Alma/Rocky/Oracle), False otherwise
+        - is_cloud_image_source: True if source is an AMI-based system (Alma/Rocky/Oracle), False otherwise
         - is_major_only: True if only a major version was requested, False otherwise
         - os_type: OS type string ("rhel", "centos", "alma", "rocky", "oracle") for context generation
 
@@ -259,15 +261,15 @@ def parse_compose_spec(
                 "compose_name": compose_name,
                 "is_version_only": False,
                 "is_centos_stream": True,
-                "is_ami_source": False,
+                "is_cloud_image_source": False,
                 "is_major_only": False,
                 "os_type": "centos",
             }
 
     # Try parsing as AMI source (Alma Linux / Rocky Linux)
-    ami_result = _parse_ami_source(spec_stripped, config)
-    if ami_result is not None:
-        return ami_result
+    cloud_image_result = _parse_cloud_image_source(spec_stripped, config)
+    if cloud_image_result is not None:
+        return cloud_image_result
 
     # Try parsing as version number (e.g., "8.10")
     version_match = re.match(r"^(\d+)\.(\d+)$", spec.strip())
@@ -307,7 +309,7 @@ def parse_compose_spec(
             "compose_name": compose_name,
             "is_version_only": True,
             "is_centos_stream": False,
-            "is_ami_source": False,
+            "is_cloud_image_source": False,
             "is_major_only": False,
             "os_type": "rhel",
         }
@@ -329,7 +331,7 @@ def parse_compose_spec(
             "compose_name": compose_name,
             "is_version_only": False,
             "is_centos_stream": False,
-            "is_ami_source": False,
+            "is_cloud_image_source": False,
             "is_major_only": False,
             "os_type": "rhel",
         }
@@ -350,7 +352,7 @@ def parse_compose_spec(
             "compose_name": compose_name,
             "is_version_only": False,
             "is_centos_stream": False,
-            "is_ami_source": False,
+            "is_cloud_image_source": False,
             "is_major_only": True,
             "os_type": "rhel",
         }

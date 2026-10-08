@@ -3,14 +3,14 @@ import unittest
 from enge.utils.errors import ConfigurationError, ValidationError
 from enge.utils.source_target_parser import (
     apply_centos_context_overrides,
-    format_ami_compose_name,
+    format_cloud_image_compose_name,
     generate_environment_variables,
     generate_tmt_context,
     generate_upgrade_path_alias,
     is_rhui_compose_name,
     parse_compose_spec,
     parse_source_target_config,
-    validate_ami_architectures,
+    validate_cloud_image_architectures,
 )
 
 
@@ -157,7 +157,7 @@ class TestSourceTargetParser(unittest.TestCase):
                 self.assertEqual(parsed["minor"], 0)
                 self.assertTrue(parsed["is_major_only"])
                 self.assertFalse(parsed["is_centos_stream"])
-                self.assertFalse(parsed["is_ami_source"])
+                self.assertFalse(parsed["is_cloud_image_source"])
 
     def test_non_rhui_compose_specs_rejected(self):
         invalid_specs = [
@@ -229,7 +229,7 @@ class TestAMISourceParser(unittest.TestCase):
         self.assertEqual(spec["major"], 9)
         self.assertEqual(spec["minor"], 7)
         self.assertEqual(spec["compose_name"], "AlmaLinux OS 9.7.20251118")
-        self.assertTrue(spec["is_ami_source"])
+        self.assertTrue(spec["is_cloud_image_source"])
         self.assertFalse(spec["is_centos_stream"])
         self.assertEqual(spec["os_type"], "alma")
 
@@ -238,7 +238,7 @@ class TestAMISourceParser(unittest.TestCase):
         self.assertEqual(spec["major"], 9)
         self.assertEqual(spec["minor"], 7)
         self.assertEqual(spec["compose_name"], "Rocky-9-EC2-Base-9.7-20251123.2")
-        self.assertTrue(spec["is_ami_source"])
+        self.assertTrue(spec["is_cloud_image_source"])
         self.assertFalse(spec["is_centos_stream"])
         self.assertEqual(spec["os_type"], "rocky")
 
@@ -261,7 +261,7 @@ class TestAMISourceParser(unittest.TestCase):
         self.assertEqual(spec["major"], 9)
         self.assertEqual(spec["minor"], 7)
         self.assertEqual(spec["compose_name"], "AlmaLinux OS 9.7.20251118")
-        self.assertTrue(spec["is_ami_source"])
+        self.assertTrue(spec["is_cloud_image_source"])
         self.assertEqual(spec["os_type"], "alma")
 
     def test_alma_direct_name_with_x86_64(self):
@@ -287,7 +287,7 @@ class TestAMISourceParser(unittest.TestCase):
         self.assertEqual(spec["major"], 9)
         self.assertEqual(spec["minor"], 7)
         self.assertEqual(spec["compose_name"], "Rocky-9-EC2-Base-9.7-20251123.2")
-        self.assertTrue(spec["is_ami_source"])
+        self.assertTrue(spec["is_cloud_image_source"])
         self.assertEqual(spec["os_type"], "rocky")
 
     def test_rocky_direct_name_with_x86_64(self):
@@ -334,19 +334,19 @@ class TestAMISourceParser(unittest.TestCase):
         self.assertEqual(target_spec["major"], 10)
         self.assertEqual(target_spec["minor"], 0)
 
-    # -- format_ami_compose_name --
+    # -- format_cloud_image_compose_name --
 
     def test_format_alma_compose_with_x86_64(self):
         spec = {"compose_name": "AlmaLinux OS 9.7.20251118", "os_type": "alma"}
         self.assertEqual(
-            format_ami_compose_name(spec, "x86_64"),
+            format_cloud_image_compose_name(spec, "x86_64"),
             "AlmaLinux OS 9.7.20251118 x86_64",
         )
 
     def test_format_alma_compose_with_aarch64(self):
         spec = {"compose_name": "AlmaLinux OS 9.7.20251118", "os_type": "alma"}
         self.assertEqual(
-            format_ami_compose_name(spec, "aarch64"),
+            format_cloud_image_compose_name(spec, "aarch64"),
             "AlmaLinux OS 9.7.20251118 aarch64",
         )
 
@@ -356,7 +356,7 @@ class TestAMISourceParser(unittest.TestCase):
             "os_type": "rocky",
         }
         self.assertEqual(
-            format_ami_compose_name(spec, "x86_64"),
+            format_cloud_image_compose_name(spec, "x86_64"),
             "Rocky-9-EC2-Base-9.7-20251123.2.x86_64",
         )
 
@@ -366,31 +366,31 @@ class TestAMISourceParser(unittest.TestCase):
             "os_type": "rocky",
         }
         self.assertEqual(
-            format_ami_compose_name(spec, "aarch64"),
+            format_cloud_image_compose_name(spec, "aarch64"),
             "Rocky-9-EC2-Base-9.7-20251123.2.aarch64",
         )
 
     # -- Architecture validation --
 
     def test_valid_architectures_pass(self):
-        spec = {"is_ami_source": True, "os_type": "alma"}
-        validate_ami_architectures(spec, ["x86_64"])
-        validate_ami_architectures(spec, ["aarch64"])
-        validate_ami_architectures(spec, ["x86_64", "aarch64"])
+        spec = {"is_cloud_image_source": True, "os_type": "alma"}
+        validate_cloud_image_architectures(spec, ["x86_64"])
+        validate_cloud_image_architectures(spec, ["aarch64"])
+        validate_cloud_image_architectures(spec, ["x86_64", "aarch64"])
 
     def test_invalid_architecture_raises(self):
-        spec = {"is_ami_source": True, "os_type": "alma"}
+        spec = {"is_cloud_image_source": True, "os_type": "alma"}
         with self.assertRaises(ValidationError):
-            validate_ami_architectures(spec, ["s390x"])
+            validate_cloud_image_architectures(spec, ["s390x"])
 
     def test_mixed_valid_invalid_raises(self):
-        spec = {"is_ami_source": True, "os_type": "rocky"}
+        spec = {"is_cloud_image_source": True, "os_type": "rocky"}
         with self.assertRaises(ValidationError):
-            validate_ami_architectures(spec, ["x86_64", "ppc64le"])
+            validate_cloud_image_architectures(spec, ["x86_64", "ppc64le"])
 
-    def test_non_ami_source_skips_validation(self):
-        spec = {"is_ami_source": False, "os_type": "rhel"}
-        validate_ami_architectures(spec, ["s390x", "ppc64le"])
+    def test_non_cloud_image_source_skips_validation(self):
+        spec = {"is_cloud_image_source": False, "os_type": "rhel"}
+        validate_cloud_image_architectures(spec, ["s390x", "ppc64le"])
 
     # -- TMT context --
 
@@ -446,11 +446,11 @@ class TestAMISourceParser(unittest.TestCase):
 
     # -- Error cases --
 
-    def test_unknown_alias_without_ami_pattern_raises(self):
+    def test_unknown_alias_without_cloud_image_pattern_raises(self):
         with self.assertRaises(ValueError):
             parse_compose_spec("nonexistent99", self.config_no_aliases)
 
-    def test_bad_ami_alias_value_raises(self):
+    def test_bad_cloud_image_alias_value_raises(self):
         """Alias that resolves to a non-matching AMI name should raise."""
         bad_config = {
             "testing_farm": {"composes_prod_url": ""},

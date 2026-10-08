@@ -12,7 +12,7 @@ from enge.utils.source_target_parser import (
     parse_environment_variables,
     merge_set_environment_variables,
     merge_tmt_context,
-    format_ami_compose_name,
+    format_cloud_image_compose_name,
     apply_centos_context_overrides,
     generate_tmt_context,
     is_rhui_compose_name,
@@ -375,8 +375,10 @@ def _resolve_artifacts(
             "error": "no artifact information found",
         }
     first_build = info[0]
-    if spec.source_spec.get("is_ami_source", False):
-        submit_test.compose = format_ami_compose_name(spec.source_spec, spec.arch)
+    if spec.source_spec.get("is_cloud_image_source", False):
+        submit_test.compose = format_cloud_image_compose_name(
+            spec.source_spec, spec.arch
+        )
     elif spec.source_spec.get("is_centos_stream", False):
         submit_test.compose = spec.source_spec["compose_name"]
     else:
