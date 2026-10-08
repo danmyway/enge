@@ -66,7 +66,7 @@ MINIMAL_CONFIG = {
     },
     "brew_api": {"session_url": "", "taskid_url": ""},
     "reportportal": {"url": "", "project": ""},
-    "sources": {"ami": {}},
+    "sources": {"images": {}},
 }
 
 # Config with two test sets that use CentOS-Stream-9 as source.

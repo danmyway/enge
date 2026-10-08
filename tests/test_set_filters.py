@@ -46,7 +46,7 @@ MINIMAL_CONFIG = {
     "copr_api": {"owner": "", "build_references": []},
     "brew_api": {"session_url": ""},
     "reportportal": {"url": "", "project": ""},
-    "sources": {"ami": {}},
+    "sources": {"images": {}},
 }
 
 
