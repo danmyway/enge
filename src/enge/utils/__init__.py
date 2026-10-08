@@ -10,8 +10,22 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Tuple
 
+from enge.utils.errors import ValidationError
+
 
 _RELATIVE_DATE_RE = re.compile(r"^(\d+)([hdwmy])$", re.IGNORECASE)
+
+
+def _invalid_date_error(value: str) -> ValidationError:
+    """The user-facing error for a --since/--until value in neither format.
+
+    The formats are named in the notation the ``--since``/``--until`` help
+    text uses.
+    """
+    return ValidationError(
+        f"Invalid date {value!r}: expected YYYY-MM-DD or a relative value "
+        "such as 6h, 3d, 2w, 1m, 1y"
+    )
 
 
 def _subtract_months(dt: datetime, n: int) -> datetime:
@@ -66,13 +80,16 @@ def parse_date_arg(value: str) -> datetime:
     `resolve_utc_window`.
 
     Raises:
-        ValueError: If *value* matches neither format.
+        ValidationError: If *value* matches neither format.
     """
     relative = _relative_ago(datetime.now(), value)
     if relative is not None:
         return relative
 
-    return datetime.strptime(value, "%Y-%m-%d")
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise _invalid_date_error(value) from exc
 
 
 def resolve_utc_window(
@@ -96,7 +113,8 @@ def resolve_utc_window(
     *now* is a test-injection seam and must be tz-aware.
 
     Raises:
-        ValueError: If a bound matches neither format, or *now* is naive.
+        ValidationError: If a bound matches neither format.
+        ValueError: If *now* is naive (a caller bug, not user input).
     """
     resolved_now = datetime.now(timezone.utc) if now is None else now
     if resolved_now.tzinfo is None:
@@ -108,7 +126,11 @@ def resolve_utc_window(
         relative = _relative_ago(resolved_now, value)
         if relative is not None:
             return relative
-        absolute = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d")
+        except ValueError as exc:
+            raise _invalid_date_error(value) from exc
+        absolute = parsed.replace(tzinfo=timezone.utc)
         if end_of_day:
             absolute = absolute.replace(hour=23, minute=59, second=59)
         return absolute

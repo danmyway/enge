@@ -191,9 +191,15 @@ def main():
     except NetworkError as e:
         logging.critical(f"Network error: {e}")
         return EXIT_GENERAL_ERROR
-    except UserAbort:
+    except (UserAbort, KeyboardInterrupt):
         logging.info("Operation aborted by user")
         return EXIT_INTERRUPT
+    except Exception as e:
+        logging.critical(
+            f"Unexpected error: {type(e).__name__}: {e}",
+            exc_info=logging.getLogger("enge").isEnabledFor(logging.DEBUG),
+        )
+        return EXIT_GENERAL_ERROR
 
 
 if __name__ == "__main__":
