@@ -22,7 +22,7 @@ from enge.utils.source_target_parser import (
     parse_target_compose_from_url,
     parse_tmt_context,
     resolve_effective_values,
-    validate_ami_architectures,
+    validate_cloud_image_architectures,
     validate_source_pool,
 )
 
@@ -158,7 +158,7 @@ def build_test_attributes(cli_args, config):  # noqa: C901
                     )
                     set_archs = effective_values.get("architectures", [])
                     if set_archs and set_source_spec:
-                        validate_ami_architectures(set_source_spec, set_archs)
+                        validate_cloud_image_architectures(set_source_spec, set_archs)
                     if set_source_spec:
                         validate_source_pool(
                             set_source_spec,
@@ -349,7 +349,7 @@ def build_test_attributes(cli_args, config):  # noqa: C901
             logger.critical("No architectures specified in CLI or config!")
             raise ValidationError("No architectures specified in CLI or config")
         architectures = parse_architectures(arch_input)
-        validate_ami_architectures(source_spec, architectures)
+        validate_cloud_image_architectures(source_spec, architectures)
 
         pool = effective_values.get("pool")
         validate_source_pool(source_spec, pool)

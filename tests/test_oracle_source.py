@@ -7,12 +7,12 @@ import unittest
 from enge.utils.arg_parser import get_arguments
 from enge.utils.errors import ValidationError
 from enge.utils.source_target_parser import (
-    format_ami_compose_name,
+    format_cloud_image_compose_name,
     generate_environment_variables,
     generate_tmt_context,
     normalize_tmt_compose_context,
     parse_compose_spec,
-    validate_ami_architectures,
+    validate_cloud_image_architectures,
 )
 
 ORACLE_URN = "Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2"
@@ -98,7 +98,7 @@ class TestOracleSourceParsing(unittest.TestCase):
         self.assertEqual(spec["os_type"], "oracle")
         self.assertEqual(spec["major"], 9)
         self.assertEqual(spec["minor"], 8)
-        self.assertTrue(spec["is_ami_source"])
+        self.assertTrue(spec["is_cloud_image_source"])
         self.assertEqual(spec["compose_name"], ORACLE_URN)
 
     def test_o2_oracle_direct_urn_parsed_correctly(self):
@@ -106,7 +106,7 @@ class TestOracleSourceParsing(unittest.TestCase):
         self.assertEqual(spec["os_type"], "oracle")
         self.assertEqual(spec["major"], 9)
         self.assertEqual(spec["minor"], 8)
-        self.assertTrue(spec["is_ami_source"])
+        self.assertTrue(spec["is_cloud_image_source"])
         self.assertEqual(spec["compose_name"], ORACLE_URN)
 
     def test_o3_oracle_without_gen2_and_two_digit_minor(self):
@@ -137,24 +137,24 @@ class TestOracleComposeNameAndArchitectures(unittest.TestCase):
 
     def test_o5_oracle_compose_name_has_no_arch_suffix(self):
         spec = _oracle_spec()
-        self.assertEqual(format_ami_compose_name(spec, "x86_64"), ORACLE_URN)
+        self.assertEqual(format_cloud_image_compose_name(spec, "x86_64"), ORACLE_URN)
 
     def test_o6_oracle_rejects_aarch64(self):
         spec = _oracle_spec()
         # Premise: x86_64 is accepted.
-        validate_ami_architectures(spec, ["x86_64"])
+        validate_cloud_image_architectures(spec, ["x86_64"])
 
         with self.assertRaises(ValidationError) as cm:
-            validate_ami_architectures(spec, ["aarch64"])
+            validate_cloud_image_architectures(spec, ["aarch64"])
         message = str(cm.exception)
         self.assertIn("aarch64", message)
         self.assertIn("Oracle Linux", message)
 
     def test_o7_alma_still_supports_aarch64_and_suffix(self):
         spec = parse_compose_spec("alma97", PARSER_CONFIG)
-        validate_ami_architectures(spec, ["aarch64"])
+        validate_cloud_image_architectures(spec, ["aarch64"])
         self.assertEqual(
-            format_ami_compose_name(spec, "aarch64"),
+            format_cloud_image_compose_name(spec, "aarch64"),
             "AlmaLinux OS 9.7.20251118 aarch64",
         )
 
