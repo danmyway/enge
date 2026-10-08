@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from enge.report.__main__ import _handle_list
 from enge.utils import parse_date_arg, resolve_utc_window
 from enge.utils.arg_parser import build_parser
+from enge.utils.errors import ValidationError
 from enge.utils.manifest import ManifestReader, ManifestWriter
 from enge.utils.manifest_resolution import _build_find_kwargs
 from enge.utils.ulid import generate_ulid
@@ -237,10 +238,10 @@ class TestResolveUtcWindow(unittest.TestCase):
         self.assertIsNotNone(since.tzinfo)
         self.assertLess(abs((since - expected).total_seconds()), 60)
 
-    def test_unparseable_value_raises_value_error(self):
-        with self.assertRaises(ValueError):
+    def test_unparseable_value_raises_validation_error(self):
+        with self.assertRaises(ValidationError):
             resolve_utc_window("garbage", None, now=FROZEN_NOW)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValidationError):
             resolve_utc_window(None, "garbage", now=FROZEN_NOW)
 
     def test_naive_injected_clock_raises_value_error(self):
