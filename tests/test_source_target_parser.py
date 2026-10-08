@@ -205,14 +205,14 @@ class TestIsRhuiComposeName(unittest.TestCase):
         self.assertFalse(is_rhui_compose_name(""))
 
 
-class TestAMISourceParser(unittest.TestCase):
+class TestCloudImageSourceParser(unittest.TestCase):
     """Tests for Alma Linux and Rocky Linux AMI source parsing."""
 
     def setUp(self):
         self.config_with_aliases = {
             "testing_farm": {"composes_prod_url": ""},
             "sources": {
-                "ami": {
+                "images": {
                     "alma97": "AlmaLinux OS 9.7.20251118",
                     "alma96": "AlmaLinux OS 9.6.20250313",
                     "rocky97": "Rocky-9-EC2-Base-9.7-20251123.2",
@@ -454,7 +454,7 @@ class TestAMISourceParser(unittest.TestCase):
         """Alias that resolves to a non-matching AMI name should raise."""
         bad_config = {
             "testing_farm": {"composes_prod_url": ""},
-            "sources": {"ami": {"bad_alias": "NotAnAMIName"}},
+            "sources": {"images": {"bad_alias": "NotAnAMIName"}},
         }
         with self.assertRaises(ValueError):
             parse_compose_spec("bad_alias", bad_config)

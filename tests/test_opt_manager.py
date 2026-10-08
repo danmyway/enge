@@ -71,7 +71,7 @@ MINIMAL_CONFIG = {
     },
     "brew_api": {"session_url": "", "taskid_url": ""},
     "reportportal": {"url": "", "project": ""},
-    "sources": {"ami": {}},
+    "sources": {"images": {}},
 }
 
 

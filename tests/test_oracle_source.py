@@ -22,7 +22,7 @@ ALMA_BASE = "AlmaLinux OS 9.7.20251118"
 
 PARSER_CONFIG = {
     "testing_farm": {"composes_prod_url": ""},
-    "sources": {"ami": {"oracle9": ORACLE_URN, "alma97": ALMA_BASE}},
+    "sources": {"images": {"oracle9": ORACLE_URN, "alma97": ALMA_BASE}},
 }
 
 # Modelled on tests/test_opt_manager.py's MINIMAL_CONFIG, with an empty
@@ -56,7 +56,7 @@ BUILDER_CONFIG = {
     },
     "brew_api": {"session_url": "", "taskid_url": ""},
     "reportportal": {"url": "", "project": ""},
-    "sources": {"ami": {"oracle9": ORACLE_URN}},
+    "sources": {"images": {"oracle9": ORACLE_URN}},
 }
 
 
@@ -120,7 +120,7 @@ class TestOracleSourceParsing(unittest.TestCase):
     def test_o4_oracle_arm64_urn_rejected(self):
         cfg = {
             "testing_farm": {"composes_prod_url": ""},
-            "sources": {"ami": {"oracle9": ORACLE_URN, "oraclearm": ORACLE_ARM_URN}},
+            "sources": {"images": {"oracle9": ORACLE_URN, "oraclearm": ORACLE_ARM_URN}},
         }
         # Premise: the x86_64 URN in this very config does parse as oracle.
         premise = parse_compose_spec("oracle9", cfg)
