@@ -290,7 +290,7 @@ enge test --source cs-9 --plan /plans/tier0
 enge test --source stream9 --plan /plans/tier0
 
 # Test with Alma Linux / Rocky Linux / Oracle Linux as source (cloud images)
-# (configure aliases under [sources.ami] in enge.toml)
+# (configure aliases under [sources.images] in enge.toml)
 enge test --source alma97 --plan /plans/tier0 --arch x86_64
 enge test --source rocky97 --plan /plans/tier0 --arch aarch64
 enge test --source oracle9 --pool azure-oamg --plan /plans/tier0 --arch x86_64
@@ -360,15 +360,16 @@ enge test --source 9.7 --plan /plans/subscription --only-rhsm-stage-cdn
   - `stream-9`, `cs-9` (short format with hyphen)
   - `stream9`, `cs9` (short format without hyphen)
   - When CentOS Stream is used as source, the compose name in the request body is set to `CentOS-Stream-<major>`, `SOURCE_RELEASE`/`TARGET_RELEASE` environment variables use the major version only, and the TMT context `distro`/`target_distro` default to `centos-<major>` and `rhel-<major>` respectively (with `target_distro` switching to `centos-<major>` when `TARGET_OS=centos` is provided via `--environment`).
-- **Alma Linux / Rocky Linux sources** are supported as AMI-based sources:
-  - **Alias mode**: define aliases in `[sources.ami]` in `enge.toml`, e.g. `alma97 = 'AlmaLinux OS 9.7.20251118'`, `rocky97 = 'Rocky-9-EC2-Base-9.7-20251123.2'`, then use `--source alma97` / `--source rocky97`.
+- **Alma Linux / Rocky Linux sources** are supported as cloud-image sources (AWS AMIs):
+  - **Alias mode**: define aliases in `[sources.images]` in `enge.toml`, e.g. `alma97 = 'AlmaLinux OS 9.7.20251118'`, `rocky97 = 'Rocky-9-EC2-Base-9.7-20251123.2'`, then use `--source alma97` / `--source rocky97`.
   - **Direct mode**: pass full AMI source names directly (with or without architecture suffix), e.g. `AlmaLinux OS 9.7.20251118 x86_64`, `Rocky-9-EC2-Base-9.7-20251123.2.aarch64`.
   - For Alma/Rocky AMI sources, only `x86_64` and `aarch64` architectures are supported.
-- **Oracle Linux sources** are supported as Azure image URNs, configured in the same `[sources.ami]` table:
-  - **Alias mode**: define an alias in `[sources.ami]`, e.g. `oracle9 = 'Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2'`, then use `--source oracle9`. **Direct mode**: pass the URN itself, e.g. `--source "Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2"`.
+- **Oracle Linux sources** are supported as Azure image URNs, configured in the same `[sources.images]` table:
+  - **Alias mode**: define an alias in `[sources.images]`, e.g. `oracle9 = 'Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2'`, then use `--source oracle9`. **Direct mode**: pass the URN itself, e.g. `--source "Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2"`.
   - The URN already encodes its architecture, so enge sends it to Testing Farm unchanged — no architecture suffix is appended (unlike Alma/Rocky AMI names).
   - Only `x86_64` is supported; requesting `aarch64` is rejected.
   - A Testing Farm **provisioning pool is required** — set it with `--pool`, a test set's `pool` key, or `[tests].pool` (currently `azure-oamg`). enge supplies no default: without a pool, `enge test` exits `2` before sending anything.
+- The former `[sources.ami]` table still works but is deprecated: enge reads it underneath `[sources.images]` (an alias defined in both resolves to the `[sources.images]` value) and logs one deprecation WARNING per run while it holds any alias.
 - **RHUI sources** (`RHEL-<major>-rhui`, `RHEL-<major>-sap-hana-rhui`, `RHEL-<major>-sap-netweaver-rhui`, and other `RHEL-<major>-<middle>-rhui` variants) are passed through as-is without compose pinning. When an RHUI source is detected, `skip_guest_setup` is automatically set in the Testing Farm request pipeline settings.
 - When CentOS Stream is the source, the `--target` argument may be provided as a major version only (e.g., `10`); it is automatically interpreted internally as `<major>.0` for compose pinning.
 - When a simple version is provided, enge attempts to pin it to an actual compose name by consulting `testing_farm.composes_prod_url` from the configuration. It tries the following formats in order:

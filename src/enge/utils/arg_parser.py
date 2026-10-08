@@ -208,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
         "CentOS Stream format (e.g. CentOS-Stream-9, stream-9, cs-9, stream9, cs9), "
         "or a cloud-image source alias/name for Alma Linux, Rocky Linux or Oracle Linux "
         "(e.g. alma97, rocky97, oracle9, 'AlmaLinux OS 9.7.20251118 x86_64', "
-        "'Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2'). Aliases are configured in [sources.ami]; "
+        "'Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2'). Aliases are configured in [sources.images]; "
         "Oracle Linux also requires --pool (or a set/[tests] pool). "
         "If --target is not specified, the path is resolved to <major + 1>.<minor - 6> (e.g. 8.10 -> 9.4), "
         "unless overridden by [composes.target_map] in config. "
