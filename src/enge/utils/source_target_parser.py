@@ -77,6 +77,26 @@ def _strip_cloud_image_arch_suffix(spec: str) -> str:
     return spec
 
 
+def _cloud_image_aliases(config: Dict[str, Any]) -> Any:
+    """
+    Return the cloud-image alias table: [sources.images] merged per alias
+    over the deprecated [sources.ami], [sources.images] winning a conflicting
+    alias (Q-RN-4). Logs nothing; config_parser WARNs once at load time.
+
+    An empty section is the identity, so a lone section reaches the caller
+    unchanged and a non-table value behaves as it always did (no new type
+    validation).
+    """
+    sources = config.get("sources", {})
+    ami = sources.get("ami", {})
+    images = sources.get("images", {})
+    if images == {}:
+        return ami
+    if ami == {}:
+        return images
+    return {**ami, **images}
+
+
 def _parse_cloud_image_source(
     spec: str, config: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
@@ -84,12 +104,12 @@ def _parse_cloud_image_source(
     Try to parse spec as an AMI source (Alma Linux, Rocky Linux or Oracle Linux).
 
     Resolution order:
-    1. Alias lookup in config [sources.ami]
+    1. Alias lookup in config [sources.images] (over deprecated [sources.ami])
     2. Direct regex match against full or base AMI name
 
     Returns parsed spec dict or None if not an AMI source.
     """
-    cloud_image_aliases = config.get("sources", {}).get("ami", {})
+    cloud_image_aliases = _cloud_image_aliases(config)
     base_name = None
 
     # 1. Alias lookup (e.g., "alma97" -> "AlmaLinux OS 9.7.20251118")

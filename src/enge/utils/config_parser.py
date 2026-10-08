@@ -199,6 +199,29 @@ def load_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
         >>> config = load_config(['~/.config/enge.toml', '~/.enge.toml'])
         >>> api_key = config.get('testing_farm', {}).get('api_key')
     """
+    config = _load_layered_config(paths)
+    _warn_deprecated_ami_section(config)
+    return config
+
+
+def _warn_deprecated_ami_section(config: Dict[str, Any]) -> None:
+    """WARN when the deprecated [sources.ami] table holds at least one alias.
+
+    Called once per load, so once per invocation (Q-RN-3). An empty or absent
+    table is silent (Q-RN-5): older bundled default configs ship an empty
+    [sources.ami], and /etc copies installed with %config(noreplace) keep it.
+    """
+    sources = config.get("sources")
+    ami = sources.get("ami") if isinstance(sources, dict) else None
+    if isinstance(ami, dict) and ami:
+        LOGGER.warning(
+            "Config section [sources.ami] is deprecated; move its aliases to "
+            "[sources.images] (aliases in [sources.images] take precedence)."
+        )
+
+
+def _load_layered_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
+    """Body of load_config: find the user file and apply the three layers."""
     if not paths:
         LOGGER.critical("No configuration file paths provided")
         raise ConfigurationError("No configuration file paths provided")
