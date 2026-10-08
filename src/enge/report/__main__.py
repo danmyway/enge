@@ -259,7 +259,7 @@ def _handle_list(ctx: AppContext) -> int:
             )
     else:
         table = Table(box=box.ROUNDED, title="Manifest Store")
-        table.add_column("Run ID", style="bold")
+        table.add_column("Run ID", style="bold", no_wrap=True)
         table.add_column("Created")
         table.add_column("Cmd")
         table.add_column("Set")
