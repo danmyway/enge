@@ -26,6 +26,8 @@ import logging
 import sys
 from typing import List, Dict, Any
 
+from rich.markup import escape
+
 from enge.utils.globals import ARTIFACT_MAPPING
 from enge.utils.console import console
 from enge.utils.errors import ConfigurationError, ValidationError
@@ -316,7 +318,9 @@ def _print_dispatch_summaries(
         for r in results:
             if r.get("status") == "failed":
                 console.print(
-                    f"FAILED  {r.get('set_name', '?')}/{r.get('tier', '?')}/{r.get('arch', '?')}: {r.get('error', 'unknown')}",
+                    escape(
+                        f"FAILED  {r.get('set_name', '?')}/{r.get('tier', '?')}/{r.get('arch', '?')}: {r.get('error', 'unknown')}"
+                    ),
                     style="error",
                 )
             else:

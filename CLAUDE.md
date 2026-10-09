@@ -124,7 +124,7 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   IntEnum; all modules return its members, never bare integers. The
   universal floor (0 success, 1 exception mapped by `__main__`, 99 config
   error, 130 interrupt) applies to every subcommand. Code 2 means "ran,
-  partial failure" for dispatch (some requests failed), report
+  partial failure" for dispatch and rerun (some requests failed), report
   (test failures), and cancel (some cancellations failed); it is also the
   `ValidationError` exit for a run-selector combination
   (`--run`/`--set`/`--tier`/`--arch`/`--tag`/`--since`/`--until`) that

@@ -33,5 +33,9 @@ class NetworkError(EngeError):
     """Remote service is unreachable, timed out, or returned a fatal error."""
 
 
+class SubmissionError(EngeError):
+    """A Testing Farm create request was rejected, or its outcome is unknown."""
+
+
 class UserAbort(EngeError):
     """User opted to abort an operation."""
