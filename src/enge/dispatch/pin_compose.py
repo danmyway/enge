@@ -164,6 +164,12 @@ def fetch_data_from_url(url):
     try:
         response = http_get(url, timeout=REQUEST_TIMEOUT_DEFAULT)
         response.raise_for_status()  # Raises HTTPError for bad responses
+    except requests.exceptions.ConnectionError as e:
+        LOGGER.debug(f"Connection error accessing {url}: {e}")
+        raise NetworkError(
+            f"Could not connect to {url}. "
+            "Please verify that you are connected to the VPN."
+        ) from e
     except requests.exceptions.RequestException as e:
         raise NetworkError(f"Error accessing {url}: {e}") from e
 
