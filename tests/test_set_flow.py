@@ -792,8 +792,8 @@ class TestManifestDispatchContextNonCollapse(unittest.TestCase):
 
             resolver = self._resolver_stub()
             responses = [
-                MagicMock(json=lambda: {"id": "task-alpha"}),
-                MagicMock(json=lambda: {"id": "task-beta"}),
+                MagicMock(status_code=200, json=lambda: {"id": "task-alpha"}),
+                MagicMock(status_code=200, json=lambda: {"id": "task-beta"}),
             ]
 
             with (
@@ -956,7 +956,9 @@ class TestManifestRecordsDispatchedTestNames(unittest.TestCase):
                 ),
                 patch(
                     "enge.dispatch.tf_send_request.http_post",
-                    return_value=MagicMock(json=lambda: {"id": "task-alpha"}),
+                    return_value=MagicMock(
+                        status_code=200, json=lambda: {"id": "task-alpha"}
+                    ),
                 ) as mock_post,
             ):
                 result = process_request_spec(
