@@ -174,7 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description="Send requests to and get results back from Testing Farm conveniently.",
-        formatter_class=argparse.RawTextHelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[common],
     )
 
@@ -186,7 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dispatch a job to the Testing Farm API endpoint.",
         description="Send requests to Testing Farm conveniently.",
         parents=[common],
-        formatter_class=argparse.RawTextHelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
             "  enge test -s 9.7 -T tier0                           # compose build\n"
@@ -435,10 +435,10 @@ def build_parser() -> argparse.ArgumentParser:
     report = subparsers.add_parser(
         "report",
         help="Report results for requested tasks.",
-        description="Parse task IDs, Testing Farm artifact URLs, "
-        "or Testing Farm API request URLs from multiple sources.",
+        description="Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs\n"
+        "from multiple sources.",
         parents=[common],
-        formatter_class=argparse.RawTextHelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
             "  enge report                                          # report latest run\n"
@@ -577,14 +577,14 @@ def build_parser() -> argparse.ArgumentParser:
     compare = subparsers.add_parser(
         "compare",
         help="Compare results.json caches across runs, with a consolidated column.",
-        description="Read cached results.json data (see 'enge report') and "
-        "build a comparison table across runs, one column per execution "
-        "plus an always-present consolidated column.",
+        description="Read cached results.json data (see 'enge report') and build a comparison\n"
+        "table across runs, one column per execution plus an always-present\n"
+        "consolidated column.",
         parents=[common],
-        formatter_class=argparse.RawTextHelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  enge compare --tag regression                       # compare all regression-tagged runs, one table per tier\n"
+            "  enge compare --tag regression                        # all tagged runs, one table per tier\n"
             "  enge compare --set smoke --tier tier0 --show-tests   # detailed test view\n"
             "  enge compare --run <run_id> --tier tier1             # single run is enough on its own\n"
             "  enge compare --splitarch --tier tier1                # one table per (tier, arch)\n"
