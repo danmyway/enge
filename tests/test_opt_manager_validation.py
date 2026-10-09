@@ -20,6 +20,7 @@ Additional surprising behaviors pinned here:
 """
 
 import copy
+import logging
 import unittest
 from unittest.mock import patch
 
@@ -27,6 +28,8 @@ from enge.utils.app_context import AppContext
 from enge.utils.errors import ConfigurationError, ValidationError
 from enge.utils.opt_manager import ParsedOpts
 from enge.utils.arg_parser import get_arguments
+
+from tests._helpers import captured_logs, matching
 
 
 # ---------------------------------------------------------------------------
@@ -240,19 +243,21 @@ class TestOptionDependencies(unittest.TestCase):
         self.assertIn("Option dependency", str(ctx.exception))
 
     def test_unknown_tier_raises_with_available_tiers_listed(self):
-        # Pin #4 flipped: detail lines ("Tier 'tier99' not found. Available:
-        # [...]") are now included in the exception message itself (joined),
-        # in addition to the CRITICAL log output which is unchanged.
+        # Pin #4 flipped twice: the detail ("Tier 'tier99' not found.
+        # Available: [...]") lives only in the exception message (DX-15,
+        # Q-DX15' (a)); the validator no longer logs it, so main() prints it
+        # once.
         po = _make_partial_opts(
             cli_args=get_arguments(
                 args=["test", "-s", "9.7", "-T", "tier99", "--arch", "x86_64"]
             )
         )
-        with self.assertLogs("enge.utils.opt_manager", level="CRITICAL") as log:
+        with captured_logs("enge.utils.opt_manager") as records:
             with self.assertRaises(ValidationError) as ctx:
                 po._validate_option_dependencies()
-        self.assertTrue(any("tier99" in m for m in log.output))
         self.assertIn("tier99", str(ctx.exception))
+        self.assertEqual(matching(records, "Tier 'tier99' not found", level=None), [])
+        self.assertEqual([r for r in records if r.levelno >= logging.ERROR], [])
 
     def test_nonexistent_set_raises_validation_error(self):
         po = _make_partial_opts(
