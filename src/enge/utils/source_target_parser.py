@@ -115,7 +115,7 @@ def _parse_cloud_image_source(
     # 1. Alias lookup (e.g., "alma97" -> "AlmaLinux OS 9.7.20251118")
     if spec in cloud_image_aliases:
         base_name = str(cloud_image_aliases[spec]).strip()
-        LOGGER.debug(f"Resolved AMI alias '{spec}' to: {base_name}")
+        LOGGER.debug(f"Resolved cloud image alias '{spec}' to: {base_name}")
 
     if base_name is None:
         # 2. Direct AMI name: strip arch suffix if present, then try regex
@@ -128,7 +128,7 @@ def _parse_cloud_image_source(
             major = int(match.group(1))
             minor = int(match.group(2))
             LOGGER.debug(
-                f"Parsed {os_type.title()} Linux AMI spec '{spec}' as: "
+                f"Parsed {os_type.title()} Linux cloud image spec '{spec}' as: "
                 f"{base_name} (major={major}, minor={minor})"
             )
             return {
@@ -145,8 +145,8 @@ def _parse_cloud_image_source(
     # If the alias resolved but didn't match any AMI pattern, fail with a clear message
     if spec in cloud_image_aliases:
         raise ValueError(
-            f"AMI alias '{spec}' resolved to '{base_name}' which does not match "
-            f"any known AMI name pattern (Alma Linux, Rocky Linux or Oracle Linux)"
+            f"Cloud image alias '{spec}' resolved to '{base_name}' which does not match "
+            f"any known cloud image name pattern (Alma Linux, Rocky Linux or Oracle Linux)"
         )
 
     return None
@@ -185,7 +185,7 @@ def validate_cloud_image_architectures(
     if invalid:
         raise ValidationError(
             f"Architecture(s) {', '.join(sorted(invalid))} not available for "
-            f"{source_spec['os_type'].title()} Linux AMI sources. "
+            f"{source_spec['os_type'].title()} Linux cloud image sources. "
             f"Supported: {', '.join(sorted(supported))}"
         )
 
