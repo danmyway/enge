@@ -23,6 +23,7 @@ Surprising behaviors pinned (see final summary in commit message / PR):
 """
 
 import copy
+import logging
 import os
 import unittest
 from argparse import Namespace
@@ -33,6 +34,8 @@ from enge.utils.errors import ConfigurationError, ValidationError
 from enge.utils.opt_manager import ParsedOpts, TestingFarmEndpoint
 from enge.utils.arg_parser import get_arguments
 from enge.utils.source_target_parser import resolve_effective_values
+
+from tests._helpers import captured_logs, matching
 
 
 # ---------------------------------------------------------------------------
@@ -325,16 +328,23 @@ class TestOperationalDefaults(unittest.TestCase):
         po._validate_operational_defaults()  # must not raise
 
     def test_missing_common_section_raises_configuration_error(self):
-        # Pin #4 flipped: detail lines are now included in the exception
-        # message itself (joined), not only in CRITICAL log output.
+        # Pin #4 flipped twice: the detail lives only in the exception
+        # message (DX-15, Q-DX15' (a)); the validator no longer logs it, so
+        # main() prints it once.  The "default configuration file" sentence
+        # moved from a CRITICAL log line into the exception text.
         cfg = copy.deepcopy(MINIMAL_CONFIG)
         del cfg["common"]
         po = _make_partial_opts(config=cfg)
-        with self.assertLogs("enge.utils.opt_manager", level="CRITICAL") as log:
+        with captured_logs("enge.utils.opt_manager") as records:
             with self.assertRaises(ConfigurationError) as ctx:
                 po._validate_operational_defaults()
-        self.assertTrue(any("common" in m.lower() for m in log.output))
         self.assertIn("common", str(ctx.exception).lower())
+        self.assertIn(
+            "This indicates a problem with the default configuration file.",
+            str(ctx.exception),
+        )
+        self.assertEqual(matching(records, "[common]", level=None), [])
+        self.assertEqual([r for r in records if r.levelno >= logging.ERROR], [])
 
     def test_empty_string_key_no_longer_raises_configuration_error(self):
         # Pin #6 flipped: "" is now treated as absent at merge time so the
@@ -493,18 +503,22 @@ class TestStaticConfiguration(unittest.TestCase):
         po._validate_static_configuration()  # must not raise
 
     def test_test_action_without_cli_or_config_arch_raises(self):
-        # Pin #4 flipped: the per-field detail ("No architectures configured...")
-        # is now included in the exception message itself, in addition to the
-        # CRITICAL log output which is unchanged.
+        # Pin #4 flipped twice: the per-field detail ("No architectures
+        # configured...") lives only in the exception message (DX-15,
+        # Q-DX15' (a)); the validator no longer logs it, so main() prints it
+        # once.
         cfg = copy.deepcopy(MINIMAL_CONFIG)
         # No architectures anywhere; no sets
         cli = get_arguments(args=["test", "-s", "9.7", "-T", "tier0"])  # no --arch
         po = _make_partial_opts(config=cfg, cli_args=cli)
-        with self.assertLogs("enge.utils.opt_manager", level="CRITICAL") as log:
+        with captured_logs("enge.utils.opt_manager") as records:
             with self.assertRaises(ConfigurationError) as ctx:
                 po._validate_static_configuration()
-        self.assertTrue(any("architectures" in m.lower() for m in log.output))
         self.assertIn("architectures", str(ctx.exception).lower())
+        self.assertEqual(
+            matching(records, "No architectures configured", level=None), []
+        )
+        self.assertEqual([r for r in records if r.levelno >= logging.ERROR], [])
 
     def test_test_action_with_sets_bypasses_arch_requirement(self):
         # When using --set, per-set architectures are expected; no top-level arch needed.
