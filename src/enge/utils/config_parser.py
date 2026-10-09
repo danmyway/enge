@@ -86,7 +86,7 @@ def load_default_config(
         if override_path:
             override_cfg = _safe_load_toml(override_path)
             if override_cfg:
-                LOGGER.info(
+                LOGGER.debug(
                     f"Using user-defined default configuration at {override_path}"
                 )
                 merged = merge_configs(merged, override_cfg)
@@ -241,7 +241,7 @@ def _load_layered_config(paths: Union[List[str], List[Path]]) -> Dict[str, Any]:
                 with open(path, "rb") as f:
                     user_config = tomllib.load(f)
 
-                LOGGER.info(f"Successfully loaded configuration from: {path}")
+                LOGGER.debug(f"Successfully loaded configuration from: {path}")
                 loaded_user_path = path
                 break
 
