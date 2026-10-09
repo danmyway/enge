@@ -257,15 +257,10 @@ class ParsedOpts:
                     )
 
         if errors:
-            logger.critical("Operational defaults validation failed:")
-            for error in errors:
-                logger.critical(f"  - {error}")
-            logger.critical(
-                "This indicates a problem with the default configuration file."
-            )
             detail = "\n".join(f"  - {e}" for e in errors)
             raise ConfigurationError(
-                f"Operational defaults validation failed:\n{detail}"
+                f"Operational defaults validation failed:\n{detail}\n"
+                "This indicates a problem with the default configuration file."
             )
 
     def _validate_required_config(self):
@@ -408,9 +403,6 @@ class ParsedOpts:
                 pass
 
             if errors:
-                logger.critical("Required configuration validation failed:")
-                for error in errors:
-                    logger.critical(f"  - {error}")
                 detail = "\n".join(f"  - {e}" for e in errors)
                 raise ConfigurationError(f"Required configuration missing:\n{detail}")
 
@@ -531,9 +523,6 @@ class ParsedOpts:
                         errors.append("All architectures must be non-empty strings.")
 
         if errors:
-            logger.critical("Static configuration validation failed:")
-            for error in errors:
-                logger.critical(f"  - {error}")
             detail = "\n".join(f"  - {e}" for e in errors)
             raise ConfigurationError(f"Static configuration invalid:\n{detail}")
 
@@ -640,9 +629,6 @@ class ParsedOpts:
                     pass
 
         if errors:
-            logger.critical("Option dependency validation failed:")
-            for error in errors:
-                logger.critical(f"  - {error}")
             detail = "\n".join(f"  - {e}" for e in errors)
             raise ValidationError(f"Option dependency validation failed:\n{detail}")
 
