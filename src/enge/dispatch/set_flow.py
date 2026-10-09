@@ -24,6 +24,7 @@ from enge.utils.globals import (
     TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX,
     RP_COMPATIBLE_EVENT,
 )
+from enge.utils.errors import SubmissionError
 from enge.utils.manifest import split_test_filter
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.dispatch.artifacts import ArtifactResolver
@@ -503,7 +504,17 @@ def _send_and_collect(
     submit_test.compact_output = output_format != "json"
     submit_test.silent_output = output_format == "json"
     req_header, req_payload = submit_test.build_payload()
-    submit_test.send_request(req_payload, req_header)
+    try:
+        submit_test.send_request(req_payload, req_header)
+    except SubmissionError as e:
+        # send_request already logged it at ERROR; no second record here.
+        return {
+            "status": "failed",
+            "set_name": spec.set_name,
+            "tier": spec.tier,
+            "arch": spec.arch,
+            "error": str(e),
+        }
 
     task_id = None
     if submit_test.log_artifact_url:

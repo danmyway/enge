@@ -14,10 +14,14 @@ from enge.dispatch.pin_compose import repin_compose
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.report.__main__ import parse_request_xunit
 from enge.utils.task_resolver import parse_tasks_with_map
-from enge.utils.errors import ValidationError
+from enge.utils.errors import SubmissionError, ValidationError
 from enge.utils.manifest import ManifestReader, split_test_filter
 from enge.utils.app_context import AppContext
-from enge.utils.globals import REQUEST_TIMEOUT_DEFAULT, RP_COMPATIBLE_EVENT
+from enge.utils.globals import (
+    REQUEST_TIMEOUT_DEFAULT,
+    RP_COMPATIBLE_EVENT,
+    ExitCode,
+)
 from enge.utils.console import console
 
 logger = logging.getLogger(__name__)
@@ -959,6 +963,7 @@ def main(ctx: AppContext):
     )
 
     manifest_flushed = False
+    failed_requests = 0
 
     for i, payload in enumerate(jobs.rerun_payloads):
         original_uuid = payload.pop("_original_uuid", None)
@@ -1066,7 +1071,13 @@ def main(ctx: AppContext):
 
         submit.populate_from_request_data(request_data)
 
-        submit.send_request(payload, req_header)
+        try:
+            submit.send_request(payload, req_header)
+        except SubmissionError:
+            # Already logged by send_request; the remaining payloads are
+            # still sent.
+            failed_requests += 1
+            continue
 
         task_id = None
         if submit.log_artifact_url:
@@ -1108,3 +1119,10 @@ def main(ctx: AppContext):
     if not is_dryrun and manifest_flushed:
         logger.info(f"Run ID: {manifest_writer.run_id}")
         logger.info(f"Report with: enge report --run {manifest_writer.run_id}")
+
+    if failed_requests:
+        if failed_requests == len(jobs.rerun_payloads):
+            logger.critical("No requests were successfully submitted!")
+            return ExitCode.EXCEPTION
+        logger.warning(f"{failed_requests} requests failed")
+        return ExitCode.TEST_FAILURE

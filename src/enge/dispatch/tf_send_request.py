@@ -2,11 +2,14 @@
 import json
 import logging
 import time
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, NoReturn
+
+import requests
 
 from enge.utils.http_client import http_get, http_post
 
 from enge.utils import redact_sensitive
+from enge.utils.errors import SubmissionError
 from rich.markup import escape
 from enge.utils.console import console
 from enge.utils.source_target_parser import (
@@ -21,6 +24,8 @@ from enge.utils.globals import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+_BODY_EXCERPT_LIMIT = 300
 
 
 class SubmitTest:
@@ -466,7 +471,33 @@ class SubmitTest:
 
         return self.dispatch_summary
 
+    def _fail(self, message: str) -> NoReturn:
+        """Log a rejected or unconfirmed create once, then raise it."""
+        LOGGER.error(message)
+        raise SubmissionError(message)
+
+    def _body_excerpt(self, response, body) -> str:
+        """A short, single-line, secret-free rendering of a TF reply body."""
+        if isinstance(body, (dict, list)):
+            text = json.dumps(redact_sensitive(body), sort_keys=True)
+        else:
+            text = response.text or ""
+        # A TF error can echo the token under a key redact_sensitive misses.
+        if self.api_key:
+            text = text.replace(self.api_key, "***REDACTED***")
+        text = " ".join(text.split())
+        if not text:
+            return "<empty body>"
+        if len(text) > _BODY_EXCERPT_LIMIT:
+            return f"{text[:_BODY_EXCERPT_LIMIT]} (truncated)"
+        return text
+
     def send_request(self, payload_raw, header):
+        # One SubmitTest serves several requests on rerun: a request that
+        # fails must not leave the previous request's URL and summary behind.
+        self.log_artifact_url = None
+        self.dispatch_summary = None
+
         # Check for dry run first - don't send actual request if dry run is enabled
         if getattr(self.ctx.cli_args, "dryrun", False):
             LOGGER.debug("Dry run mode - skipping actual request to Testing Farm")
@@ -481,23 +512,55 @@ class SubmitTest:
                 headers=header,
                 timeout=REQUEST_TIMEOUT_DEFAULT,
             )
-            task_id = response.json()["id"]
-            self.log_artifact_url = f"{self.log_artifact_base_url}/{task_id}"
-            self.dispatch_summary = self.assess_summary_message()
-            if self.silent_output:
-                pass
-            elif getattr(self.ctx.cli_args, "action", None) != "rerun" and getattr(
-                self.ctx.cli_args, "wait", False
-            ):
-                self._response_watcher(self.log_artifact_url)
-                self.dispatch_summary = None
-            elif self.compact_output:
-                LOGGER.info(
-                    f"Submitted: {self.log_artifact_url}",
-                    extra={"style": "bold green"},
-                )
-            else:
-                print(self.dispatch_summary)
+        except requests.exceptions.RetryError as e:
+            # The create session retries a status only for 429
+            # (utils/http_client._get_create_session), so exhausted retries
+            # mean TF rate-limited every attempt and created nothing.
+            LOGGER.debug(f"Create request retries exhausted: {e!r}")
+            self._fail(
+                "Testing Farm rate-limited the request (HTTP 429) on every "
+                "attempt; it was not created."
+            )
+        except requests.exceptions.RequestException as e:
+            LOGGER.debug(f"Create request failed: {e!r}")
+            self._fail(
+                f"Could not confirm the request with Testing Farm "
+                f"({type(e).__name__}). It may have been created: check "
+                f"Testing Farm before re-dispatching."
+            )
 
-        except KeyError:
-            LOGGER.error(json.dumps(response.json(), indent=2, sort_keys=True))
+        status = response.status_code
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+
+        if not 200 <= status < 300:
+            self._fail(
+                f"Testing Farm rejected the request (HTTP {status}): "
+                f"{self._body_excerpt(response, body)}"
+            )
+
+        task_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(task_id, str) or not task_id:
+            self._fail(
+                f"Testing Farm returned HTTP {status} without a request id: "
+                f"{self._body_excerpt(response, body)}"
+            )
+
+        self.log_artifact_url = f"{self.log_artifact_base_url}/{task_id}"
+        self.dispatch_summary = self.assess_summary_message()
+        if self.silent_output:
+            pass
+        elif getattr(self.ctx.cli_args, "action", None) != "rerun" and getattr(
+            self.ctx.cli_args, "wait", False
+        ):
+            self._response_watcher(self.log_artifact_url)
+            self.dispatch_summary = None
+        elif self.compact_output:
+            LOGGER.info(
+                f"Submitted: {self.log_artifact_url}",
+                extra={"style": "bold green"},
+            )
+        else:
+            print(self.dispatch_summary)
