@@ -1,4 +1,5 @@
 import http.server
+import socket
 import threading
 import time
 import unittest
@@ -202,6 +203,30 @@ class TestRetryPolicyAgainstLocalServer(_SessionResetCase):
             http_post(self._url(server), timeout=5)
 
         self.assertEqual(server.hits.get("POST"), 4)
+
+    def test_post_is_retried_on_connect_failure(self):
+        # A connect error means the request never left the client, so the
+        # create session retries it (connect=3: one try plus three retries).
+        import urllib3.util.connection as urllib3_connection
+
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+
+        attempts = []
+        real_create_connection = urllib3_connection.create_connection
+
+        def counting(address, *args, **kwargs):
+            attempts.append(address)
+            return real_create_connection(address, *args, **kwargs)
+
+        with patch.object(urllib3_connection, "create_connection", counting):
+            with self.assertRaises(requests.exceptions.ConnectionError):
+                http_post(f"http://127.0.0.1:{port}/", timeout=5)
+
+        self.assertEqual(len(attempts), 4)
+        self.assertEqual({a[1] for a in attempts}, {port})
 
     # --- GET/PUT/DELETE: idempotent, retry policy unchanged ---
 
