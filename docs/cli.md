@@ -74,7 +74,8 @@ examples:
 
 ## report
 
-Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs from multiple sources.
+Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs
+from multiple sources.
 
 ### Options
 
@@ -121,7 +122,9 @@ examples:
 
 ## compare
 
-Read cached results.json data (see 'enge report') and build a comparison table across runs, one column per execution plus an always-present consolidated column.
+Read cached results.json data (see 'enge report') and build a comparison
+table across runs, one column per execution plus an always-present
+consolidated column.
 
 ### Options
 
@@ -146,7 +149,7 @@ Read cached results.json data (see 'enge report') and build a comparison table a
 
 ```
 examples:
-  enge compare --tag regression                       # compare all regression-tagged runs, one table per tier
+  enge compare --tag regression                        # all tagged runs, one table per tier
   enge compare --set smoke --tier tier0 --show-tests   # detailed test view
   enge compare --run <run_id> --tier tier1             # single run is enough on its own
   enge compare --splitarch --tier tier1                # one table per (tier, arch)
