@@ -29,15 +29,24 @@ def _brew_ref_type(value):
     return BrewRef(value)
 
 
-def _add_input_source_args(parser: argparse.ArgumentParser) -> None:
+def _add_input_source_args(
+    parser: argparse.ArgumentParser, suppress: bool = False
+) -> None:
     """
     Add common input source arguments (-f/--file, -i/--input)
     to a parser. Used by report, rerun, reportportal, and cancel subcommands.
+
+    Set *suppress* on a parser nested under one that declares the same
+    dests (the ``reportportal`` leaves): the real default then lives only on
+    the outer parser, so an inner default cannot overwrite a value given
+    before the subcommand.
     """
+    default = argparse.SUPPRESS if suppress else None
     parser.add_argument(
         "-f",
         "--file",
         action="append",
+        default=default,
         metavar="FILE",
         help="Filepath containing request IDs, artifact URLs, or request URLs to parse. "
         "Can be provided multiple times: -f file1 -f ~/file2",
@@ -47,6 +56,7 @@ def _add_input_source_args(parser: argparse.ArgumentParser) -> None:
         "-i",
         "--input",
         action="append",
+        default=default,
         metavar="ID_OR_URL",
         help="Request ID, artifact URL, or request URL to parse from command line. "
         "Can be provided multiple times: -i id1 -i id2",
@@ -54,7 +64,9 @@ def _add_input_source_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_dryrun_arg(
-    parser: argparse.ArgumentParser, help_text: Optional[str] = None
+    parser: argparse.ArgumentParser,
+    help_text: Optional[str] = None,
+    suppress: bool = False,
 ) -> None:
     """
     Add --dryrun argument to a parser.
@@ -62,6 +74,8 @@ def _add_dryrun_arg(
     Args:
         parser: The parser to add the argument to
         help_text: Custom help text. If None, uses a default message.
+        suppress: Declare the argument with ``default=argparse.SUPPRESS``
+            (see ``_add_input_source_args``).
     """
     default_help = (
         "Print the payload that would be sent to Testing Farm without sending it."
@@ -71,21 +85,25 @@ def _add_dryrun_arg(
         "--dry-run",
         "--dryrun",
         action="store_true",
+        default=argparse.SUPPRESS if suppress else False,
         dest="dryrun",
         help=help_text or default_help,
     )
 
 
 def _add_date_filter_args(
-    parser: argparse.ArgumentParser, manifest_utc: bool = False
+    parser: argparse.ArgumentParser,
+    manifest_utc: bool = False,
+    suppress: bool = False,
 ) -> None:
     """Add ``--since`` and ``--until`` date filter arguments to a parser.
 
     Set *manifest_utc* for the subcommands that select manifests by their
     UTC ``created_at`` (report, compare, rerun, cancel); the
     ``reportportal`` parsers filter in local time and keep the generic
-    wording.
+    wording. Set *suppress* as for ``_add_input_source_args``.
     """
+    default = argparse.SUPPRESS if suppress else None
     if manifest_utc:
         since_help = (
             "Only consider runs created on or after DATE, in UTC "
@@ -106,8 +124,8 @@ def _add_date_filter_args(
             "Only consider items from on or before DATE "
             "(YYYY-MM-DD or relative: 6h, 3d, 2w, 1m, 1y)."
         )
-    parser.add_argument("--since", metavar="DATE", help=since_help)
-    parser.add_argument("--until", metavar="DATE", help=until_help)
+    parser.add_argument("--since", metavar="DATE", default=default, help=since_help)
+    parser.add_argument("--until", metavar="DATE", default=default, help=until_help)
 
 
 def _add_format_arg(parser: argparse.ArgumentParser, choices=None) -> None:
@@ -147,6 +165,37 @@ def _add_tagging_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _global_args_parent(suppress: bool = False) -> argparse.ArgumentParser:
+    """Build the parent parser holding the global ``-c``, ``-v`` and ``-d``.
+
+    With *suppress* every default is ``argparse.SUPPRESS``, so the arguments
+    parse exactly as before but leave the namespace untouched unless the user
+    passed them. Use the real-default parent on the root parser only.
+    """
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument(
+        "-c",
+        "--config",
+        default=argparse.SUPPRESS if suppress else None,
+        help="Custom path to the config file.",
+    )
+    parent.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=argparse.SUPPRESS if suppress else 0,
+        help="Increase output verbosity. -v for verbose, -vv for full debug.",
+    )
+    parent.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        default=argparse.SUPPRESS if suppress else False,
+        help=argparse.SUPPRESS,
+    )
+    return parent
+
+
 def build_parser() -> argparse.ArgumentParser:
     """
     Build the enge command-line argument parser tree.
@@ -155,22 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
         argparse.ArgumentParser: The fully constructed parser, including
         all subcommands and subparsers.
     """
-    # Global arguments
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("-c", "--config", help="Custom path to the config file.")
-    common.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        help="Increase output verbosity. -v for verbose, -vv for full debug.",
-    )
-    common.add_argument(
-        "-d",
-        "--debug",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
+    # Global arguments. argparse copies every key of a subparser's namespace
+    # onto its parent's, so a subparser that redeclares these with real
+    # defaults would overwrite a value given before the subcommand. The root
+    # parser owns the real defaults; every subparser gets the SUPPRESS copy.
+    common = _global_args_parent()
+    common_sub = _global_args_parent(suppress=True)
 
     parser = argparse.ArgumentParser(
         description="Send requests to and get results back from Testing Farm conveniently.",
@@ -185,7 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
         "test",
         help="Dispatch a job to the Testing Farm API endpoint.",
         description="Send requests to Testing Farm conveniently.",
-        parents=[common],
+        parents=[common_sub],
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
@@ -437,7 +476,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Report results for requested tasks.",
         description="Parse task IDs, Testing Farm artifact URLs, or Testing Farm API request URLs\n"
         "from multiple sources.",
-        parents=[common],
+        parents=[common_sub],
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
@@ -580,7 +619,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Read cached results.json data (see 'enge report') and build a comparison\n"
         "table across runs, one column per execution plus an always-present\n"
         "consolidated column.",
-        parents=[common],
+        parents=[common_sub],
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
@@ -684,7 +723,7 @@ def build_parser() -> argparse.ArgumentParser:
         "rerun",
         help="Parse given tasks and rerun specified jobs.",
         description="Rerun failed or errored tasks from previous runs.",
-        parents=[common],
+        parents=[common_sub],
     )
 
     # Input sources
@@ -754,7 +793,7 @@ def build_parser() -> argparse.ArgumentParser:
         "reportportal",
         help="Manage ReportPortal launches.",
         description="Create and manage ReportPortal launches through the ReportPortal API.",
-        parents=[common],
+        parents=[common_sub],
     )
 
     rp_subparsers = reportportal.add_subparsers(dest="rp_subcommand")
@@ -763,7 +802,7 @@ def build_parser() -> argparse.ArgumentParser:
     rp_finish = rp_subparsers.add_parser(
         "finish",
         help="Finish ReportPortal launches by resolving task state.",
-        parents=[common],
+        parents=[common_sub],
     )
     rp_finish.add_argument(
         "--enrich",
@@ -774,70 +813,77 @@ def build_parser() -> argparse.ArgumentParser:
     rp_finish.add_argument(
         "--all",
         action="store_true",
+        default=argparse.SUPPRESS,
         dest="all_launches",
         help="Operate on all IN_PROGRESS launches (no task input needed).",
     )
-    _add_input_source_args(rp_finish)
-    _add_date_filter_args(rp_finish)
+    _add_input_source_args(rp_finish, suppress=True)
+    _add_date_filter_args(rp_finish, suppress=True)
     _add_dryrun_arg(
         rp_finish,
         help_text="Show what would be sent to ReportPortal without actually sending it.",
+        suppress=True,
     )
 
     # --- enrich ---
     rp_enrich = rp_subparsers.add_parser(
         "enrich",
         help="Enrich launches with Testing Farm artifact logs.",
-        parents=[common],
+        parents=[common_sub],
     )
     rp_enrich.add_argument(
         "--all",
         action="store_true",
+        default=argparse.SUPPRESS,
         dest="all_launches",
         help="Enrich all launches (any status, no task input needed).",
     )
-    _add_input_source_args(rp_enrich)
-    _add_date_filter_args(rp_enrich)
+    _add_input_source_args(rp_enrich, suppress=True)
+    _add_date_filter_args(rp_enrich, suppress=True)
     _add_dryrun_arg(
         rp_enrich,
         help_text="Show what would be sent to ReportPortal without actually sending it.",
+        suppress=True,
     )
 
     # --- delete-logs ---
     rp_delete_logs = rp_subparsers.add_parser(
         "delete-logs",
         help="Delete all log entries from ReportPortal launches.",
-        parents=[common],
+        parents=[common_sub],
     )
     rp_delete_logs.add_argument(
         "--all",
         action="store_true",
+        default=argparse.SUPPRESS,
         dest="all_launches",
         help="Delete logs from all IN_PROGRESS launches.",
     )
-    _add_input_source_args(rp_delete_logs)
+    _add_input_source_args(rp_delete_logs, suppress=True)
     _add_dryrun_arg(
         rp_delete_logs,
         help_text="Show which logs would be deleted without actually deleting them.",
+        suppress=True,
     )
 
     # --- delete-stale ---
     rp_delete_stale = rp_subparsers.add_parser(
         "delete-stale",
         help="Delete stale launches (stopped/interrupted with no test items).",
-        parents=[common],
+        parents=[common_sub],
     )
-    _add_date_filter_args(rp_delete_stale)
+    _add_date_filter_args(rp_delete_stale, suppress=True)
     _add_dryrun_arg(
         rp_delete_stale,
         help_text="Show which launches would be deleted without actually deleting them.",
+        suppress=True,
     )
 
     # --- check ---
     rp_subparsers.add_parser(
         "check",
         help="Test ReportPortal connection and show sample data.",
-        parents=[common],
+        parents=[common_sub],
     )
 
     # --- Deprecated flag-verb aliases (hidden from help) ---
@@ -880,7 +926,7 @@ def build_parser() -> argparse.ArgumentParser:
         "cancel",
         help="Cancel Testing Farm tasks.",
         description="Cancel running or queued Testing Farm tasks by sending DELETE requests.",
-        parents=[common],
+        parents=[common_sub],
     )
 
     # Input sources

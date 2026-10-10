@@ -34,7 +34,11 @@ def _option_header(action: argparse.Action) -> str:
 
 
 def _default_note(action: argparse.Action):
-    if action.nargs == 0 or action.default is None:
+    if (
+        action.nargs == 0
+        or action.default is None
+        or action.default is argparse.SUPPRESS
+    ):
         return None
     return f" (default: `{action.default}`)"
 
