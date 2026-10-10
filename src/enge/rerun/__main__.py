@@ -119,6 +119,20 @@ def _build_parent_request_index(
     }
 
 
+def _check_candidate_name(field_name: str, name: Any) -> None:
+    """A plan or test name as ``RerunCandidate`` takes it: verbatim, non-empty,
+    without the ``$`` anchor ``RerunJobs._register`` appends itself."""
+    if not isinstance(name, str) or not name:
+        raise ValueError(
+            f"RerunCandidate.{field_name} names must be non-empty str, got {name!r}"
+        )
+    if name.endswith("$"):
+        raise ValueError(
+            f"RerunCandidate.{field_name} name {name!r} must not end with '$'; "
+            "the anchor is added on registration"
+        )
+
+
 @dataclass(frozen=True)
 class RerunCandidate:
     """One task the caller has already decided to rerun, and how.
@@ -133,6 +147,12 @@ class RerunCandidate:
     source_compose: the compose to report in the qualifying table /
         processed tuple; may be None.
     source_path: the -f file the task was read from; may be None.
+
+    Construction normalizes, then validates (``ValueError`` naming the
+    field): ``plans`` / ``undefined_plans`` become tuples, ``tests_by_plan``
+    becomes a fresh dict of tuples. Candidates are hashable; mutating
+    ``tests_by_plan`` after construction is unsupported (it would change
+    the hash).
     """
 
     task_id: str
@@ -141,6 +161,65 @@ class RerunCandidate:
     undefined_plans: Tuple[str, ...] = ()
     source_compose: Optional[str] = None
     source_path: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        plans = tuple(self.plans)
+        undefined_plans = tuple(self.undefined_plans)
+        tests_by_plan = {
+            plan: tuple(tests) for plan, tests in dict(self.tests_by_plan).items()
+        }
+        object.__setattr__(self, "plans", plans)
+        object.__setattr__(self, "undefined_plans", undefined_plans)
+        object.__setattr__(self, "tests_by_plan", tests_by_plan)
+
+        if not isinstance(self.task_id, str) or not self.task_id:
+            raise ValueError(
+                f"RerunCandidate.task_id must be a non-empty str, got {self.task_id!r}"
+            )
+
+        for plan in plans:
+            _check_candidate_name("plans", plan)
+        if len(set(plans)) != len(plans):
+            raise ValueError(f"RerunCandidate.plans must not repeat a plan: {plans!r}")
+
+        if not plans:
+            if tests_by_plan:
+                raise ValueError(
+                    "RerunCandidate.tests_by_plan must be empty in the fallback "
+                    f"shape (plans=()), got {tests_by_plan!r}"
+                )
+            if undefined_plans:
+                raise ValueError(
+                    "RerunCandidate.undefined_plans must be empty in the fallback "
+                    f"shape (plans=()), got {undefined_plans!r}"
+                )
+
+        for plan, tests in tests_by_plan.items():
+            if plan not in plans:
+                raise ValueError(
+                    f"RerunCandidate.tests_by_plan key {plan!r} is not in plans"
+                )
+            for test in tests:
+                _check_candidate_name("tests_by_plan", test)
+
+        for plan in undefined_plans:
+            _check_candidate_name("undefined_plans", plan)
+            if plan not in plans:
+                raise ValueError(
+                    f"RerunCandidate.undefined_plans entry {plan!r} is not in plans"
+                )
+
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.task_id,
+                self.plans,
+                tuple(sorted(self.tests_by_plan.items())),
+                self.undefined_plans,
+                self.source_compose,
+                self.source_path,
+            )
+        )
 
 
 class RerunJobs:
