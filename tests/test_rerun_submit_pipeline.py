@@ -805,5 +805,69 @@ class TestUndefinedOnBothIntakePaths(SubmitHarness, unittest.TestCase):
         self.assertEqual(cand_payloads, cli_payloads)
 
 
+class TestRerunCandidateValidation(unittest.TestCase):
+    """V1-V8 (L19): RerunCandidate refuses malformed input and is hashable."""
+
+    def _make(self, **kwargs):
+        from enge.rerun.__main__ import RerunCandidate
+
+        kwargs.setdefault("task_id", "uuid-a")
+        return RerunCandidate(**kwargs)
+
+    def test_v1_empty_task_id_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "task_id"):
+            self._make(task_id="")
+
+    def test_v2_plan_ending_in_dollar_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "plans"):
+            self._make(plans=("/plan/a$",))
+
+    def test_v3_tests_by_plan_key_must_be_a_plan(self):
+        with self.assertRaisesRegex(ValueError, "tests_by_plan"):
+            self._make(plans=("/plan/a",), tests_by_plan={"/plan/other": ("t",)})
+
+    def test_v4_undefined_plan_must_be_a_plan(self):
+        with self.assertRaisesRegex(ValueError, "undefined_plans"):
+            self._make(plans=("/plan/a",), undefined_plans=("/plan/other",))
+
+    def test_v5_fallback_shape_takes_no_tests(self):
+        # Rule 3 (keys must be plans) also rejects this input, so the message
+        # must name the fallback shape for the test to guard rule 5 itself.
+        with self.assertRaisesRegex(ValueError, "tests_by_plan.*fallback"):
+            self._make(plans=(), tests_by_plan={"/plan/a": ("t",)})
+
+    def test_v6_duplicate_plan_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "plans"):
+            self._make(plans=("/plan/a", "/plan/a"))
+
+    def test_v7_equal_candidates_hash_equal(self):
+        def build():
+            return self._make(
+                plans=("/plan/a", "/plan/b"),
+                tests_by_plan={"/plan/a": ("t1", "t2")},
+                undefined_plans=("/plan/b",),
+                source_compose="RHEL-9.0",
+                source_path="/archive/a.json",
+            )
+
+        first, second = build(), build()
+        self.assertEqual(first, second)
+        self.assertEqual(hash(first), hash(second))
+        self.assertEqual(len({first, second}), 1)
+
+    def test_v8_lists_are_normalised_to_tuples(self):
+        candidate = self._make(
+            plans=["/plan/a", "/plan/b"],
+            tests_by_plan={"/plan/a": ["t1", "t2"]},
+            undefined_plans=["/plan/b"],
+        )
+
+        self.assertEqual(candidate.plans, ("/plan/a", "/plan/b"))
+        self.assertEqual(candidate.undefined_plans, ("/plan/b",))
+        self.assertEqual(candidate.tests_by_plan, {"/plan/a": ("t1", "t2")})
+        self.assertIsInstance(candidate.tests_by_plan["/plan/a"], tuple)
+        self.assertIsInstance(hash(candidate), int)
+
+
 if __name__ == "__main__":
     unittest.main()
