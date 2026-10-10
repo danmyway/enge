@@ -869,5 +869,170 @@ class TestRerunCandidateValidation(unittest.TestCase):
         self.assertIsInstance(hash(candidate), int)
 
 
+class TestSubmitRerunCallable(SubmitHarness, unittest.TestCase):
+    """S1-S6: `submit_rerun(jobs, ctx) -> RerunSubmission`, and `main` over it."""
+
+    def _cli_submit(self, parsed, replies, **kwargs):
+        """Qualify via the CLI path, then call `submit_rerun` and nothing else."""
+        from enge.rerun.__main__ import RerunJobs, submit_rerun
+
+        def call(run, ctx):
+            run.jobs = RerunJobs(ctx)
+            run.jobs.qualify_results()
+            return submit_rerun(run.jobs, ctx)
+
+        kwargs.setdefault("launches", False)
+        return self.script(parsed, replies, call=call, **kwargs)
+
+    def _only_manifest_id(self):
+        paths = self.manifests()
+        self.assertEqual(len(paths), 1, paths)
+        return paths[0].stem
+
+    def test_s1_accepted_returns_run_id_and_counts(self):
+        from enge.rerun.__main__ import RerunSubmission
+
+        run = self._cli_submit(two_failed_tasks(), [_accept("new-1"), _accept("new-2")])
+
+        # The run id is generated, so it is read back from the file it names.
+        run_id = self._only_manifest_id()
+        self.assertEqual(
+            run.value, RerunSubmission(run_id=run_id, payloads=2, failed=0)
+        )
+
+    def test_s2_dry_run_returns_no_run_id(self):
+        from enge.rerun.__main__ import RerunSubmission
+
+        run = self._cli_submit(two_failed_tasks(), [], dryrun=True)
+
+        self.assertEqual(run.value, RerunSubmission(None, 2, 0))
+        self.assertEqual(self.manifests(), [])
+        self.assertEqual(run.post.call_count, 0)
+
+    def test_s3_partial_failure_keeps_run_id_and_counts_failed(self):
+        from enge.rerun.__main__ import RerunSubmission
+
+        run = self._cli_submit(two_failed_tasks(), [_accept("new-1"), _reject()])
+
+        run_id = self._only_manifest_id()
+        self.assertEqual(
+            run.value, RerunSubmission(run_id=run_id, payloads=2, failed=1)
+        )
+
+    def test_s4_all_rejected_returns_no_run_id(self):
+        from enge.rerun.__main__ import RerunSubmission
+
+        run = self._cli_submit(two_failed_tasks(), [_reject(), _reject()])
+
+        self.assertEqual(run.value, RerunSubmission(None, 2, 2))
+        self.assertEqual(self.manifests(), [])
+
+    def test_s5_candidate_path_end_to_end(self):
+        from enge.rerun.__main__ import RerunCandidate, RerunJobs, submit_rerun
+        from enge.utils.manifest import ManifestWriter
+        from enge.utils.ulid import generate_ulid
+
+        parent_id = generate_ulid()
+        parent = ManifestWriter(
+            run_id=parent_id,
+            command="test",
+            argv=["enge", "test"],
+            tags=["nightly"],
+            context={"set": "smoke"},
+        )
+        parent.add_request(UUID_ONE, set_name="smoke", tier="tier0", arch="x86_64")
+        parent.flush(self.runs_dir, self.latest)
+
+        candidate = RerunCandidate(
+            task_id=UUID_ONE,
+            plans=("/plan/failing", "/plan/undef"),
+            tests_by_plan={"/plan/failing": ("broken",)},
+            undefined_plans=("/plan/undef",),
+            source_compose="RHEL-9.0-nightly",
+        )
+
+        def call(run, ctx):
+            run.jobs = RerunJobs(
+                ctx, candidates=[candidate], task_source=f"manifest:{parent_id}"
+            )
+            run.jobs.qualify_candidates()
+            return submit_rerun(run.jobs, ctx)
+
+        run = self.script(
+            undefined_task(),
+            [_accept("new-1"), _accept("new-2")],
+            call=call,
+            launches=False,
+        )
+
+        # The same two bodies the CLI path sends for this task (C3).
+        self.assertEqual(
+            run.posted(),
+            [
+                _post_body(UUID_ONE, "broken$", plan="/plan/failing$|/plan/undef$"),
+                _post_body(UUID_ONE, None, plan="/plan/undef$"),
+            ],
+        )
+        children = [p for p in self.manifests() if p.stem != parent_id]
+        self.assertEqual(len(children), 1)
+        child = json.loads(children[0].read_text())
+        self.assertEqual(child["parent_run_id"], parent_id)
+        self.assertEqual(run.value.run_id, children[0].stem)
+        self.assertEqual((run.value.payloads, run.value.failed), (2, 0))
+        self.assertEqual([r["set"] for r in child["requests"]], ["smoke", "smoke"])
+
+    def test_s6_main_delegates_and_maps_the_result(self):
+        from enge.rerun.__main__ import RerunSubmission, main
+
+        cases = [
+            (
+                RerunSubmission("01ABC", 2, 0),
+                None,
+                [
+                    ("INFO", "Run ID: 01ABC"),
+                    ("INFO", "Report with: enge report --run 01ABC"),
+                ],
+            ),
+            (
+                RerunSubmission(None, 2, 2),
+                ExitCode.EXCEPTION,
+                [("CRITICAL", "No requests were successfully submitted!")],
+            ),
+            (
+                RerunSubmission("01ABC", 2, 1),
+                ExitCode.TEST_FAILURE,
+                [
+                    ("INFO", "Run ID: 01ABC"),
+                    ("INFO", "Report with: enge report --run 01ABC"),
+                    ("WARNING", "1 requests failed"),
+                ],
+            ),
+        ]
+        for result, expected, lines in cases:
+            with self.subTest(result=result):
+                ctx = self.ctx()
+                with (
+                    captured_logs("enge.rerun") as records,
+                    patch("enge.rerun.__main__.RerunJobs") as jobs_cls,
+                    patch(
+                        "enge.rerun.__main__.submit_rerun", return_value=result
+                    ) as submit,
+                ):
+                    value = main(ctx)
+
+                self.assertEqual(value, expected)
+                jobs_cls.assert_called_once_with(ctx)
+                jobs_cls.return_value.qualify_results.assert_called_once_with()
+                submit.assert_called_once_with(jobs_cls.return_value, ctx)
+                self.assertEqual(
+                    [
+                        (r.levelname, r.getMessage())
+                        for r in records
+                        if r.levelno >= logging.INFO
+                    ],
+                    lines,
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
