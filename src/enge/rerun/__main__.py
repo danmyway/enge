@@ -986,15 +986,47 @@ def _create_rerun_launch_for_payload(
             return None
 
 
-def main(ctx: AppContext):
-    """
-    Main function to qualify tasks for re-run, build their re-run payloads,
-    and submit the requests via the Testing Farm API.
-    """
-    jobs = RerunJobs(ctx)
+@dataclass(frozen=True)
+class RerunSubmission:
+    """What ``submit_rerun`` did, for the caller to log and map to an exit code.
 
-    # Qualify tasks for re-run
-    jobs.qualify_results()
+    run_id: the child run_id; None on a dry run, or when no manifest was
+        flushed (nothing was accepted).
+    payloads: the number of payloads attempted.
+    failed: the number whose create request failed.
+    """
+
+    run_id: Optional[str]
+    payloads: int
+    failed: int
+
+
+def submit_rerun(jobs: "RerunJobs", ctx: AppContext) -> RerunSubmission:
+    """Submit an already-qualified ``RerunJobs`` and record the child run.
+
+    ``jobs`` comes from either qualifier (``qualify_results()`` on the CLI
+    path, ``qualify_candidates()`` on the candidate path); neither is called
+    here. Builds the rerun payloads, scrubs them, creates a ReportPortal
+    launch per payload, sends each one through ``SubmitTest`` and writes the
+    child manifest after every accepted request.
+
+    Does not log the ``Run ID:`` / ``Report with:`` lines and does not map
+    failures to exit codes; ``main`` does both from the returned value.
+
+    Reads, besides ``jobs`` and ``ctx.manifest_runs_dir`` /
+    ``ctx.manifest_latest`` / ``ctx.config`` / ``ctx.testing_farm``:
+      * ``ctx.cli_args.dryrun`` -- here, and in ``SubmitTest.send_request``
+        and ``assess_summary_message``;
+      * ``ctx.cli_args.set_tag`` -- ``SubmitTest.__init__``;
+      * ``ctx.cli_args.output_format`` -- ``SubmitTest.assess_summary_message``;
+      * ``ctx.cli_args.action`` and ``.wait`` -- ``SubmitTest.send_request``;
+      * ``ctx.cli_args.rp_launch`` and ``.rp_description`` --
+        ``generate_reportportal_environment_variables`` (the ``cli_args``
+        passed to it below);
+      * ``sys.argv`` -- recorded as the manifest's ``argv``.
+    ``dryrun`` is read from ``ctx.cli_args`` and not taken as a parameter so
+    that this function and ``SubmitTest`` cannot disagree about it.
+    """
 
     # Build re-run payloads (extract data from original requests)
     jobs.build_rerun_payloads(jobs.rerun_uuids)
@@ -1195,13 +1227,32 @@ def main(ctx: AppContext):
             )
             manifest_flushed = True
 
-    if not is_dryrun and manifest_flushed:
-        logger.info(f"Run ID: {manifest_writer.run_id}")
-        logger.info(f"Report with: enge report --run {manifest_writer.run_id}")
+    return RerunSubmission(
+        run_id=manifest_writer.run_id if (not is_dryrun and manifest_flushed) else None,
+        payloads=len(jobs.rerun_payloads),
+        failed=failed_requests,
+    )
 
-    if failed_requests:
-        if failed_requests == len(jobs.rerun_payloads):
+
+def main(ctx: AppContext):
+    """
+    Main function to qualify tasks for re-run, build their re-run payloads,
+    and submit the requests via the Testing Farm API.
+    """
+    jobs = RerunJobs(ctx)
+
+    # Qualify tasks for re-run
+    jobs.qualify_results()
+
+    result = submit_rerun(jobs, ctx)
+
+    if result.run_id:
+        logger.info(f"Run ID: {result.run_id}")
+        logger.info(f"Report with: enge report --run {result.run_id}")
+
+    if result.failed:
+        if result.failed == result.payloads:
             logger.critical("No requests were successfully submitted!")
             return ExitCode.EXCEPTION
-        logger.warning(f"{failed_requests} requests failed")
+        logger.warning(f"{result.failed} requests failed")
         return ExitCode.TEST_FAILURE
