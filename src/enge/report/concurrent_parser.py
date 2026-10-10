@@ -427,12 +427,7 @@ class ConcurrentRequestParser:
                     code = ExitCode.MISSING_RESULTS
 
         except ConnectionError as err:
-            LOGGER.critical("Connection Error")
-            LOGGER.critical(
-                "   There was an issue while attempting to create an API connection."
-            )
-            LOGGER.critical("   Please verify, that you're connected to the VPN")
-            LOGGER.debug(f"   Error details: {err}")
+            LOGGER.debug(f"[{uuid_short}]    Connection error: {err}")
             raise NetworkError(
                 "Failed to fetch XML results due to connection error"
             ) from err
@@ -527,6 +522,7 @@ class ConcurrentRequestParser:
             LOGGER.warning("Please try later or use --wait to wait for them to finish")
 
         # Phase 2: Fetch XML results concurrently (only for non-skipped tasks)
+        connection_failures = 0
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all XML requests
             future_to_task = {
@@ -552,6 +548,8 @@ class ConcurrentRequestParser:
                 except Exception as e:
                     uuid_short = self._get_short_uuid(task.request_uuid)
                     LOGGER.error(f"[{task.request_uuid}] Exception fetching XML: {e}")
+                    if isinstance(e, NetworkError):
+                        connection_failures += 1
                     task.error_message = f"Exception: {e}"
                     _raise_retval(task, ExitCode.MISSING_RESULTS)
                     # Find and update the corresponding task in task_results
@@ -559,6 +557,13 @@ class ConcurrentRequestParser:
                         if original_task.request_uuid == task.request_uuid:
                             task_results[i] = task
                             break
+
+        if connection_failures:
+            LOGGER.warning(
+                f"Could not download results for {connection_failures} task(s): "
+                "the connection failed. "
+                "Please verify that you are connected to the VPN."
+            )
 
         return task_results
 
