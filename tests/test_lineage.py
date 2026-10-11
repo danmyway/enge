@@ -105,6 +105,11 @@ def values(entries: Sequence[Any]) -> str:
     return " ".join(e.value for e in entries)
 
 
+def at(task: TaskEntry, stamp: str) -> TaskEntry:
+    """``task`` with a specific ``dispatched_at`` (``mk`` stamps from a clock)."""
+    return dataclasses.replace(task, dispatched_at=stamp)
+
+
 # --- shared shapes -----------------------------------------------------------
 
 
@@ -591,6 +596,70 @@ class TestErrors(unittest.TestCase):
         idx = LineageIndex(chain_k1())
         with self.assertRaises(ValueError):
             idx.spent("c1", A, S1)
+
+    def test_e8_lineage_requires_a_root(self):
+        from enge.lineage import LineageIndex
+
+        idx = LineageIndex(chain_k1())
+        for tid in ("c1", "c2"):
+            with self.subTest(task_id=tid):
+                with self.assertRaisesRegex(ValueError, "not a lineage root"):
+                    idx.lineage(tid)
+        with self.assertRaises(KeyError):
+            idx.lineage("missing")
+
+    def test_e9_bare_str_test_segments(self):
+        from enge.lineage import LineageIndex
+
+        idx = LineageIndex(chain_k1())
+        self.assertTrue(idx.covers("c1", A, ["t1"]))  # premise: a list works
+        calls = {
+            "covers": lambda: idx.covers("c1", A, "t1"),
+            "spent": lambda: idx.spent("r", A, "t1"),
+            "trajectory": lambda: idx.trajectory("r", A, "t1", tv(A, T1)),
+            "outcome": lambda: idx.outcome("r", A, "t1", tv(A, T1), 2),
+        }
+        for name, call in calls.items():
+            with self.subTest(method=name):
+                with self.assertRaisesRegex(ValueError, "bare str"):
+                    call()
+
+
+# --- O: ordering -------------------------------------------------------------
+
+
+class TestOrdering(unittest.TestCase):
+    def test_o1_roots_ordered_by_time_then_id(self):
+        from enge.lineage import LineageIndex
+
+        idx = LineageIndex(
+            [
+                at(mk("z", "FAILED"), "2026-03-01T00:02:00Z"),
+                at(mk("b", "FAILED"), "2026-03-01T00:00:00Z"),
+                at(mk("a", "FAILED"), "2026-03-01T00:00:00Z"),
+                at(mk("y", "FAILED"), "2026-03-01T00:01:00Z"),
+            ]
+        )
+        self.assertEqual(idx.roots(), ("a", "b", "y", "z"))
+
+    def test_o2_children_ordered_by_time_then_id(self):
+        from enge.lineage import LineageIndex
+
+        root = at(
+            mk("r", "FAILED", [P(A, "FAILED", (T1, "FAILED"))]),
+            "2026-03-01T00:00:00Z",
+        )
+        kids = [
+            at(mk(tid, "FAILED", rerun_of="r", plan=A), stamp)
+            for tid, stamp in (
+                ("late", "2026-03-01T00:09:00Z"),
+                ("tb", "2026-03-01T00:05:00Z"),
+                ("ta", "2026-03-01T00:05:00Z"),
+                ("early", "2026-03-01T00:01:00Z"),
+            )
+        ]
+        idx = LineageIndex([root, *kids])
+        self.assertEqual(ids(idx.children("r")), ("early", "ta", "tb", "late"))
 
 
 # --- P: purity ---------------------------------------------------------------
