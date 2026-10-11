@@ -18,6 +18,8 @@ Coverage
     original filter, nothing recorded) inherits its parent's coverage. The
     child's own ``tests`` filter then applies; ``[]`` and ``None`` (written
     by an enge that predates the field) both mean "no test filter".
+    ``test_segments`` is ``None`` (a plan key) or a non-empty collection of
+    last ``::`` segments; a bare ``str`` is rejected.
 
 Charging
     Attempts spent on a key is the number of child edges in the lineage
@@ -204,8 +206,13 @@ class LineageIndex:
         return tuple(self._children[task_id])
 
     def lineage(self, root_id: str) -> Tuple[LineageTask, ...]:
-        """Every task whose root is ``root_id``, by generation then time."""
-        return tuple(self._members[self._root[root_id]])
+        """Every task whose root is ``root_id``, by generation then time.
+
+        Raises ``ValueError`` when ``root_id`` is not a lineage root; resolve
+        a task to its root with ``root_of`` first.
+        """
+        self._require_root(root_id)
+        return tuple(self._members[root_id])
 
     def _require_root(self, root_id: str) -> None:
         if self._root[root_id] != root_id:
@@ -215,6 +222,11 @@ class LineageIndex:
     def _segments(
         test_segments: Optional[Collection[str]],
     ) -> Optional[Collection[str]]:
+        if isinstance(test_segments, str):
+            raise ValueError(
+                "test_segments must be a collection of str, not a bare str: "
+                f"{test_segments!r}"
+            )
         if test_segments is not None and len(test_segments) == 0:
             raise ValueError("test_segments must be None or non-empty")
         return test_segments
