@@ -362,6 +362,15 @@ class TestTrailingUnparseable(unittest.TestCase):
         self.assertEqual(values(idx.trajectory("r", A, S1, tv(A, T1))), "E F E")
         self.assertIsNone(idx.outcome("r", A, S1, tv(A, T1), 9))
 
+    def test_r2_trailing_unparseable_beats_exhausted(self):
+        # spent == retry_count here, so only the "an uncharged rerun is
+        # still due" rule keeps the lineage open instead of exhausted.
+        from enge.lineage import LineageIndex
+
+        idx = LineageIndex(chain_r1())
+        self.assertEqual(idx.spent("r", A, S1), 1)
+        self.assertIsNone(idx.outcome("r", A, S1, tv(A, T1), 1))
+
     def test_r3_child_of_parsed_parent_with_narrow_filter_covers(self):
         from enge.lineage import LineageIndex
 
