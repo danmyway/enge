@@ -133,6 +133,16 @@ def _check_candidate_name(field_name: str, name: Any) -> None:
         )
 
 
+def _check_not_bare_str(field_name: str, value: Any) -> None:
+    """Refuse a bare ``str`` where a sequence of names is expected: ``tuple()``
+    would silently split it into one-character names."""
+    if isinstance(value, str):
+        raise ValueError(
+            f"RerunCandidate.{field_name} must be a sequence of names, "
+            f"not a bare str: {value!r}"
+        )
+
+
 @dataclass(frozen=True)
 class RerunCandidate:
     """One task the caller has already decided to rerun, and how.
@@ -152,7 +162,8 @@ class RerunCandidate:
     field): ``plans`` / ``undefined_plans`` become tuples, ``tests_by_plan``
     becomes a fresh dict of tuples. Candidates are hashable; mutating
     ``tests_by_plan`` after construction is unsupported (it would change
-    the hash).
+    the hash). A bare ``str`` is refused for ``plans``, ``undefined_plans``
+    and each ``tests_by_plan`` value rather than split into characters.
     """
 
     task_id: str
@@ -163,10 +174,15 @@ class RerunCandidate:
     source_path: Optional[str] = None
 
     def __post_init__(self) -> None:
+        _check_not_bare_str("plans", self.plans)
+        _check_not_bare_str("undefined_plans", self.undefined_plans)
+        raw_tests_by_plan = dict(self.tests_by_plan)
+        for tests in raw_tests_by_plan.values():
+            _check_not_bare_str("tests_by_plan", tests)
         plans = tuple(self.plans)
         undefined_plans = tuple(self.undefined_plans)
         tests_by_plan = {
-            plan: tuple(tests) for plan, tests in dict(self.tests_by_plan).items()
+            plan: tuple(tests) for plan, tests in raw_tests_by_plan.items()
         }
         object.__setattr__(self, "plans", plans)
         object.__setattr__(self, "undefined_plans", undefined_plans)
