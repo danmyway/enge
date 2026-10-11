@@ -149,6 +149,7 @@ def chain_f1() -> List[TaskEntry]:
 
 
 def chain_f2() -> List[TaskEntry]:
+    base = chain_f1()
     c2 = mk(
         "c2",
         "FAILED",
@@ -157,12 +158,13 @@ def chain_f2() -> List[TaskEntry]:
         plan=A,
         tests=["t1"],
     )
-    return chain_f1() + [c2]
+    return base + [c2]
 
 
 def chain_r1() -> List[TaskEntry]:
+    base = chain_f1()
     c2u = mk("c2u", "ERROR", [], rerun_of="c1", plan=A, tests=["t1"])
-    return chain_f1() + [c2u]
+    return base + [c2u]
 
 
 def chain_d1() -> List[TaskEntry]:
@@ -374,6 +376,7 @@ class TestInheritedCoverage(unittest.TestCase):
     def setUp(self):
         from enge.lineage import LineageIndex
 
+        base = chain_r1()
         g = mk(
             "g",
             "PASSED",
@@ -382,7 +385,7 @@ class TestInheritedCoverage(unittest.TestCase):
             plan=A,
             tests=["t1"],
         )
-        self.idx = LineageIndex(chain_r1() + [g])
+        self.idx = LineageIndex(base + [g])
 
     def test_n1_child_of_unparseable_inherits_parent_coverage(self):
         self.assertTrue(self.idx.covers("g", A, S1))
