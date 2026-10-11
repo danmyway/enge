@@ -278,6 +278,17 @@ def get_artifact_info(compose_name: str, ctx) -> List[Dict[str, Any]]:
         raise ValidationError("Failed to get artifact information") from e
 
 
+def _failed_label(result: Dict[str, Any]) -> str:
+    """set/tier/arch of a failed request, skipping the parts it does not have."""
+    parts = [result.get(k) for k in ("set_name", "tier", "arch")]
+    return "/".join(str(p) for p in parts if p) or "?"
+
+
+def _gitlab_cell(value: Any) -> str:
+    """One GitLab markdown table cell: a single line, with '|' escaped."""
+    return " ".join(str(value).splitlines()).replace("|", "\\|")
+
+
 def _print_dispatch_summaries(
     results: List[Dict[str, Any]], output_format: str
 ) -> None:
@@ -313,14 +324,15 @@ def _print_dispatch_summaries(
                 cell = r["results_url"]
             else:
                 cell = "dry run"
-            print(f"| {set_name} | {tier} | {arch} | {cell} |")
+            print(
+                f"| {_gitlab_cell(set_name)} | {_gitlab_cell(tier)} "
+                f"| {_gitlab_cell(arch)} | {_gitlab_cell(cell)} |"
+            )
     else:
         for r in results:
             if r.get("status") == "failed":
                 console.print(
-                    escape(
-                        f"FAILED  {r.get('set_name', '?')}/{r.get('tier', '?')}/{r.get('arch', '?')}: {r.get('error', 'unknown')}"
-                    ),
+                    escape(f"FAILED  {_failed_label(r)}: {r.get('error', 'unknown')}"),
                     style="error",
                 )
             else:
