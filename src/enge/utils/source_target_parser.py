@@ -906,38 +906,33 @@ def parse_source_target_config(
         f"Parsing source: {source}, target: {target or 'the default will be derived'}"
     )
 
-    try:
-        source_spec = parse_compose_spec(source, config)
-        LOGGER.log(VERBOSE, f"Parsed source spec: {source_spec}")
+    source_spec = parse_compose_spec(source, config)
+    LOGGER.log(VERBOSE, f"Parsed source spec: {source_spec}")
 
-        target_input = target
-        target_major_only = False
-        if target and source_spec.get("is_centos_stream"):
-            target_str = str(target).strip()
-            if re.fullmatch(r"\d+", target_str):
-                target_input = f"{target_str}.0"
-                target_major_only = True
-                LOGGER.debug(
-                    "Interpreting major-only target '%s' as '%s' because source is CentOS Stream",
-                    target,
-                    target_input,
-                )
-
-        if target_input:
-            target_spec = parse_compose_spec(target_input, config)
-            target_spec["is_major_only"] = (
-                target_spec.get("is_major_only", False) or target_major_only
+    target_input = target
+    target_major_only = False
+    if target and source_spec.get("is_centos_stream"):
+        target_str = str(target).strip()
+        if re.fullmatch(r"\d+", target_str):
+            target_input = f"{target_str}.0"
+            target_major_only = True
+            LOGGER.debug(
+                "Interpreting major-only target '%s' as '%s' because source is CentOS Stream",
+                target,
+                target_input,
             )
-            LOGGER.log(VERBOSE, f"Parsed target spec: {target_spec}")
-        else:
-            target_spec = _resolve_target_from_map_or_formula(source_spec, config)
-            LOGGER.log(VERBOSE, f"Derived target spec: {target_spec}")
 
-        return source_spec, target_spec
+    if target_input:
+        target_spec = parse_compose_spec(target_input, config)
+        target_spec["is_major_only"] = (
+            target_spec.get("is_major_only", False) or target_major_only
+        )
+        LOGGER.log(VERBOSE, f"Parsed target spec: {target_spec}")
+    else:
+        target_spec = _resolve_target_from_map_or_formula(source_spec, config)
+        LOGGER.log(VERBOSE, f"Derived target spec: {target_spec}")
 
-    except ValueError as e:
-        LOGGER.error(f"Failed to parse source/target configuration: {e}")
-        raise
+    return source_spec, target_spec
 
 
 def merge_test_set_config(
