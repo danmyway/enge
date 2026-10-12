@@ -14,8 +14,6 @@ root logger, because "printed once" is a property of the whole path. Only
 first (exit code, then that the intended error reached `main()` with its
 detail) and only then the target (the detail appears once; nothing else is
 at ERROR or above, which is what a leftover header line would be).
-
-Never put ``-v``/``-c`` before the subcommand in an argv here (DX-3).
 """
 
 import copy
