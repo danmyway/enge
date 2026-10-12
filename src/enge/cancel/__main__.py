@@ -201,5 +201,4 @@ def main(ctx: AppContext) -> int:
         return ExitCode.SUCCESS
 
     except KeyboardInterrupt:
-        LOGGER.info("Cancellation interrupted by user")
         raise UserAbort("Cancellation interrupted by user")
