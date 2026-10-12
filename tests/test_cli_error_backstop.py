@@ -3,11 +3,10 @@
 `main()` backstops KeyboardInterrupt (130) and unexpected exceptions (1),
 printing a traceback only when the ``enge`` logger is at DEBUG.
 
-`main()` logs through the root logger and `setup_logging()` re-derives the
+`main()` logs errors through the root logger and `setup_logging()` re-derives the
 ``enge`` logger level from the parsed arguments on every call, so the tests
 drive DEBUG through the ``debug`` flag of the patched `get_arguments`, never
-by setting the logger level directly. Never put ``-v`` before the subcommand
-in an argv here (DX-3: a global ``-v`` is ignored).
+by setting the logger level directly.
 """
 
 import contextlib
