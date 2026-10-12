@@ -14,7 +14,7 @@ Coverage
     name REGEX, not exact plan names. A root covers its whole lineage. A
     child whose recorded plans (joined by ``", "``) are all plans its parent
     parsed is a narrowed rerun and covers exactly those. Any other child (the
-    fallback rerun of an unparsable task, a rerun that re-records the
+    fallback rerun of an unparseable task, a rerun that re-records the
     original filter, nothing recorded) inherits its parent's coverage. The
     child's own ``tests`` filter then applies; ``[]`` and ``None`` (written
     by an enge that predates the field) both mean "no test filter".
@@ -24,13 +24,13 @@ Coverage
 Charging
     Attempts spent on a key is the number of child edges in the lineage
     whose dispatched filter covers the key. It is derived, never stored, and
-    independent of verdicts -- except that the rerun of an *unparsable*
+    independent of verdicts -- except that the rerun of an *unparseable*
     parent (``ERROR`` with no plans: terminal, no xunit) is uncharged.
 
 Outcome
     ``exhausted`` (the last result is FAILED/ERROR and the attempts spent
     reached a given ``retry_count``; never reported when ``retry_count`` is
-    ``None``), a dead end (two consecutive unparsable results; a parsed
+    ``None``), ``unparseable`` (two consecutive unparseable results; a parsed
     result in between resets the streak) or ``terminal-canceled`` (the last
     result is CANCELED). Markers describe how the lineage stands
     NOW: a later generation supersedes an earlier terminal state.
@@ -60,11 +60,11 @@ VERDICT_INITIALS = {
 }
 NO_RESULT = "."
 EXHAUSTED = "exhausted"
-UNPARSEABLE = "unparseable"  # codespell:ignore
+UNPARSEABLE = "unparseable"
 TERMINAL_CANCELED = "terminal-canceled"
-MARKERS = {  # codespell:ignore
+MARKERS = {
     EXHAUSTED: "[X]",
-    UNPARSEABLE: "[?]",  # codespell:ignore
+    UNPARSEABLE: "[?]",
     TERMINAL_CANCELED: "[-]",
 }
 
@@ -121,7 +121,7 @@ class Entry:
     task_id: str
     generation: int
     value: str
-    unparseable: bool  # codespell:ignore
+    unparseable: bool
 
 
 def _order(task: LineageTask) -> Tuple[str, str]:
@@ -263,7 +263,7 @@ class LineageIndex:
         plan: str,
         test_segments: Optional[Collection[str]] = None,
     ) -> int:
-        """Attempts charged to the key; reruns of unparsable parents are free."""
+        """Attempts charged to the key; reruns of unparseable parents are free."""
         self._require_root(root_id)
         self._segments(test_segments)
         count = 0
@@ -324,11 +324,11 @@ class LineageIndex:
             return None
         streak = 0
         for entry in reversed(entries):
-            if not entry.unparseable:  # codespell:ignore
+            if not entry.unparseable:
                 break
             streak += 1
         if streak >= 2:
-            return UNPARSEABLE  # codespell:ignore
+            return UNPARSEABLE
         if streak == 1:
             return None  # an uncharged rerun is still due
         last = entries[-1].value
