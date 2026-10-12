@@ -180,8 +180,7 @@ def build_test_attributes(cli_args, config):  # noqa: C901
 
             logger.info(f"Loaded test sets: {', '.join(cli_sets)}")
         except ValueError as e:
-            logger.critical(f"Failed to load test sets: {e}")
-            raise ConfigurationError("Failed to load test sets") from e
+            raise ConfigurationError(f"Failed to load test sets: {e}") from e
 
         first_set_values = individual_test_sets[0]["effective_values"]
         effective_values = first_set_values
@@ -451,8 +450,9 @@ def build_test_attributes(cli_args, config):  # noqa: C901
                     )
 
     except ValueError as e:
-        logger.critical(f"Failed to parse source/target configuration: {e}")
-        raise ValidationError("Failed to parse source/target configuration") from e
+        raise ValidationError(
+            f"Failed to parse source/target configuration: {e}"
+        ) from e
 
     return {
         "individual_test_sets": individual_test_sets,
