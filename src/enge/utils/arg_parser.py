@@ -628,6 +628,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  enge compare --run <run_id> --tier tier1             # single run is enough on its own\n"
             "  enge compare --splitarch --tier tier1                # one table per (tier, arch)\n"
             "  enge compare --splitpath --tier tier1                # one table per (tier, upgrade-path)\n"
+            "  enge compare --lineage --run <run_id> --retry-count 2  # one column per rerun lineage\n"
         ),
     )
 
@@ -708,6 +709,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="One table per (tier, upgrade-path) instead of folding the "
         "upgrade-path into columns. Combinable with --splitarch.",
+    )
+
+    compare.add_argument(
+        "--lineage",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Collapse each run's reruns into one column per root task: every "
+        "cell lists the per-generation verdicts plus a terminal marker. Runs "
+        "are selected with --run only (a rerun's run resolves to its roots).",
+    )
+
+    compare.add_argument(
+        "--retry-count",
+        type=int,
+        metavar="N",
+        default=argparse.SUPPRESS,
+        help="With --lineage: evaluate the [X] (exhausted) marker against N "
+        "reruns per key. Without it, [X] is never shown.",
     )
 
     compare.add_argument(
