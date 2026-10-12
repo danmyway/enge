@@ -13,6 +13,7 @@ comparison result.
 """
 
 import logging
+from typing import List
 
 from rich import box
 from rich.console import Console
@@ -99,6 +100,32 @@ def _footer_entries(table: "engine.ComparisonTable"):
             "set": col.set,
             "artifacts_url": col.artifacts_url,
         }
+
+
+def _lineage_footer_lines(table: "engine.LineageTable") -> List[str]:
+    """One TASK REFERENCE line per lineage column (no `run=` field).
+
+    `({i}) {arch} {source}→{target}`, then `gen{G}={artifacts_url}` for
+    every task of the lineage in lineage order (two tasks of one generation
+    both appear). When the lineage's source composes are not all equal,
+    ` composes: ` follows with `gen{G}={source_compose}` for every task.
+    """
+    lines = []
+    for index, (col, lineage) in enumerate(
+        zip(table.columns, table.generations), start=1
+    ):
+        parts = [
+            f"({index}) {col.arch} "
+            f"{col.source or engine.ABSENT}{_UPGRADE_ARROW}{col.target or engine.ABSENT}"
+        ]
+        parts.extend(f"gen{gen}={task.artifacts_url or ''}" for gen, task in lineage)
+        if len({task.source_compose for _, task in lineage}) > 1:
+            parts.append("composes:")
+            parts.extend(
+                f"gen{gen}={_descriptor(task.source_compose)}" for gen, task in lineage
+            )
+        lines.append(" ".join(parts))
+    return lines
 
 
 def _print_table(ctx: AppContext, rich_table: Table) -> None:

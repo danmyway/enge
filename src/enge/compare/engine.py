@@ -56,11 +56,38 @@ off-limits here):
 - `flaky` (R5, AMENDMENT-2 semantics unchanged): flagged iff >=2 present
   (non-absent) outcomes differ, over present cells only. Computed on
   every row regardless of split flags; never rendered as a column.
+
+Lineage mode (item 5.2, `build_lineage_tables`): one column per rerun
+lineage root, each cell a per-generation trajectory plus a terminal marker
+from `enge.lineage`; Consolidated reuses `consolidate_row` unchanged. See
+"Lineage mode" in docs/compare-consolidation.md.
 """
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    cast,
+)
+
+from enge.lineage import (
+    EXHAUSTED,
+    MARKERS,
+    TERMINAL_CANCELED,
+    UNPARSEABLE,
+    LineageIndex,
+    LineageTask,
+    last_segment,
+)
 
 ABSENT = "—"  # em dash -- unified absence marker (C3)
 
@@ -93,6 +120,13 @@ class ExecutionColumn:
     run_created_at: str
     plans: List[Any] = field(default_factory=list)
     artifacts_url: Optional[str] = None
+    # Lineage fields (item 5.2): with them a column satisfies
+    # `enge.lineage.LineageTask`. The loader fills them in both modes; only
+    # lineage mode reads them.
+    rerun_of: Optional[str] = None
+    verdict: Optional[str] = None
+    plan: Optional[str] = None
+    tests: Optional[Sequence[str]] = None
 
 
 @dataclass(frozen=True)
@@ -339,6 +373,312 @@ def build_tables(
                 source=cols[0].source if splitpath else None,
                 target=cols[0].target if splitpath else None,
                 columns=tuple(cols),
+                rows=tuple(rows),
+            )
+        )
+    tables.sort(
+        key=lambda t: (_safe(t.tier), _safe(t.arch), _safe(t.source), _safe(t.target))
+    )
+    return tables
+
+
+# --- Lineage mode (item 5.2, contract v3 §5a) --------------------------------
+#
+# `enge compare --lineage` collapses each selected task's rerun lineage into
+# ONE column keyed by the lineage root. Root, generation, coverage, attempts
+# spent, trajectory and outcome all come from `enge.lineage` (Q-L5-3) -- this
+# section only decides which keys become rows and what each cell shows.
+
+# Plan-row marker severity (Q-L5-4): the worst outcome among the plan's keys.
+_OUTCOME_SEVERITY: Dict[str, int] = {
+    TERMINAL_CANCELED: 1,
+    EXHAUSTED: 2,
+    UNPARSEABLE: 3,
+}
+
+_VerdictOf = Callable[[Any], Optional[str]]
+
+
+@dataclass(frozen=True)
+class LineageCell:
+    """One lineage's trajectory for one row key."""
+
+    values: Tuple[str, ...]  # per-generation initials, lineage order
+    outcome: Optional[str]  # enge.lineage EXHAUSTED / UNPARSEABLE / TERMINAL_CANCELED
+
+    @property
+    def text(self) -> str:
+        text = " ".join(self.values)
+        if self.outcome:
+            text = f"{text} {MARKERS[self.outcome]}"
+        return text
+
+
+@dataclass(frozen=True)
+class LineageRow:
+    label: str
+    plan_label: Optional[str]  # None for plan rows; the plan for test rows
+    cells: Tuple[
+        Optional[LineageCell], ...
+    ]  # one per root column; None = never covered
+    consolidated: str
+
+
+@dataclass(frozen=True)
+class LineageTable:
+    tier: Optional[str]
+    columns: Tuple[ExecutionColumn, ...]  # root tasks
+    # Per column: (generation, task) for every task of its lineage, in
+    # lineage order (generation, then dispatch time).
+    generations: Tuple[Tuple[Tuple[int, ExecutionColumn], ...], ...]
+    rows: Tuple[LineageRow, ...]
+    arch: Optional[str] = None
+    source: Optional[str] = None
+    target: Optional[str] = None
+
+
+def _worst_outcome(outcomes: Iterable[Optional[str]]) -> Optional[str]:
+    present = [outcome for outcome in outcomes if outcome is not None]
+    if not present:
+        return None
+    return max(present, key=lambda outcome: _OUTCOME_SEVERITY[outcome])
+
+
+def _cached_plan_verdict(task: ExecutionColumn, plan_name: str) -> Optional[str]:
+    return next((p.verdict for p in task.plans if p.name == plan_name), None)
+
+
+def _cached_test_verdict(
+    task: ExecutionColumn, plan_name: str, key: str, normalizable: Set[str]
+) -> Optional[str]:
+    """Same lookup as `_build_test_rows`: the first plan of that name, the
+    last test in it mapping to the key."""
+    verdict = None
+    for plan in task.plans:
+        if plan.name != plan_name:
+            continue
+        for test in plan.tests:
+            if _test_key(plan_name, test.name, normalizable) == key:
+                verdict = test.verdict
+        break
+    return verdict
+
+
+def _trajectory_verdict(cached: _VerdictOf) -> _VerdictOf:
+    """`verdict_of` for `LineageIndex.trajectory`.
+
+    A task with no plans at all reads as its task verdict: a canceled task
+    is cached as CANCELED with `plans == []`, so a key it covered reads `C`.
+    (ERROR with no plans never gets here -- `trajectory` marks it
+    unparseable first.) A task with plans but no result for the key reads
+    as None, which `trajectory` renders as ".".
+    """
+
+    def verdict_of(task: Any) -> Optional[str]:
+        verdict = cached(task)
+        if verdict is None and not task.plans:
+            return task.verdict
+        return verdict
+
+    return verdict_of
+
+
+class _LineageRowBuilder:
+    """Rows of one lineage table; see `build_lineage_tables`."""
+
+    def __init__(
+        self,
+        index: LineageIndex,
+        roots: List[ExecutionColumn],
+        members: List[ExecutionColumn],
+        retry_count: Optional[int],
+    ) -> None:
+        self.index = index
+        self.roots = roots
+        self.retry_count = retry_count
+        # Consolidation order: the same chronological order normal compare
+        # sorts its columns in.
+        self.members = tuple(sorted(members, key=_column_sort_key))
+        # RULING G1's collision guard runs over the union of every
+        # generation, never per generation.
+        self.normalizable = _normalizable_plans(members)
+        self.plans = _plan_names(members)
+        # plan -> test key -> last `::` segments of every raw name mapping
+        # to it. Two keys sharing a last segment share a counter (§5a).
+        self.test_keys: Dict[str, Dict[str, Set[str]]] = {}
+        for task in members:
+            for plan in task.plans:
+                keys = self.test_keys.setdefault(plan.name, {})
+                for test in plan.tests:
+                    key = _test_key(plan.name, test.name, self.normalizable)
+                    keys.setdefault(key, set()).add(last_segment(test.name))
+
+    def _plan_lookup(self, plan_name: str) -> _VerdictOf:
+        return lambda task: _cached_plan_verdict(task, plan_name)
+
+    def _test_lookup(self, plan_name: str, key: str) -> _VerdictOf:
+        return lambda task: _cached_test_verdict(
+            task, plan_name, key, self.normalizable
+        )
+
+    def _outcome(
+        self,
+        root: ExecutionColumn,
+        plan_name: str,
+        segments: Optional[FrozenSet[str]],
+        cached: _VerdictOf,
+    ) -> Optional[str]:
+        return self.index.outcome(
+            root.task_id,
+            plan_name,
+            segments,
+            _trajectory_verdict(cached),
+            self.retry_count,
+        )
+
+    def _cell(
+        self,
+        root: ExecutionColumn,
+        plan_name: str,
+        segments: Optional[FrozenSet[str]],
+        cached: _VerdictOf,
+        outcome: Optional[str],
+    ) -> Optional[LineageCell]:
+        entries = self.index.trajectory(
+            root.task_id, plan_name, segments, _trajectory_verdict(cached)
+        )
+        if not entries:
+            return None
+        return LineageCell(tuple(e.value for e in entries), outcome)
+
+    def _row(
+        self,
+        label: str,
+        plan_label: Optional[str],
+        plan_name: str,
+        segments: Optional[FrozenSet[str]],
+        cached: _VerdictOf,
+        outcomes: List[Optional[str]],
+    ) -> LineageRow:
+        cells = tuple(
+            self._cell(root, plan_name, segments, cached, outcome)
+            for root, outcome in zip(self.roots, outcomes)
+        )
+        per_member = tuple(
+            verdict if (verdict := cached(task)) is not None else ABSENT
+            for task in self.members
+        )
+        return LineageRow(
+            label=label,
+            plan_label=plan_label,
+            cells=cells,
+            consolidated=consolidate_row(self.members, per_member),
+        )
+
+    def _test_segments(self, plan_name: str) -> List[Tuple[str, FrozenSet[str]]]:
+        keys = self.test_keys.get(plan_name, {})
+        return [(key, frozenset(keys[key])) for key in sorted(keys)]
+
+    def plan_rows(self) -> List[LineageRow]:
+        rows = []
+        for plan_name in self.plans:
+            cached = self._plan_lookup(plan_name)
+            tests = self._test_segments(plan_name)
+            outcomes = [
+                _worst_outcome(
+                    [self._outcome(root, plan_name, None, cached)]
+                    + [
+                        self._outcome(
+                            root, plan_name, segments, self._test_lookup(plan_name, key)
+                        )
+                        for key, segments in tests
+                    ]
+                )
+                for root in self.roots
+            ]
+            rows.append(self._row(plan_name, None, plan_name, None, cached, outcomes))
+        return rows
+
+    def test_rows(self) -> List[LineageRow]:
+        rows = []
+        for plan_name in self.plans:
+            tests = self._test_segments(plan_name)
+            if not tests:
+                # A plan with no tests in any member keeps one plan-level row.
+                cached = self._plan_lookup(plan_name)
+                outcomes = [
+                    self._outcome(root, plan_name, None, cached) for root in self.roots
+                ]
+                rows.append(
+                    self._row(plan_name, None, plan_name, None, cached, outcomes)
+                )
+                continue
+            for key, segments in tests:
+                cached = self._test_lookup(plan_name, key)
+                outcomes = [
+                    self._outcome(root, plan_name, segments, cached)
+                    for root in self.roots
+                ]
+                rows.append(
+                    self._row(key, plan_name, plan_name, segments, cached, outcomes)
+                )
+        return rows
+
+
+def build_lineage_tables(
+    columns: List[ExecutionColumn],
+    selected_task_ids: Iterable[str],
+    *,
+    show_tests: bool,
+    splitarch: bool,
+    splitpath: bool,
+    retry_count: Optional[int],
+) -> List[LineageTable]:
+    """Lineage-collapsed tables (contract v3 §5a).
+
+    `columns` is the lineage closure the loader returns; each selected task
+    resolves to its lineage root, and each root is one column. Roots are
+    grouped and sorted exactly like normal mode's columns (`group_columns`),
+    so tier stays a partition and `--splitarch`/`--splitpath` behave the
+    same. Within a table:
+
+    - plan view: one row per plan; a cell's marker is the most severe
+      outcome among the plan key and every test key of that plan in that
+      column (`[?]` > `[X]` > `[-]`, Q-L5-4);
+    - test view: one row per (plan, test key) with its own marker, plus one
+      plan-level row for a plan that has no tests in any member;
+    - Consolidated is `consolidate_row` over every generation of every
+      column, each contributing its actual cached verdict or ABSENT -- the
+      value normal compare would compute over the same columns.
+    """
+    # `ExecutionColumn.verdict` is Optional only so normal-mode callers may
+    # omit it; the loader always fills it from `TaskEntry.verdict`, and
+    # `enge.lineage` reads a None verdict as "not ERROR" / no result.
+    index = LineageIndex(cast(List[LineageTask], columns))
+    by_id = {col.task_id: col for col in columns}
+    root_ids = dict.fromkeys(index.root_of(task_id) for task_id in selected_task_ids)
+    roots = [by_id[root_id] for root_id in root_ids]
+
+    tables = []
+    for cols in group_columns(roots, splitarch=splitarch, splitpath=splitpath).values():
+        generations = tuple(
+            tuple(
+                (index.generation(task.task_id), by_id[task.task_id])
+                for task in index.lineage(root.task_id)
+            )
+            for root in cols
+        )
+        members = [task for lineage in generations for _, task in lineage]
+        builder = _LineageRowBuilder(index, cols, members, retry_count)
+        rows = builder.test_rows() if show_tests else builder.plan_rows()
+        tables.append(
+            LineageTable(
+                tier=cols[0].tier,
+                arch=cols[0].arch if splitarch else None,
+                source=cols[0].source if splitpath else None,
+                target=cols[0].target if splitpath else None,
+                columns=tuple(cols),
+                generations=generations,
                 rows=tuple(rows),
             )
         )
