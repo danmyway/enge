@@ -33,7 +33,7 @@ def parse_request_xunit(
 
 
 def _parse_request_xunit_with_retval(
-    ctx, request_url_list=None, tasks_source=None, skip_pass=False
+    ctx, request_url_list=None, tasks_source=None, skip_pass=False, counts=None
 ):
     from enge.report.concurrent_parser import parse_request_xunit_concurrent
 
@@ -43,6 +43,7 @@ def _parse_request_xunit_with_retval(
         tasks_source,
         skip_pass,
         raise_on_unparseable_input=True,
+        counts=counts,
     )
 
 
@@ -77,9 +78,9 @@ def _short_name(name):
     return "/".join(segments[-2:]) or name
 
 
-def build_table(ctx):
+def build_table(ctx, counts=None):
     parsed_dict, retval, task_results = _parse_request_xunit_with_retval(
-        ctx, skip_pass=ctx.cli_args.skip_pass
+        ctx, skip_pass=ctx.cli_args.skip_pass, counts=counts
     )
 
     tables_list = []
@@ -358,8 +359,9 @@ def main(ctx: AppContext, result_table=None):
         return _handle_compare_alias(ctx)
 
     retval = None
+    counts: dict[str, int] = {}
     if result_table is None:
-        result_table, retval, task_results = build_table(ctx)
+        result_table, retval, task_results = build_table(ctx, counts=counts)
 
         if task_results:
             try:
@@ -409,6 +411,12 @@ def main(ctx: AppContext, result_table=None):
             has_content = True
 
     if not has_content:
-        LOGGER.info("Nothing to report!")
+        no_data = counts.get("no_reportable_data", 0)
+        if no_data:
+            LOGGER.warning(
+                f"No reportable data for {no_data} task(s); see the warnings above."
+            )
+        else:
+            LOGGER.info("Nothing to report!")
 
     return retval

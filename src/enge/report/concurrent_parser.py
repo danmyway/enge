@@ -246,6 +246,11 @@ class ConcurrentRequestParser:
                     return None
 
                 if attempt == self.max_retries:
+                    if isinstance(e, ConnectionError):
+                        LOGGER.debug(f"Connection error for {url}: {e}")
+                        raise NetworkError(
+                            "Failed to fetch task info due to connection error"
+                        ) from e
                     LOGGER.error(
                         f"Failed to fetch task info from {url} after {self.max_retries + 1} attempts: {e}"
                     )
@@ -401,6 +406,7 @@ class ConcurrentRequestParser:
         uuid_short = self._get_short_uuid(task_result.request_uuid)
         code = ExitCode.TEST_ERROR
         detail = "unknown error"
+        fetch_raised = False
 
         try:
             response = self.session.get(
@@ -432,7 +438,7 @@ class ConcurrentRequestParser:
                 "Failed to fetch XML results due to connection error"
             ) from err
         except RequestException as e:
-            LOGGER.warning(f"[{task_result.request_uuid}] Failed to fetch XML")
+            fetch_raised = True
             LOGGER.debug(f"[{uuid_short}]    URL: {task_result.results_xml_url}")
             LOGGER.debug(f"[{uuid_short}]    Error: {e}")
             detail = type(e).__name__
@@ -442,27 +448,25 @@ class ConcurrentRequestParser:
         # Fallback handling when XML is not available
         LOGGER.debug(f"[{uuid_short}] Unable to find the xml to parse")
         LOGGER.debug(f"[{uuid_short}]    Trying to fall back to the request results")
-        if (
+        has_summary = (
             task_result.request_result_overall != "Undefined"
             and task_result.request_summary != "Undefined"
-        ):
+        )
+        if has_summary:
             LOGGER.debug(
                 f"[{uuid_short}]    Result: {task_result.request_result_overall}"
             )
             LOGGER.debug(f"[{uuid_short}]    Summary: {task_result.request_summary}")
-        else:
-            LOGGER.warning(
-                f"[{task_result.request_uuid}] Couldn't find any valuable information"
-            )
-            LOGGER.warning(
-                f"[{task_result.request_uuid}]    Please consult with {task_result.url}"
-            )
 
+        # One WARNING line per task (L55): the failure, the grading when it is
+        # missing results, and the request URL when there is no summary either.
+        message = f"[{task_result.request_uuid}] XML fetch failed ({detail})"
         if code == ExitCode.MISSING_RESULTS:
-            LOGGER.warning(
-                f"[{task_result.request_uuid}] XML fetch failed ({detail}); "
-                "graded as missing results"
-            )
+            message += "; graded as missing results"
+        if not has_summary:
+            message += f"; no result summary either, please consult {task_result.url}"
+        if fetch_raised or code == ExitCode.MISSING_RESULTS or not has_summary:
+            LOGGER.warning(message)
         _raise_retval(task_result, code)
         task_result.error_message = f"XML not available ({detail}), using fallback"
         return task_result
@@ -477,6 +481,7 @@ class ConcurrentRequestParser:
 
         # Phase 1: Fetch task information concurrently
         task_results = []
+        info_connection_failures = 0
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all task info requests
             future_to_url = {
@@ -500,7 +505,16 @@ class ConcurrentRequestParser:
                         self.ungraded_urls.append(url)
                 except Exception as e:
                     LOGGER.error(f"Exception fetching task info for {url}: {e}")
+                    if isinstance(e, NetworkError):
+                        info_connection_failures += 1
                     self.ungraded_urls.append(url)
+
+        if info_connection_failures:
+            LOGGER.warning(
+                f"Could not fetch task info for {info_connection_failures} task(s): "
+                "the connection failed. "
+                "Please verify that you are connected to the VPN."
+            )
 
         # Filter out skipped tasks for XML processing
         tasks_for_xml = [task for task in task_results if not task.should_skip]
@@ -852,6 +866,7 @@ def parse_request_xunit_concurrent(
     skip_pass: bool = False,
     *,
     raise_on_unparseable_input: bool = False,
+    counts: Optional[Dict[str, int]] = None,
 ):
     """Parse request xunit with concurrent requests.
 
@@ -861,6 +876,10 @@ def parse_request_xunit_concurrent(
             ValidationError instead of logging CRITICAL and returning empty
             (DX-14). Only `enge report` passes it; the rerun path keeps the
             log-and-return behavior.
+        counts: when a dict is given, "no_reportable_data" is set to the
+            number of requested tasks that were neither reportable nor
+            skipped, including tasks whose info could not be fetched
+            (Q-L55-1). Only `enge report` passes it.
 
     Returns:
         Tuple of (parsed_dict, retval, task_results) where retval is the
@@ -997,5 +1016,8 @@ def parse_request_xunit_concurrent(
 
     console.print(f"   {'No reportable data:':<28}{failed_tasks:>3}", style="error")
     console.print("─" * 60, style="dim")
+
+    if counts is not None:
+        counts["no_reportable_data"] = failed_tasks + len(parser.ungraded_urls)
 
     return parsed_dict, retval, task_results
