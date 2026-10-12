@@ -24,7 +24,8 @@ Errors are surfaced as exceptions and mapped to exit codes in the top-level CLI.
 import json
 import logging
 import sys
-from typing import List, Dict, Any
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from rich.markup import escape
 
@@ -379,111 +380,157 @@ def _build_manifest_writer(ctx):
     )
 
 
+@dataclass(frozen=True)
+class DispatchSubmission:
+    """What ``submit_dispatch`` did, for the caller to log and map to an exit code.
+
+    run_id: the run's manifest run_id; None on a dry run, or when no request
+        was submitted (nothing was written to the manifest).
+    total: the number of requests attempted.
+    submitted: the number Testing Farm accepted.
+    results: one dict per request, in submission order (the input of
+        ``_print_dispatch_summaries``).
+    """
+
+    run_id: Optional[str]
+    total: int
+    submitted: int
+    results: Tuple[Dict[str, Any], ...]
+
+
+def submit_dispatch(ctx) -> Optional[DispatchSubmission]:
+    """Resolve and submit every request of an ``enge test`` invocation.
+
+    The body of ``main`` up to and including submission: artifact-repo
+    validation, request expansion (test sets, or legacy tiers/plans),
+    ``process_request_spec`` per request and the manifest writes it makes.
+    Returns None when the legacy tiers/plans path resolves no request (a
+    WARNING has been logged). Does not log the ``Done:`` / ``Run ID:`` /
+    ``Report with:`` lines, print the summaries or map failures to exit
+    codes; ``main`` does all of that from the returned value. Exceptions
+    propagate; ``main`` maps them.
+    """
+    if getattr(ctx.cli_args, "copr", None):
+        repo_url = ctx.tests.get("git_url") or ctx.project.get("repo_url")
+        if repo_url:
+            validate_git_repository(repo_url)
+
+    total_requests = 0
+    successful_requests = 0
+
+    event_name = getattr(ctx.cli_args, "event", None)
+    if (
+        not event_name
+        and hasattr(ctx, "individual_test_sets")
+        and ctx.individual_test_sets
+    ):
+        first_set = ctx.individual_test_sets[0]
+        event_name = first_set["effective_values"].get("event")
+
+    if getattr(ctx.cli_args, "auto_tag", False):
+        LOGGER.warning(
+            "--auto-tag is deprecated; context is now always recorded "
+            "in the manifest. This flag is a no-op."
+        )
+
+    tiers, plans = _compute_tiers_and_plans(ctx)
+    # Run-wide by design; mixed copr/brew per-spec is a known limitation (project ledger).
+    artifact_type = _determine_artifact_type(ctx)
+
+    manifest_writer = _build_manifest_writer(ctx)
+
+    dispatch_results: List[Dict[str, Any]] = []
+
+    if hasattr(ctx, "individual_test_sets") and ctx.individual_test_sets:
+        all_set_requests = expand_set_requests(ctx=ctx)
+        total_expected_requests = len(all_set_requests)
+        LOGGER.info(f"Dispatching {total_expected_requests} request(s)")
+        resolver = ArtifactResolver()
+        for idx, spec in enumerate(all_set_requests, 1):
+            result = process_request_spec(
+                idx,
+                total_expected_requests,
+                spec,
+                artifact_type,
+                resolver,
+                ctx=ctx,
+                manifest_writer=manifest_writer,
+            )
+            if result:
+                dispatch_results.append({**result, "idx": idx})
+                if result.get("status") == "submitted":
+                    successful_requests += 1
+            total_requests += 1
+
+    else:
+        setup_submit_test(ctx)
+
+        resolver = ArtifactResolver()
+        validate_plan_filters(plans, ctx)
+        specs = build_tier_plan_specs(tiers, plans, ctx)
+        total_expected_requests = len(specs)
+        if total_expected_requests == 0:
+            LOGGER.warning(
+                "No requests to process: no tiers/plans resolved into concrete requests."
+            )
+            return None
+        LOGGER.info(f"Dispatching {total_expected_requests} request(s)")
+        for i, spec in enumerate(specs, 1):
+            result = process_request_spec(
+                i,
+                total_expected_requests,
+                spec,
+                artifact_type,
+                resolver,
+                ctx=ctx,
+                manifest_writer=manifest_writer,
+            )
+            if result:
+                dispatch_results.append({**result, "idx": i})
+                if result.get("status") == "submitted":
+                    successful_requests += 1
+            total_requests += 1
+
+    return DispatchSubmission(
+        run_id=(
+            manifest_writer.run_id
+            if not getattr(ctx.cli_args, "dryrun", False) and successful_requests > 0
+            else None
+        ),
+        total=total_requests,
+        submitted=successful_requests,
+        results=tuple(dispatch_results),
+    )
+
+
 def main(ctx) -> int:
     try:
         output_format = getattr(ctx.cli_args, "output_format", "terminal")
 
-        if getattr(ctx.cli_args, "copr", None):
-            repo_url = ctx.tests.get("git_url") or ctx.project.get("repo_url")
-            if repo_url:
-                validate_git_repository(repo_url)
-
-        total_requests = 0
-        successful_requests = 0
-
-        event_name = getattr(ctx.cli_args, "event", None)
-        if (
-            not event_name
-            and hasattr(ctx, "individual_test_sets")
-            and ctx.individual_test_sets
-        ):
-            first_set = ctx.individual_test_sets[0]
-            event_name = first_set["effective_values"].get("event")
-
-        if getattr(ctx.cli_args, "auto_tag", False):
-            LOGGER.warning(
-                "--auto-tag is deprecated; context is now always recorded "
-                "in the manifest. This flag is a no-op."
-            )
-
-        tiers, plans = _compute_tiers_and_plans(ctx)
-        # Run-wide by design; mixed copr/brew per-spec is a known limitation (project ledger).
-        artifact_type = _determine_artifact_type(ctx)
-
-        manifest_writer = _build_manifest_writer(ctx)
-
-        dispatch_results: List[Dict[str, Any]] = []
-
-        if hasattr(ctx, "individual_test_sets") and ctx.individual_test_sets:
-            all_set_requests = expand_set_requests(ctx=ctx)
-            total_expected_requests = len(all_set_requests)
-            LOGGER.info(f"Dispatching {total_expected_requests} request(s)")
-            resolver = ArtifactResolver()
-            for idx, spec in enumerate(all_set_requests, 1):
-                result = process_request_spec(
-                    idx,
-                    total_expected_requests,
-                    spec,
-                    artifact_type,
-                    resolver,
-                    ctx=ctx,
-                    manifest_writer=manifest_writer,
-                )
-                if result:
-                    dispatch_results.append({**result, "idx": idx})
-                    if result.get("status") == "submitted":
-                        successful_requests += 1
-                total_requests += 1
-
-        else:
-            setup_submit_test(ctx)
-
-            resolver = ArtifactResolver()
-            validate_plan_filters(plans, ctx)
-            specs = build_tier_plan_specs(tiers, plans, ctx)
-            total_expected_requests = len(specs)
-            if total_expected_requests == 0:
-                LOGGER.warning(
-                    "No requests to process: no tiers/plans resolved into concrete requests."
-                )
-                return 1
-            LOGGER.info(f"Dispatching {total_expected_requests} request(s)")
-            for i, spec in enumerate(specs, 1):
-                result = process_request_spec(
-                    i,
-                    total_expected_requests,
-                    spec,
-                    artifact_type,
-                    resolver,
-                    ctx=ctx,
-                    manifest_writer=manifest_writer,
-                )
-                if result:
-                    dispatch_results.append({**result, "idx": i})
-                    if result.get("status") == "submitted":
-                        successful_requests += 1
-                total_requests += 1
+        result = submit_dispatch(ctx)
+        if result is None:
+            return 1
 
         if output_format != "json":
             done_style = (
-                "bold green" if successful_requests == total_requests else "bold yellow"
+                "bold green" if result.submitted == result.total else "bold yellow"
             )
             LOGGER.info(
-                f"Done: {successful_requests}/{total_requests} submitted",
+                f"Done: {result.submitted}/{result.total} submitted",
                 extra={"style": done_style},
             )
-            if not getattr(ctx.cli_args, "dryrun", False) and successful_requests > 0:
-                LOGGER.info(f"Run ID: {manifest_writer.run_id}")
-                LOGGER.info(f"Report with: enge report --run {manifest_writer.run_id}")
+            if result.run_id:
+                LOGGER.info(f"Run ID: {result.run_id}")
+                LOGGER.info(f"Report with: enge report --run {result.run_id}")
 
-        if dispatch_results:
-            _print_dispatch_summaries(dispatch_results, output_format)
+        if result.results:
+            _print_dispatch_summaries(list(result.results), output_format)
 
-        if successful_requests == 0:
+        if result.submitted == 0:
             LOGGER.critical("No requests were successfully submitted!")
             return 1
-        elif successful_requests < total_requests:
-            LOGGER.warning(f"{total_requests - successful_requests} requests failed")
+        elif result.submitted < result.total:
+            LOGGER.warning(f"{result.total - result.submitted} requests failed")
             return 2
 
         return 0
