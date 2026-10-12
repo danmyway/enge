@@ -219,3 +219,75 @@ cache while delegating (maintainer ruling, 2026-07-17) — run `enge report
 parser doesn't define them, so `getattr(ctx.cli_args, "splitarch",
 False)` (and the `splitpath` equivalent) default the alias to the
 unsplit, one-table-per-tier shape.
+
+**Lineage mode** (item 5.2, `enge compare --lineage`, run-loop contract v3
+§5a, rulings Q-L5-1..4, 2026-10-11): one column per rerun **lineage** instead
+of one per task. Lineage structure (root, generation, coverage, attempts
+spent, trajectory, outcome) belongs to the pure `src/enge/lineage.py`
+(Q-L5-3); `compare/engine.py` (`build_lineage_tables`) only chooses rows and
+cells, `compare/loader.py` (`load_lineage_columns`) only loads, and the
+markers are render-layer — never written to `results.json`.
+
+- *Selection*: `--run` only, or the default (the latest run) when no
+  `--run` is given. Manifests contribute `run_id` and nothing else; every
+  task of each selected run's cache is a selected task, and lineages are
+  discovered by walking every cached `<run_id>.json` under `results_dir`
+  via `rerun_of` (Q-L5-1). Each selected task resolves to its lineage
+  root, so selecting a rerun's run shows the same column as selecting its
+  root's run. Validation runs before anything loads, and each failure is
+  exit 2: `--set`/`--tier`/`--arch`/`--tag`/`--since`/`--until` with
+  `--lineage` (`--lineage selects runs with --run only; drop <flags>`),
+  `--retry-count` without `--lineage`, and `--retry-count` below 0.
+  Unreadable caches, a task id cached twice (the first file in name order
+  wins), reruns whose parent was never cached (shown as their own root)
+  and stale caches contributing to the shown lineages each give one
+  aggregated WARNING per invocation; no selected task is the usual floor
+  (`CONFIG_ERROR`).
+- *Columns and generations*: roots are grouped and sorted with the same
+  `group_columns` as normal mode, so tier stays a partition and
+  `--splitarch`/`--splitpath` behave identically. A cell lists the key's
+  per-generation values in lineage order (generation, then dispatch time),
+  one per task that covers the key: `P F E S C` for the cached verdict,
+  `E` for an unparseable task (`ERROR` with no plans), `C` for a task
+  cached as `CANCELED` with no plans, `.` for a covering task with no
+  result for the key; then the terminal marker. A cell that no task of
+  the lineage covers renders `—`.
+- *Outcome* (`LineageIndex.outcome`): (1) empty trajectory → no marker;
+  (2) the last two entries unparseable → `[?]`; (3) only the last one
+  unparseable → no marker (its rerun is still due and uncharged); (4) last
+  value `C` → `[-]`; (5) last value `F` or `E`, a retry count given and
+  attempts spent ≥ it → `[X]`; (6) otherwise no marker. `--lineage` has no
+  default retry count (Q-L5-2′): without `--retry-count N`, `[X]` is never
+  evaluated, while `[?]` and `[-]` still render.
+- *Plan-row markers* (Q-L5-4): the plan view stays the default. A plan
+  row's cell is the plan-verdict trajectory, and its marker is the most
+  severe outcome among the plan key and every test key of that plan in
+  that column, `[?]` > `[X]` > `[-]`. With `--show-tests`, every test row
+  carries its own marker, and a plan with no tests in any generation keeps
+  one plan-level row.
+- *Coverage is parent-relative*: native dispatch records `plan` as a tmt
+  name REGEX, not exact names, so a child whose recorded plans (split on
+  `", "`) are all plans its parent parsed covers exactly those, and any
+  other child inherits its parent's coverage. A regex containing `", "`
+  therefore never narrows — the safe direction: it can only over-cover.
+  The child's `tests` filter then applies.
+- *Row key vs. counter key*: rows are keyed like normal mode, by `(plan,
+  G1-normalized test name)`, with the G1 collision guard run over the
+  union of every generation. Retry accounting is keyed by the test's last
+  `::` segment, because that is what a rerun's `tests` filter records:
+  two rows sharing a last segment share one counter.
+- *Consolidated* is the unchanged two-stage `consolidate_row` over every
+  generation of every column, each contributing its actual cached verdict
+  or `—` (a task with no plans contributes `—`). It equals what normal
+  compare computes over the same tasks; parent and child share a
+  coordinate, so a pass on rerun wins within it.
+- *Rendering*: the table caption states the retry policy
+  (`lineage view; retry policy: --retry-count N`, or `lineage view; no
+  retry policy given, so [X] (exhausted) is not evaluated`); one legend
+  line follows every table; under `~~~ TASK REFERENCE` each column gets
+  `(i) <arch> <source>→<target>` then `gen<G>=<artifacts_url>` per task
+  (two tasks of one generation both appear; there is no `run=` field),
+  and, when the lineage's source composes differ, ` composes: ` with
+  `gen<G>=<source_compose>` per task. A cell is colored by its last
+  verdict; a cell ending in `.` stays uncolored. `-o json` prints nothing,
+  as in normal mode.
