@@ -138,6 +138,37 @@ class TestPhaseContexts(unittest.TestCase):
             self.assertIsNone(phases.fetch_state("t1"))
 
 
+class TestOneConfigLoad(unittest.TestCase):
+    """Every phase reuses the config the invocation already loaded: a loop
+    that re-read it per phase repeated every load-time WARNING once per
+    phase, and would pick up a config file edited mid-loop."""
+
+    def test_phase_contexts_reuse_the_loops_config(self):
+        # The fields ParsedOpts' static validation requires.
+        phases = _phases(
+            extra_config={"project": {"name": "p", "repo_url": "https://r"}}
+        )
+        with mock.patch(
+            "enge.utils.opt_manager.load_config",
+            side_effect=AssertionError("config reloaded"),
+        ):
+            report_ctx = phases._context(["report", "--run", "RUN1"])
+
+        self.assertEqual(report_ctx.config["testing_farm"]["api_key"], "test-api-key")
+        self.assertIsNot(report_ctx.config, phases.ctx.config)
+
+    def test_gen0_reuses_the_loops_config(self):
+        phases = _phases()
+        with (
+            mock.patch("enge.run.phases.ParsedOpts") as parsed_opts,
+            mock.patch("enge.run.phases.AppContext"),
+            mock.patch("enge.dispatch.__main__.submit_dispatch"),
+        ):
+            phases.dispatch()
+
+        parsed_opts.assert_called_once_with(cli_args=mock.ANY, config=phases.ctx.config)
+
+
 class TestQuietPhases(unittest.TestCase):
     def test_nothing_reaches_stdout_and_the_console_is_restored(self):
         phases = _phases()

@@ -661,6 +661,16 @@ class TestFullConstructorReport(unittest.TestCase):
         self.assertIsInstance(po, ParsedOpts)
 
     @patch("enge.utils.opt_manager.load_config")
+    def test_a_given_config_is_used_not_loaded(self, mock_load):
+        mock_load.side_effect = AssertionError("config reloaded")
+        given = copy.deepcopy(MINIMAL_CONFIG)
+        po = ParsedOpts(cli_args=get_arguments(args=["report"]), config=given)
+        self.assertEqual(po.testing_farm["api_key"], "test-tf-key")
+        # A copy: a phase never mutates the config the next phase starts from.
+        self.assertIsNot(po.config, given)
+        self.assertEqual(given, MINIMAL_CONFIG)
+
+    @patch("enge.utils.opt_manager.load_config")
     def test_testing_farm_endpoint_initialized(self, mock_load):
         mock_load.return_value = copy.deepcopy(MINIMAL_CONFIG)
         po = ParsedOpts(cli_args=get_arguments(args=["report"]))
