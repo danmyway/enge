@@ -299,7 +299,6 @@ def build_test_attributes(cli_args, config):  # noqa: C901
     target_value = effective_values.get("target")
 
     if not source_value:
-        logger.critical("Source compose specification is required!")
         raise ValidationError("Source compose specification is required")
 
     try:
@@ -345,7 +344,6 @@ def build_test_attributes(cli_args, config):  # noqa: C901
 
         arch_input = effective_values.get("architectures")
         if not arch_input:
-            logger.critical("No architectures specified in CLI or config!")
             raise ValidationError("No architectures specified in CLI or config")
         architectures = parse_architectures(arch_input)
         validate_cloud_image_architectures(source_spec, architectures)
@@ -394,8 +392,7 @@ def build_test_attributes(cli_args, config):  # noqa: C901
                 if cli_context:
                     tmt_context = merge_tmt_context(tmt_context, cli_context)
             except ValueError as e:
-                logger.critical(f"Failed to parse --context: {e}")
-                raise ValidationError("Invalid --context format") from e
+                raise ValidationError(f"Failed to parse --context: {e}") from e
 
         only_rhsm_stage_cdn = getattr(cli_args, "only_rhsm_stage_cdn", False)
         if only_rhsm_stage_cdn:
