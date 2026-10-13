@@ -516,7 +516,7 @@ class TestRerunMainSubmitPath(SubmitHarness, unittest.TestCase):
                 _post_body(
                     UUID_ONE,
                     "broken$",
-                    plan="/plan/failing$|/plan/undef$",
+                    plan="/plan/failing$",
                 ),
                 _post_body(UUID_ONE, None, plan="/plan/undef$"),
             ],
@@ -529,7 +529,7 @@ class TestRerunMainSubmitPath(SubmitHarness, unittest.TestCase):
                 _manifest_request(
                     "new-1",
                     UUID_ONE,
-                    "/plan/failing, /plan/undef",
+                    "/plan/failing",
                     ["broken"],
                 ),
                 _manifest_request("new-2", UUID_ONE, "/plan/undef", []),
@@ -800,7 +800,7 @@ class TestUndefinedOnBothIntakePaths(SubmitHarness, unittest.TestCase):
         )
         self.assertEqual(
             [p["test"]["fmf"]["name"] for p in cli_payloads],
-            ["/plan/failing$|/plan/undef$", "/plan/undef$"],
+            ["/plan/failing$", "/plan/undef$"],
         )
         self.assertEqual(cand_payloads, cli_payloads)
 
@@ -969,7 +969,7 @@ class TestSubmitRerunCallable(SubmitHarness, unittest.TestCase):
         self.assertEqual(
             run.posted(),
             [
-                _post_body(UUID_ONE, "broken$", plan="/plan/failing$|/plan/undef$"),
+                _post_body(UUID_ONE, "broken$", plan="/plan/failing$"),
                 _post_body(UUID_ONE, None, plan="/plan/undef$"),
             ],
         )

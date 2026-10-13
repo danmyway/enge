@@ -283,7 +283,7 @@ class TestBuildRerunPayloadsShape(unittest.TestCase):
 
         self.assertEqual(
             main_payload["test"]["fmf"]["name"],
-            "/plan/with_test$|/plan/undefined_plan$",
+            "/plan/with_test$",
         )
         self.assertIsNone(main_payload["test"]["fmf"]["plan_filter"])
         self.assertEqual(main_payload["test"]["fmf"]["test_name"], "broken$")

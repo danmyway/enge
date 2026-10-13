@@ -863,6 +863,14 @@ class RerunJobs:
                     _unique_preserve(undefined_plan_filters)
                 )
                 plan_only_payload["test"]["fmf"].pop("test_name", None)
+                # The plan-only plans leave the filtered payload, so each plan
+                # runs, and is charged to its lineage, exactly once (Q-R6-J).
+                plan_only = set(undefined_plan_filters)
+                filtered_payload["test"]["fmf"]["name"] = "|".join(
+                    plan
+                    for plan in filtered_payload["test"]["fmf"]["name"].split("|")
+                    if plan not in plan_only
+                )
                 logger.info(
                     "Request %s includes %d UNDEFINED plan(s) with no testcase "
                     "information; submitting an additional plan-only rerun.",
