@@ -7,9 +7,12 @@ and the exit code are the real ones (`enge.lineage`, `enge.run.candidates`,
 on the loop's own logger.
 """
 
+import contextlib
+import io
 import logging
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from enge.compare import engine as E
 from enge.dispatch.__main__ import DispatchSubmission
@@ -448,12 +451,165 @@ class TestResume(unittest.TestCase):
             lines,
         )
 
+    def test_resuming_a_settled_loop_dispatches_nothing(self):
+        # The loop under its root's policy (--retry-count 1): r failed, its
+        # one rerun failed too, so the lineage is exhausted and resume must
+        # go straight to FINAL.
+        phases = FakePhases([task("r", "RUN0", "2026-10-01T00", "FAILED")])
+        phases.runs["RUN1"] = [
+            task("c1", "RUN1", "2026-10-02T00", "FAILED", rerun_of="r")
+        ]
+        phases.cached["RUN0"] = phases.runs["RUN0"]
+        phases.cached["RUN1"] = phases.runs["RUN1"]
+        phases.chain_result = ["RUN0", "RUN1"]
+
+        code, _, _ = _run(phases, retry_count=1, resume="RUN0")
+
+        self.assertEqual(code, ExitCode.TEST_FAILURE)
+        self.assertEqual([c[0] for c in phases.calls], ["render"])
+
+    def test_resume_says_what_it_waits_on(self):
+        phases = FakePhases([task("r", "RUN0", "2026-10-01T00", "FAILED")])
+        phases.runs["RUN1"] = [
+            task("c1", "RUN1", "2026-10-02T00", "FAILED", rerun_of="r")
+        ]
+        phases.cached["RUN0"] = phases.runs["RUN0"]
+        phases.chain_result = ["RUN0", "RUN1"]
+        phases.reruns.append(_rerun_run("RUN2", "c2", "c1", "PASSED", "2026-10-03T00"))
+
+        _, lines, _ = _run(phases, resume="RUN0")
+
+        waiting = [m for _, m in lines if m.startswith("resume: waiting")]
+        # RUN0 is finalized (nothing to wait for); RUN2 is the loop's own
+        # generation, reported by the usual gen lines.
+        self.assertEqual(waiting, ["resume: waiting on gen 1 run RUN1 (1 task(s))"])
+        self.assertLess(
+            lines.index(("INFO", waiting[0])),
+            lines.index(("INFO", "gen 1: 1/1 finished, 0 running, 0m")),
+        )
+
     def test_a_chain_error_propagates(self):
         phases = FakePhases([task("r", "RUN0", "2026-10-01T00", "FAILED")])
         phases.chain_result = ValidationError("run RUN0 has 2 reruns")
 
         with self.assertRaises(ValidationError):
             _run(phases, resume="RUN0")
+
+
+ENGE = "/home/u/.local/bin/enge"
+
+
+def _policy(argv, root_argv=None, root="RUN0"):
+    """(retry_count, timeout_hours), log lines, stderr of resolve_policy."""
+    from enge.run.__main__ import resolve_policy
+    from enge.utils.arg_parser import get_arguments
+
+    cli_args = get_arguments(["run", *argv])
+    err = io.StringIO()
+    with captured_logs(LOGGER_NAME, logging.INFO) as records:
+        with contextlib.redirect_stderr(err):
+            policy = resolve_policy(cli_args, root, root_argv)
+    lines = [(r.levelname, r.getMessage()) for r in records]
+    return (policy.retry_count, policy.timeout_hours), lines, err.getvalue()
+
+
+class TestResumePolicy(unittest.TestCase):
+    """Q-R6-D': `--resume` keeps the loop's policy. A loop started with
+    `--retry-count 1` must not get the default 2 on resume: that dispatched
+    reruns of keys its own table had already marked exhausted."""
+
+    def test_a_fresh_loop_uses_its_flags_or_the_defaults(self):
+        self.assertEqual(
+            _policy(["--retry-count", "1"], root=None)[:2], ((1, 24.0), [])
+        )
+        self.assertEqual(_policy([], root=None)[:2], ((2, 24.0), []))
+
+    def test_resume_inherits_the_roots_policy(self):
+        root = [ENGE, "run", "-S", "s", "--retry-count", "1", "--timeout", "6"]
+        self.assertEqual(_policy(["--resume", "RUN0"], root)[:2], ((1, 6.0), []))
+
+    def test_a_root_that_set_nothing_had_the_defaults(self):
+        root = [ENGE, "run", "-S", "s"]
+        self.assertEqual(_policy(["--resume", "RUN0"], root)[:2], ((2, 24.0), []))
+
+    def test_global_flags_before_the_roots_subcommand(self):
+        root = [ENGE, "-c", "/c.toml", "-v", "run", "-S", "s", "--retry-count", "1"]
+        self.assertEqual(_policy(["--resume", "RUN0"], root)[0], (1, 24.0))
+
+    def test_an_explicit_flag_overrides_and_is_announced(self):
+        root = [ENGE, "run", "-S", "s", "--retry-count", "1", "--timeout", "6"]
+
+        values, lines, _ = _policy(["--resume", "RUN0", "--retry-count", "3"], root)
+
+        self.assertEqual(values, (3, 6.0))
+        self.assertEqual(
+            lines, [("INFO", "resume: --retry-count 3 overrides root run RUN0's 1")]
+        )
+        # Restating the root's own value is not an override.
+        self.assertEqual(
+            _policy(["--resume", "RUN0", "--timeout", "6"], root)[:2], ((1, 6.0), [])
+        )
+
+    def test_a_root_dispatched_by_enge_test_uses_the_flags_or_defaults(self):
+        root = [ENGE, "test", "-S", "s"]
+
+        values, lines, _ = _policy(["--resume", "RUN0", "--retry-count", "1"], root)
+
+        self.assertEqual(values, (1, 24.0))
+        self.assertEqual(
+            lines,
+            [
+                (
+                    "INFO",
+                    "resume: root run RUN0 was dispatched by `enge test`, not "
+                    "`enge run`; using --retry-count 1 --timeout 24",
+                )
+            ],
+        )
+
+    def test_an_unreadable_root_falls_back_with_a_warning(self):
+        expected = [
+            (
+                "WARNING",
+                "resume: cannot read the loop policy from root run RUN0's "
+                "manifest; using --retry-count 2 --timeout 24",
+            )
+        ]
+        for root in (
+            None,
+            [ENGE],
+            [ENGE, "run", "--no-such-flag"],
+            [ENGE, "run", "--retry-count", "-1"],
+        ):
+            with self.subTest(root=root):
+                values, lines, stderr = _policy(["--resume", "RUN0"], root)
+                self.assertEqual((values, lines), ((2, 24.0), expected))
+                self.assertNotIn("usage:", stderr, "argparse's usage text leaked")
+
+
+class TestMainResolvesThePolicy(unittest.TestCase):
+    def test_main_hands_the_roots_policy_to_the_loop(self):
+        from enge.run import __main__ as run_main
+        from enge.utils.arg_parser import get_arguments
+
+        ctx = SimpleNamespace(cli_args=get_arguments(["run", "--resume", "RUN0"]))
+        phases = mock.Mock()
+        phases.root.return_value = (
+            "RUN0FULL",
+            [ENGE, "run", "--retry-count", "1", "--timeout", "6"],
+        )
+        with (
+            mock.patch("enge.run.phases.Phases", return_value=phases),
+            mock.patch.object(run_main, "RunLoop") as loop,
+        ):
+            loop.return_value.run.return_value = 2
+            self.assertEqual(run_main.main(ctx), 2)
+
+        phases.root.assert_called_once_with("RUN0")
+        loop.assert_called_once_with(
+            phases, retry_count=1, timeout_hours=6.0, clock=mock.ANY
+        )
+        loop.return_value.run.assert_called_once_with(resume="RUN0FULL")
 
 
 class TestValidateRunArgs(unittest.TestCase):

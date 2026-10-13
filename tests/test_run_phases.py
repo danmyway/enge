@@ -203,8 +203,8 @@ class TestQuietPhases(unittest.TestCase):
             self.assertEqual(logging.getLogger("enge.dispatch").level, logging.NOTSET)
 
 
-def _manifest(runs_dir, run_id, parent):
-    payload = {"run_id": run_id, "parent_run_id": parent, "requests": []}
+def _manifest(runs_dir, run_id, parent, **extra):
+    payload = {"run_id": run_id, "parent_run_id": parent, "requests": [], **extra}
     (Path(runs_dir) / f"{run_id}.json").write_text(json.dumps(payload))
 
 
@@ -239,6 +239,25 @@ class TestResumeChain(unittest.TestCase):
 
         with self.assertRaisesRegex(ValidationError, "RUN1 is a rerun"):
             self._chain("RUN1")
+
+
+class TestResumeRoot(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.runs_dir = tmp.name
+
+    def test_root_resolves_the_id_and_reads_the_argv(self):
+        argv = ["/x/enge", "run", "--retry-count", "1"]
+        _manifest(self.runs_dir, "01ROOTFULL", None, argv=argv)
+        _manifest(self.runs_dir, "02NOARGV", None)
+
+        phases = _phases(manifest_runs_dir=self.runs_dir)
+
+        self.assertEqual(phases.root("01ROOT"), ("01ROOTFULL", argv))
+        self.assertEqual(phases.root("02NOARGV"), ("02NOARGV", None))
+        with self.assertRaisesRegex(ValidationError, "No run matching"):
+            phases.root("NOPE")
 
 
 class TestRoute(unittest.TestCase):
