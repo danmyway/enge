@@ -414,6 +414,73 @@ def _add_dispatch_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_run_parser(subparsers, common_sub: argparse.ArgumentParser) -> None:
+    """The `enge run` subparser: `enge test`'s dispatch and tagging flags,
+    plus the loop's own. The loop's flags default to SUPPRESS; their real
+    defaults live in `enge.run`."""
+    run = subparsers.add_parser(
+        "run",
+        help="Dispatch, then rerun failures until every result settles.",
+        description=(
+            "Dispatch like 'enge test', wait for the results, rerun what failed\n"
+            "(at most --retry-count times per failing test or plan), and repeat\n"
+            "until nothing is left to rerun. Prints one lineage table at the end\n"
+            "(see 'enge compare --lineage'); progress goes to stderr."
+        ),
+        parents=[common_sub],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  enge run -s 9.7 -T tier0                            # rerun failures twice\n"
+            "  enge run -S pre-release-smoke --retry-count 1       # one rerun per key\n"
+            "  enge run --resume <root_run_id>                     # continue a stopped loop\n"
+        ),
+    )
+
+    _add_dispatch_args(run)
+    _add_tagging_args(run)
+
+    run.add_argument(
+        "-o",
+        "--format",
+        dest="output_format",
+        choices=["terminal", "gitlab"],
+        nargs="?",
+        default="terminal",
+        const="gitlab",
+        help="Output format of the final table. 'terminal' (default): colored "
+        "output. 'gitlab' (default when -o is used without value): markdown "
+        "code blocks.",
+    )
+
+    run.add_argument(
+        "--retry-count",
+        type=int,
+        metavar="N",
+        default=argparse.SUPPRESS,
+        help="Rerun each failing test (or failing plan without test results) "
+        "at most N times (default: 2).",
+    )
+
+    run.add_argument(
+        "--timeout",
+        type=float,
+        metavar="HOURS",
+        default=argparse.SUPPRESS,
+        help="Stop waiting for a generation after HOURS (default: 24). Nothing "
+        "is canceled; continue later with --resume.",
+    )
+
+    run.add_argument(
+        "--resume",
+        metavar="ROOT_RUN_ID",
+        default=argparse.SUPPRESS,
+        help="Continue the loop whose first run is ROOT_RUN_ID instead of "
+        "dispatching: harvest its unfinished runs, then keep rerunning under "
+        "that loop's own --retry-count and --timeout unless given again.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """
     Build the enge command-line argument parser tree.
@@ -816,6 +883,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     _add_date_filter_args(rerun, manifest_utc=True)
+
+    # ==================== RUN SUBCOMMAND ====================
+    _add_run_parser(subparsers, common_sub)
 
     # ==================== REPORTPORTAL SUBCOMMAND ====================
     reportportal = subparsers.add_parser(

@@ -1,4 +1,5 @@
 # #!/usr/bin/env python3
+import copy
 import logging
 import re
 import os
@@ -33,16 +34,22 @@ class TestingFarmEndpoint:
 
 
 class ParsedOpts:
-    def __init__(self, cli_args=None):
+    def __init__(self, cli_args=None, config: Optional[Dict[str, Any]] = None):
         # Avoid import-time parsing; default to parsing now if not provided
         self.cli_args = cli_args if cli_args is not None else get_arguments()
         self._validation_hooks: Dict[str, Callable] = {}
 
-        # Load configuration
-        config_paths = (
-            [self.cli_args.config] if self.cli_args.config else list(USER_CONFIG_PATHS)
-        )
-        self.config = load_config(paths=config_paths)
+        # Load configuration, unless the invocation already did: `enge run`
+        # builds one context per phase from the config it loaded once.
+        if config is not None:
+            self.config = copy.deepcopy(config)
+        else:
+            config_paths = (
+                [self.cli_args.config]
+                if self.cli_args.config
+                else list(USER_CONFIG_PATHS)
+            )
+            self.config = load_config(paths=config_paths)
 
         # Fill missing API tokens from environment variables.
         # Priority: user config > environment variable.

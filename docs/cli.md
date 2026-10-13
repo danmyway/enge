@@ -14,6 +14,7 @@ Send requests to and get results back from Testing Farm conveniently.
 - `report` — Report results for requested tasks.
 - `compare` — Compare results.json caches across runs, with a consolidated column.
 - `rerun` — Parse given tasks and rerun specified jobs.
+- `run` — Dispatch, then rerun failures until every result settles.
 - `reportportal` — Manage ReportPortal launches.
 - `cancel` — Cancel Testing Farm tasks.
 
@@ -186,6 +187,61 @@ Rerun failed or errored tasks from previous runs.
 ### Deprecated
 
 - `--auto-tag` — Deprecated: context is now always recorded in manifests. This flag is a no-op and will be removed in a future release.
+
+## run
+
+Dispatch like 'enge test', wait for the results, rerun what failed
+(at most --retry-count times per failing test or plan), and repeat
+until nothing is left to rerun. Prints one lineage table at the end
+(see 'enge compare --lineage'); progress goes to stderr.
+
+### Options
+
+- `-h, --help` — show this help message and exit
+- `-c, --config CONFIG` — Custom path to the config file.
+- `-v, --verbose` — Increase output verbosity. -v for verbose, -vv for full debug.
+- `-s, --source SOURCE` — Source compose to be upgraded. Can be provided in a format of <major>.<minor> (e.g. 8.10), explicit compose name (e.g. RHEL-8.10.0-Nightly), symbolic RHUI compose (e.g. RHEL-8-rhui, RHEL-8-sap-hana-rhui, RHEL-8-sap-netweaver-rhui), CentOS Stream format (e.g. CentOS-Stream-9, stream-9, cs-9, stream9, cs9), or a cloud-image source alias/name for Alma Linux, Rocky Linux or Oracle Linux (e.g. alma97, rocky97, oracle9, 'AlmaLinux OS 9.7.20251118 x86_64', 'Oracle:Oracle-Linux:ol98-lvm-gen2:9.8.2'). Aliases are configured in [sources.images]; Oracle Linux also requires --pool (or a set/[tests] pool). If --target is not specified, the path is resolved to <major + 1>.<minor - 6> (e.g. 8.10 -> 9.4), unless overridden by [composes.target_map] in config. Required unless --set is provided.
+- `-t, --target TARGET` — Target compose for upgrade. Can be provided in a format of <major>.<minor> (e.g. 9.4) or explicit compose name (e.g. RHEL-9.4.0-Nightly). When --source is CentOS Stream, providing only the major version (e.g. 10) is allowed. If not specified, resolved from [composes.target_map] in config (keyed by source <major>.<minor>), falling back to <source_major + 1>.<source_minor - 6> on a miss.
+- `--copr COPR` — COPR build reference: alias:version (e.g., lp:pr123, lpr:main) or numeric BuildID. Aliases: lp=leapp, lpr=leapp-repository. If neither --copr nor --brew is specified, compose artifacts are used.
+- `--brew BREW` — Test a brew build RC. Accepts either version reference (0.1.2-3) or TaskID. Both are validated via Brew API. Task IDs are resolved to their NVR, and the NVR is used in the Testing Farm payload. If neither of copr/brew is specified, the compose build is tested.
+- `-T, --tier TIER` — Test tier(s) to be executed. Multiple tiers can be provided. Can be combined with --plan to override config plans with specific plans.
+- `-S, --set SET` — Test set to be executed. Multiple sets can be provided. Can be combined with --plan to override set plans with specific plans.
+- `--set-regex REGEX` — Regular expression to select test sets by name. Matches against names under [tests.set.<name>] (Python regex). Can be specified multiple times; expands to concrete set names before validation.
+- `-p, --plan PLAN` — Plans to be executed. Multiple plans can be provided. Can be used standalone (without --tier/--set). When combined with --tier or --set, overrides any plans from config/set. Requires source and architectures via CLI or [tests] config when used standalone.
+- `--test TEST` — Specify test name to be executed. Only used in conjunction with --plan or --tier.
+- `--test-filter, --testfilter TESTFILTER` — Filter tests using FMF filter syntax. This allows fine-grained filtering of which tests to run.
+- `--plan-filter, --planfilter PLANFILTER` — Filter plans using FMF filter syntax. This overrides any automatically generated plan filters from --tier.
+- `--only-rhsm-mock-cdn` — Add tag:rhsm to the combined plan filter. This filters tests to only those tagged with 'rhsm'.
+- `--no-rhsm` — Add tag:-rhsm to the combined plan filter. This excludes tests tagged with 'rhsm' from execution.
+- `--only-rhsm-stage-cdn` — Add tag:rhsm to the combined plan filter, set product_phase=rc in TMT context, and set RHSM_MODE=stage in environment variables. This is used for testing RHSM stage environment.
+- `--event EVENT` — Event name for ReportPortal launch gating and attributes. Can also be configured in test set configuration.
+- `--git-url GIT_URL` — URL to the tests metadata repository. If not specified, uses the default one from the config file.
+- `--git-ref GIT_REF` — Git ref (branch, tag, or commit) to checkout the test suite from. If not specified, uses the default one from the config file.
+- `--architectures, --arch ARCHITECTURES` — Target architecture. Can be specified multiple times: --arch x86_64 --arch aarch64. If not specified, uses the default from the config file.
+- `--pool POOL` — Specify a provisioning pool from Testing Farm.
+- `--parallel-limit N` — Maximum number of plans to run in parallel. Overrides configuration files and hardcoded default (20).
+- `--environment VAR=VAL` — Additional environment variables to be set in the request. Can be provided multiple times: --environment VAR1=VAL1 --environment VAR2=VAL2
+- `--context KEY=VAL` — Additional TMT context key-value pairs. Merges into the generated context; warnings are shown on overrides (config, set, or duplicate CLI). Can be provided multiple times: --context key1=val1 --context key2=val2
+- `--rp-launch RP_LAUNCH` — Override ReportPortal launch name from configuration. Sets TMT_PLUGIN_REPORT_REPORTPORTAL_LAUNCH environment variable.
+- `--rp-description RP_DESCRIPTION` — Override ReportPortal description from configuration. Sets TMT_PLUGIN_REPORT_REPORTPORTAL_DESCRIPTION environment variable.
+- `--set-tag TAG` — Tag the run's manifest with a custom tag (select it later with --tag). Can be used multiple times.
+- `-o, --format {terminal,gitlab}` — Output format of the final table. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks. (default: `terminal`)
+- `--retry-count N` — Rerun each failing test (or failing plan without test results) at most N times (default: 2).
+- `--timeout HOURS` — Stop waiting for a generation after HOURS (default: 24). Nothing is canceled; continue later with --resume.
+- `--resume ROOT_RUN_ID` — Continue the loop whose first run is ROOT_RUN_ID instead of dispatching: harvest its unfinished runs, then keep rerunning under that loop's own --retry-count and --timeout unless given again.
+
+### Deprecated
+
+- `--auto-tag` — Deprecated: context is now always recorded in manifests. This flag is a no-op and will be removed in a future release.
+
+### Examples
+
+```
+examples:
+  enge run -s 9.7 -T tier0                            # rerun failures twice
+  enge run -S pre-release-smoke --retry-count 1       # one rerun per key
+  enge run --resume <root_run_id>                     # continue a stopped loop
+```
 
 ## reportportal
 
