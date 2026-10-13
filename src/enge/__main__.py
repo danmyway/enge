@@ -155,6 +155,10 @@ def _dispatch_action(action, ctx):
         from enge.rerun.__main__ import main as rerun_main
 
         return rerun_main(ctx)
+    elif action == "run":
+        from enge.run.__main__ import main as run_main
+
+        return run_main(ctx)
     elif action == "cancel":
         from enge.cancel.__main__ import main as cancel_main
 

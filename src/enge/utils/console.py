@@ -11,7 +11,9 @@ Logging always goes to stderr via a dedicated Console so that
 ``-o json`` can silence stdout without losing diagnostics.
 """
 
+import contextlib
 import logging
+from typing import Iterator
 
 from rich.console import Console
 from rich.theme import Theme
@@ -57,6 +59,24 @@ def configure_console(output_format: str) -> None:
         _current = Console(theme=ENGE_THEME, no_color=True, highlight=False)
     else:
         _current = Console(theme=ENGE_THEME)
+
+
+@contextlib.contextmanager
+def quiet_console() -> Iterator[None]:
+    """Make the shared console print nothing until the block exits.
+
+    The backing instance is swapped for a quiet one and the previous
+    instance (whatever ``configure_console`` set) is restored afterwards,
+    even when the block raises. Logging is untouched: it never goes through
+    the shared console.
+    """
+    global _current
+    previous = _current
+    _current = Console(theme=ENGE_THEME, quiet=True)
+    try:
+        yield
+    finally:
+        _current = previous
 
 
 _LEVEL_STYLES = {
