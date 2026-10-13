@@ -18,16 +18,20 @@ The loop of contract v3 §4 under the rulings of 2026-10-12/13:
 * Progress goes to stderr on this module's logger (Q-R6-H); the final
   table is the only stdout (Q-R6-B).
 * `--resume <root>` walks the manifests down from the root, harvests every
-  run without a finalized cache, and continues from the newest (Q-R6-D).
+  run without a finalized cache, and continues from the newest (Q-R6-D),
+  under the root's own --retry-count and --timeout unless given again
+  (Q-R6-D'; `resolve_policy`). It logs each run it has to wait on.
 * The exit code mirrors every key's final state (Q-R6-F, Q-R6-K, Q-R6-L;
   `enge.run.candidates.final_exit_code`).
 """
 
 import argparse
+import contextlib
+import io
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, List, Optional, Protocol, Sequence
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Set
 
 from enge.dispatch.__main__ import DispatchSubmission
 from enge.rerun.__main__ import RerunCandidate, RerunSubmission
@@ -115,6 +119,7 @@ class RunLoop:
         self.clock = clock
         self.root: Optional[str] = None
         self.without_result = 0
+        self._resumed: Set[str] = set()  # the runs --resume found
 
     def _root(self) -> str:
         assert self.root is not None, "the root run is known once gen 0 exists"
@@ -148,6 +153,7 @@ class RunLoop:
     def _resume(self, root_run_id: str) -> _Generation:
         chain = self.phases.chain(root_run_id)
         self.root = chain[0]
+        self._resumed = set(chain)
         self._log_start()
         for number, run_id in enumerate(chain[:-1]):
             self._wait_and_harvest(_Generation(number, run_id))
@@ -206,6 +212,13 @@ class RunLoop:
         if cache is not None and cache.verdict is not None:
             return  # finalized: every task is terminal and harvested
         task_ids = self.phases.task_ids(generation.run_id)
+        if generation.run_id in self._resumed:
+            LOGGER.info(
+                "resume: waiting on gen %d run %s (%d task(s))",
+                generation.number,
+                generation.run_id,
+                len(task_ids),
+            )
         outcome = poller.wait_for_tasks(
             task_ids,
             self.phases.fetch_state,
@@ -338,15 +351,20 @@ def _dispatch_dests() -> List[str]:
     return [action.dest for action in scratch._actions]
 
 
+def _check_policy(retry_count: int, timeout: float) -> None:
+    if retry_count < 0:
+        raise ValidationError("--retry-count must be an integer >= 0")
+    if not timeout > 0:
+        raise ValidationError("--timeout must be a number of hours > 0")
+
+
 def validate_run_args(cli_args: Any) -> None:
     """`enge run`'s own flags; dispatch flags are validated by gen 0's
     `enge test` context."""
-    retry_count = getattr(cli_args, "retry_count", DEFAULT_RETRY_COUNT)
-    if retry_count < 0:
-        raise ValidationError("--retry-count must be an integer >= 0")
-    timeout = getattr(cli_args, "timeout", DEFAULT_TIMEOUT_HOURS)
-    if not timeout > 0:
-        raise ValidationError("--timeout must be a number of hours > 0")
+    _check_policy(
+        getattr(cli_args, "retry_count", DEFAULT_RETRY_COUNT),
+        getattr(cli_args, "timeout", DEFAULT_TIMEOUT_HOURS),
+    )
     if getattr(cli_args, "resume", None):
         from enge.utils.arg_parser import get_arguments
 
@@ -364,14 +382,128 @@ def validate_run_args(cli_args: Any) -> None:
             )
 
 
+@dataclass(frozen=True)
+class LoopPolicy:
+    retry_count: int
+    timeout_hours: float
+
+    def describe(self) -> str:
+        return f"--retry-count {self.retry_count} --timeout {self.timeout_hours:g}"
+
+
+# (namespace dest, flag, default); the dests default to SUPPRESS, so a flag
+# that was not given is absent from the namespace.
+_POLICY_FLAGS = (
+    ("retry_count", "--retry-count", DEFAULT_RETRY_COUNT),
+    ("timeout", "--timeout", DEFAULT_TIMEOUT_HOURS),
+)
+
+
+def _with_defaults(values: Dict[str, Any]) -> Dict[str, Any]:
+    return {dest: values.get(dest, default) for dest, _, default in _POLICY_FLAGS}
+
+
+def _policy(values: Dict[str, Any]) -> LoopPolicy:
+    merged = _with_defaults(values)
+    return LoopPolicy(merged["retry_count"], merged["timeout"])
+
+
+def _given(namespace: Any) -> Dict[str, Any]:
+    return {
+        d: getattr(namespace, d) for d, _, _ in _POLICY_FLAGS if hasattr(namespace, d)
+    }
+
+
+def _root_namespace(root_argv: Optional[Sequence[str]]) -> Optional[Any]:
+    """The root invocation's namespace; None when its argv does not parse."""
+    from enge.utils.arg_parser import get_arguments
+
+    if not root_argv or len(root_argv) < 2:
+        return None
+    try:
+        # argparse prints its usage text before exiting; that is not ours.
+        with contextlib.redirect_stderr(io.StringIO()):
+            namespace = get_arguments([str(a) for a in root_argv[1:]])
+    except SystemExit:
+        return None
+    return namespace if getattr(namespace, "action", None) else None
+
+
+def _fmt(value: Any) -> str:
+    return f"{value:g}" if isinstance(value, float) else str(value)
+
+
+def resolve_policy(
+    cli_args: Any, root_run_id: Optional[str], root_argv: Optional[Sequence[str]]
+) -> LoopPolicy:
+    """The loop's --retry-count and --timeout (Q-R6-D').
+
+    A fresh loop uses its flags or the defaults. `--resume` keeps the
+    policy of the root run's own invocation, read from its manifest argv:
+    a flag given again wins, and is announced when it differs. A root that
+    `enge test` dispatched has no policy, so the flags or defaults apply;
+    a root argv that does not parse (or holds an out-of-bounds value)
+    falls back to them with a WARNING.
+    """
+    given = _given(cli_args)
+    if not getattr(cli_args, "resume", None):
+        return _policy(given)
+
+    root = _root_namespace(root_argv)
+    root_values: Dict[str, Any] = {}
+    if root is not None and root.action == "run":
+        root_values = _with_defaults(_given(root))
+        try:
+            _check_policy(root_values["retry_count"], root_values["timeout"])
+        except ValidationError:
+            root = None
+
+    if root is None:
+        policy = _policy(given)
+        LOGGER.warning(
+            "resume: cannot read the loop policy from root run %s's manifest; "
+            "using %s",
+            root_run_id,
+            policy.describe(),
+        )
+        return policy
+    if root.action != "run":
+        policy = _policy(given)
+        LOGGER.info(
+            "resume: root run %s was dispatched by `enge %s`, not `enge run`; "
+            "using %s",
+            root_run_id,
+            root.action,
+            policy.describe(),
+        )
+        return policy
+
+    for dest, flag, _ in _POLICY_FLAGS:
+        if dest in given and given[dest] != root_values[dest]:
+            LOGGER.info(
+                "resume: %s %s overrides root run %s's %s",
+                flag,
+                _fmt(given[dest]),
+                root_run_id,
+                _fmt(root_values[dest]),
+            )
+    return _policy({**root_values, **given})
+
+
 def main(ctx) -> int:
     from enge.run.phases import Phases
 
     validate_run_args(ctx.cli_args)
+    phases = Phases(ctx)
+    resume = getattr(ctx.cli_args, "resume", None)
+    root_argv = None
+    if resume:
+        resume, root_argv = phases.root(resume)
+    policy = resolve_policy(ctx.cli_args, resume, root_argv)
     loop = RunLoop(
-        Phases(ctx),
-        retry_count=getattr(ctx.cli_args, "retry_count", DEFAULT_RETRY_COUNT),
-        timeout_hours=getattr(ctx.cli_args, "timeout", DEFAULT_TIMEOUT_HOURS),
+        phases,
+        retry_count=policy.retry_count,
+        timeout_hours=policy.timeout_hours,
         clock=SystemClock(),
     )
-    return loop.run(resume=getattr(ctx.cli_args, "resume", None))
+    return loop.run(resume=resume)

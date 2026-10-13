@@ -228,7 +228,7 @@ until nothing is left to rerun. Prints one lineage table at the end
 - `-o, --format {terminal,gitlab}` — Output format of the final table. 'terminal' (default): colored output. 'gitlab' (default when -o is used without value): markdown code blocks. (default: `terminal`)
 - `--retry-count N` — Rerun each failing test (or failing plan without test results) at most N times (default: 2).
 - `--timeout HOURS` — Stop waiting for a generation after HOURS (default: 24). Nothing is canceled; continue later with --resume.
-- `--resume ROOT_RUN_ID` — Continue the loop whose first run is ROOT_RUN_ID instead of dispatching: harvest its unfinished runs, then keep rerunning.
+- `--resume ROOT_RUN_ID` — Continue the loop whose first run is ROOT_RUN_ID instead of dispatching: harvest its unfinished runs, then keep rerunning under that loop's own --retry-count and --timeout unless given again.
 
 ### Deprecated
 

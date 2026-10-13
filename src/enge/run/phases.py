@@ -214,6 +214,14 @@ class Phases:
         argv += ["--retry-count", str(retry_count), "-o", self.output_format]
         compare_main(self._context(argv))
 
+    def root(self, run_id: str) -> Tuple[str, Optional[List[str]]]:
+        """The root's full run id and the argv it was invoked with (Q-R6-D')."""
+        manifest = ManifestReader.get_run(self.runs_dir, run_id)
+        argv = manifest.get("argv")
+        return manifest["run_id"], (
+            [str(a) for a in argv] if isinstance(argv, list) else None
+        )
+
     def chain(self, root_run_id: str) -> List[str]:
         """The loop's runs from the root down `parent_run_id` (Q-R6-D)."""
         root = ManifestReader.get_run(self.runs_dir, root_run_id)
