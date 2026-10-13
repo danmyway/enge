@@ -476,7 +476,8 @@ def _add_run_parser(subparsers, common_sub: argparse.ArgumentParser) -> None:
         metavar="ROOT_RUN_ID",
         default=argparse.SUPPRESS,
         help="Continue the loop whose first run is ROOT_RUN_ID instead of "
-        "dispatching: harvest its unfinished runs, then keep rerunning.",
+        "dispatching: harvest its unfinished runs, then keep rerunning under "
+        "that loop's own --retry-count and --timeout unless given again.",
     )
 
 
