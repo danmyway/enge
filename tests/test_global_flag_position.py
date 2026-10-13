@@ -31,6 +31,7 @@ SUBCOMMAND_PATHS = [
     "report",
     "compare",
     "rerun",
+    "run",
     "cancel",
     "reportportal",
     "reportportal finish",
@@ -233,6 +234,39 @@ BASE_NAMESPACES = {
         "set_tag": None,
         "since": None,
         "until": None,
+        "verbose": 0,
+    },
+    "run": {
+        "action": "run",
+        "architectures": None,
+        "auto_tag": False,
+        "brew": None,
+        "config": None,
+        "context": None,
+        "copr": None,
+        "debug": False,
+        "environment": None,
+        "event": None,
+        "git_ref": None,
+        "git_url": None,
+        "no_rhsm": False,
+        "only_rhsm_mock_cdn": False,
+        "only_rhsm_stage_cdn": False,
+        "output_format": "terminal",
+        "parallel_limit": None,
+        "plan": None,
+        "planfilter": None,
+        "pool": None,
+        "rp_description": None,
+        "rp_launch": None,
+        "set": None,
+        "set_regex": None,
+        "set_tag": None,
+        "source": None,
+        "target": None,
+        "test": None,
+        "testfilter": None,
+        "tier": None,
         "verbose": 0,
     },
     "test": {
@@ -456,7 +490,7 @@ class TestSubparserDefaultsNeverOverwriteOuterValues(unittest.TestCase):
                     self.assertIs(action.default, argparse.SUPPRESS)
 
         # Premise guards: an empty walk would pass vacuously.
-        self.assertEqual(len(visited), 12)
+        self.assertEqual(len(visited), 13)
         self.assertGreater(checked, 0)
 
 
