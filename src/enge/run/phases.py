@@ -2,7 +2,9 @@
 and compare, with its own context and its output held back.
 
 Every phase gets a context built the way its own subcommand builds one, so
-every attribute it reads exists and every validation it runs still runs:
+every attribute it reads exists and every validation it runs still runs,
+over a copy of the config this invocation loaded once (so load-time
+WARNINGs print once, and a config edited mid-loop changes nothing):
 gen 0 from an `enge test` namespace carrying the loop's dispatch flags, the
 other phases from real argv (`report --run <id>`, `rerun --run <id>`,
 `compare --lineage --run <root>`) prefixed with the loop's global flags.
@@ -73,9 +75,13 @@ class Phases:
             argv.append("-d")
         return argv
 
+    def _parsed(self, namespace: argparse.Namespace) -> ParsedOpts:
+        """A phase's options over the config this invocation already loaded."""
+        return ParsedOpts(cli_args=namespace, config=self.ctx.config)
+
     def _context(self, argv: Sequence[str]) -> AppContext:
         namespace = get_arguments([*self._global_argv(), *argv])
-        return AppContext.from_parsed_opts(ParsedOpts(cli_args=namespace))
+        return AppContext.from_parsed_opts(self._parsed(namespace))
 
     def test_namespace(self) -> argparse.Namespace:
         """`enge test`'s namespace with the loop's dispatch and tagging flags.
@@ -120,9 +126,7 @@ class Phases:
     def dispatch(self) -> Optional[DispatchSubmission]:
         from enge.dispatch.__main__ import submit_dispatch
 
-        test_ctx = AppContext.from_parsed_opts(
-            ParsedOpts(cli_args=self.test_namespace())
-        )
+        test_ctx = AppContext.from_parsed_opts(self._parsed(self.test_namespace()))
         with self.quiet():
             return submit_dispatch(test_ctx)
 
