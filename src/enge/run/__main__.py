@@ -8,7 +8,8 @@ The loop of contract v3 §4 under the rulings of 2026-10-12/13:
 
 * Waiting is the loop's own concurrent poll (`enge.run.poller`).
 * A generation with any task still unharvested at its end (timed out,
-  unreachable, or a harvest that hit a network error) stops the loop:
+  unreachable, a harvest that hit a network error, or a task the harvest
+  left out of the cache) stops the loop:
   what landed is rendered, one WARNING names the resume command, and the
   exit code includes 4 (Q-R6-E', Q-R6-I, Q-R6-M). Nothing is cancelled.
 * Before a task counts as unparseable, its run is re-harvested once with
@@ -201,6 +202,13 @@ class RunLoop:
             LOGGER.warning("could not harvest run %s: %s", run_id, e)
             raise self._stop(len(self.phases.task_ids(run_id)), run_id) from e
 
+    def _uncached(self, run_id: str, task_ids: Sequence[str]) -> Set[str]:
+        """Tasks of the run with no entry in its cache. Report never fails
+        on a caching error, so a harvest that returned is not proof."""
+        cache = self.phases.cache(run_id)
+        cached = {t.task_id for t in cache.results} if cache is not None else set()
+        return set(task_ids) - cached
+
     def _unparseable(self, run_id: str) -> List[str]:
         cache = self.phases.cache(run_id)
         if cache is None:
@@ -228,10 +236,14 @@ class RunLoop:
         )
         self._harvest(generation.run_id, refresh=False)
         if outcome.unharvested:
-            raise self._stop(len(outcome.unharvested), generation.run_id)
+            missing = self._uncached(generation.run_id, task_ids)
+            raise self._stop(len(missing | set(outcome.unharvested)), generation.run_id)
         if self._unparseable(generation.run_id):
             self.clock.sleep(poller.RETRY_INTERVAL)
             self._harvest(generation.run_id, refresh=True)  # D6b
+        missing = self._uncached(generation.run_id, task_ids)
+        if missing:
+            raise self._stop(len(missing), generation.run_id)
         self._log_harvest(generation)
 
     def _log_harvest(self, generation: _Generation) -> None:
