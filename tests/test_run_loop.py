@@ -8,6 +8,7 @@ on the loop's own logger.
 """
 
 import contextlib
+import dataclasses
 import io
 import logging
 import unittest
@@ -245,6 +246,31 @@ class TestGenerations(unittest.TestCase):
 
         self.assertEqual(code, ExitCode.TEST_FAILURE)
         self.assertNotIn("rerun", [c[0] for c in phases.calls])
+
+
+class TestRowlessLineages(unittest.TestCase):
+    def test_a_lineage_with_no_row_is_graded_and_named(self):
+        def tier1(column):
+            return dataclasses.replace(column, tier="tier1")
+
+        unparseable = tier1(task("u", "RUN0", "2026-10-01T00", "x", unparseable=True))
+        phases = FakePhases([task("p", "RUN0", "2026-10-01T00", "PASSED"), unparseable])
+        rerun = tier1(
+            task("u2", "RUN1", "2026-10-02T00", "x", rerun_of="u", unparseable=True)
+        )
+        phases.reruns.append((RerunSubmission("RUN1", payloads=1, failed=0), [rerun]))
+
+        code, lines, _ = _run(phases)
+
+        self.assertEqual(code, ExitCode.TEST_ERROR)
+        self.assertIn(
+            (
+                "WARNING",
+                "the lineage of task u (s, tier1, x86_64) ended ERROR without a "
+                "plan result; the final table has no row for it",
+            ),
+            lines,
+        )
 
 
 class TestStopRules(unittest.TestCase):

@@ -7,6 +7,7 @@ goes through the real loader over cache files on disk. Each test imports
 `enge.run.candidates` itself, so each fails on its own until it exists.
 """
 
+import dataclasses
 import json
 import tempfile
 import unittest
@@ -348,6 +349,42 @@ class TestFinalExitCode(unittest.TestCase):
             col("x", "2026-10-01T01", [P(A, "PASSED", T("/t/x.py::t1", "PASSED"))])
         )
         self.assertEqual(_code(chain), ExitCode.TEST_ERROR)
+
+    def test_a_lineage_with_no_row_is_graded_by_its_last_task(self):
+        # Alone in its tier, a lineage with no plan results gives that
+        # tier's table no row at all; a pass elsewhere must not hide it.
+        def tier1(column):
+            return dataclasses.replace(column, tier="tier1")
+
+        passing = col("x", "2026-10-01T01", [P(A, "PASSED", T(T1, "PASSED"))])
+        unparseable_twice = [
+            tier1(col("r", "2026-10-01T00", [], verdict="ERROR", tests=[])),
+            tier1(col("c1", "2026-10-02T00", [], verdict="ERROR", rerun_of="r")),
+        ]
+        canceled = [tier1(col("r", "2026-10-01T00", [], verdict="CANCELED"))]
+
+        self.assertEqual(_code([passing, *unparseable_twice]), ExitCode.TEST_ERROR)
+        self.assertEqual(_code([passing, *canceled]), ExitCode.MISSING_RESULTS)
+
+    def test_rowless_lineages_names_each_once_with_its_last_task(self):
+        from enge.run.candidates import rowless_lineages
+
+        passing = col("x", "2026-10-01T01", [P(A, "PASSED", T(T1, "PASSED"))])
+        root = dataclasses.replace(
+            col("r", "2026-10-01T00", [], verdict="ERROR", tests=[]), tier="tier1"
+        )
+        rerun = dataclasses.replace(
+            col("c1", "2026-10-02T00", [], verdict="ERROR", rerun_of="r"),
+            tier="tier1",
+        )
+
+        found = rowless_lineages(_tables([passing, root, rerun]))
+
+        # Both views lack the row; the lineage is reported once.
+        self.assertEqual(
+            [(r.task_id, last.task_id) for r, last in found], [("r", "c1")]
+        )
+        self.assertEqual(rowless_lineages(_tables([passing])), [])
 
     def test_canceled_is_4(self):
         chain = [
