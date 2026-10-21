@@ -4,15 +4,15 @@ Both read the same lineage the final `enge compare --lineage` table shows:
 root, coverage, attempts spent and trajectory all come from `enge.lineage`
 (Q-L5-3), so the loop and the table can never disagree.
 
-Candidates (contract v3 §1.4-§1.8), one per task of the generation just
-harvested:
+Candidates (docs/run-loop.md, "Retry accounting"), one per task of the
+generation just harvested:
   * an unparseable task (ERROR with no plans) whose parent is parsed, or
     that is a root, gets its one uncharged rerun with the original filter;
-    a second unparseable result in a row ends the lineage (§1.6);
+    a second unparseable result in a row ends the lineage;
   * a parsed task reruns, per FAILED/ERROR plan, its failed tests whose key
     still has budget (``spent < retry_count``); a failing plan with no
     failed test is rerun plan-only, against the plan key's own budget;
-  * CANCELED and SKIPPED are terminal: never rerun (§1.5);
+  * CANCELED and SKIPPED are terminal: never rerun;
   * a key whose latest covering task is not this task (a rerun made
     outside the loop) is left alone, so a rerun is never planned twice.
 

@@ -1,4 +1,4 @@
-"""The run loop's own wait for one generation (contract R7-1, Q-R6-E', Q-R6-I).
+"""The run loop's own wait for one generation (docs/run-loop.md, "Waiting").
 
 Every unfinished task is polled concurrently, one Testing Farm GET per task
 per interval; no batch state query exists. A failed poll is retried after

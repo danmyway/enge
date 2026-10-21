@@ -21,9 +21,10 @@
           4. [ReportPortal Integration](#reportportal-integration)
              1. [ReportPortal Launch Management](#reportportal-launch-management)
           5. [Report](#report)
-          6. [Rerun](#rerun)
+          6. [Run](#run)
+          7. [Rerun](#rerun)
    3. [Troubleshooting configuration and validation](#troubleshooting-configuration-and-validation)
-          7. [Manifest Store and Run History](#manifest-store-and-run-history)
+          8. [Manifest Store and Run History](#manifest-store-and-run-history)
 
 
 ENGE
@@ -139,6 +140,7 @@ Enge provides several commands for comprehensive test workflow management:<br>
 `report` outputs the test results back to the command line.<br>
 `compare` compares cached `results.json` data across multiple runs, with an always-present consolidated column.<br>
 `rerun` re-dispatches failed or errored test jobs.<br>
+`run` dispatches like `test`, waits, reruns what failed until nothing is left to rerun, then prints one lineage table and exits with a code that grades the result.<br>
 `cancel` cancels running or queued Testing Farm tasks. Reads the same input as the report module — default is the latest manifest; use `--run <id>`, `--file`, or `--input` to select specific runs.
 
 #### Common Options
@@ -929,7 +931,7 @@ enge uses a single `ExitCode` enum (`utils/globals.py`). The universal floor app
 | 99   | Configuration error (bad/missing config, invalid endpoint URL) |
 | 130  | Interrupted (Ctrl-C) |
 
-`enge report` and `enge compare` additionally return result-grading codes, since they are the only commands that grade multi-plan result sets:
+`enge report`, `enge compare` and `enge run` additionally return result-grading codes, since they are the only commands that grade multi-plan result sets:
 
 | Code | Meaning |
 |------|---------|
@@ -938,6 +940,8 @@ enge uses a single `ExitCode` enum (`utils/globals.py`). The universal floor app
 | 4    | Ran; at least one request had no results (missing/expired) or could not be fetched or graded (Testing Farm unreachable, a 404 for that task, a task's result file failing to download on a server error or timeout — HTTP 5xx, 408, 429, a read timeout; a missing (404) or refused (other 4xx) result file stays an ERROR, 3), or (compare only) a CANCELED task |
 
 When a report run mixes these, the most severe wins: **3 > 2 > 4 > 0** (error-dominates — missing results are rerun candidates and must not mask a real error). `enge test` and `enge rerun` also use code 2 for partial dispatch failure (some requests submitted, some failed), and `enge report` uses it for `--refresh` on an invocation with no run to repair, and for `-i/--input` or `-f/--file` input holding no parseable task ID. `enge compare` always returns 0: it is a comparison/reporting view, not a grading command, so table content (including FAILED/ERROR rows) never changes its exit code. Code 99 still applies if the invocation itself can't be serviced (see below).
+
+`enge run` grades the final state of every test and plan with the same precedence (**3 > 2 > 4 > 0**): its last result ERROR (or no xunit twice in a row) is 3, FAILED is 2, CANCELED or no result is 4, PASSED or SKIPPED is 0. Tasks it stopped waiting for (timed out, unreachable, or left without a cached result) also count as 4. It exits 1 when nothing was dispatched, and 3 when no generation-0 task produced xunit.
 
 ##### Compare
 
@@ -964,6 +968,28 @@ enge compare --splitarch --tier tier1
 ```
 
 `enge report --compare` is a **deprecated alias** for `enge compare` (one release only): it emits a WARNING and delegates, but — unlike a normal `enge report` invocation — does not gap-fill the results cache while delegating. `--unify` has been removed outright (it only existed to support the legacy comparison table, which this alias replaces).
+
+##### Run
+
+`enge run` is the supervised loop over `test`, `report` and `rerun`: it dispatches exactly like `enge test` (same dispatch and tagging flags), waits for the tasks, caches their results, reruns what failed, and repeats until nothing is left to rerun. It then prints one `enge compare --lineage` table for the whole loop, which is the only thing it writes to stdout; progress goes to stderr. The full contract is `docs/run-loop.md`.
+
+- `--retry-count N` (default 2): rerun each failing test (or failing plan without test results) at most N times. A task that finished without xunit gets one extra rerun that does not count, and a second one in a row ends it. CANCELED and SKIPPED results are never rerun.
+- `--timeout HOURS` (default 24): stop waiting for a generation after this long. Nothing is canceled. The loop renders what landed, says how to resume, and its exit code includes 4. The same happens when Testing Farm stops answering for a task (3 failed polls, 60 s apart) or a result can't be fetched or cached.
+- `--resume ROOT_RUN_ID`: continue a stopped loop from its first run, under that loop's own `--retry-count` and `--timeout` unless you give them again. It harvests whatever finished meanwhile and keeps rerunning.
+- `-o gitlab`: render the final table as markdown code blocks.
+
+In CI, keep `--timeout` below the job's own timeout: a job killed by its runner is not interrupted cleanly, while the root run id and the resume command are printed to stderr at the start.
+
+```
+# Supervise a set: dispatch, rerun failures at most once each, one table at the end
+enge run -S pre-release-smoke --retry-count 1
+
+# Continue a loop that stopped (timeout, Ctrl-C, unreachable tasks)
+enge run --resume <root_run_id>
+
+# CI: markdown output, a generation timeout shorter than the job's
+enge run -S pre-release-smoke --timeout 4 -o gitlab
+```
 
 ##### Rerun
 Rerun tasks which report as FAILED or ERROR.<br>
