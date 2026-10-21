@@ -169,6 +169,31 @@ class TestOneConfigLoad(unittest.TestCase):
         parsed_opts.assert_called_once_with(cli_args=mock.ANY, config=phases.ctx.config)
 
 
+class TestFetchStateValidation(unittest.TestCase):
+    def test_a_malformed_state_is_a_failed_poll(self):
+        # str(None) == "None" would read as a live task, so a TF answer with
+        # no usable state ran to the generation timeout instead of making the
+        # task unreachable after three failed polls (audit B3).
+        phases = _phases()
+        for payload in ({"state": None}, {"state": ""}, {"state": 3}, {}):
+            with self.subTest(payload=payload):
+                response = SimpleNamespace(
+                    raise_for_status=lambda: None, json=lambda p=payload: p
+                )
+                with mock.patch("enge.run.phases.http_get", return_value=response):
+                    self.assertIsNone(phases.fetch_state("t1"))
+
+    def test_an_unknown_state_name_is_kept(self):
+        # A state TF adds later is a live task, not a failed poll; the
+        # generation timeout bounds the wait.
+        phases = _phases()
+        response = SimpleNamespace(
+            raise_for_status=lambda: None, json=lambda: {"state": "provisioning"}
+        )
+        with mock.patch("enge.run.phases.http_get", return_value=response):
+            self.assertEqual(phases.fetch_state("t1"), "provisioning")
+
+
 class TestQuietPhases(unittest.TestCase):
     def test_nothing_reaches_stdout_and_the_console_is_restored(self):
         phases = _phases()
