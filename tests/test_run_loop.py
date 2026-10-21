@@ -310,6 +310,56 @@ class TestStopRules(unittest.TestCase):
         )
         self.assertNotIn("render", [c[0] for c in phases.calls])
 
+    def test_a_harvest_that_caches_nothing_stops_the_loop_with_4(self):
+        # Report never fails on a caching error (it logs and returns), so a
+        # harvest can return normally and leave no cache behind.
+        phases = FakePhases([task("r", "RUN0", "2026-10-01T00", "FAILED")])
+        phases.harvest = lambda run_id, refresh=False: phases.calls.append(
+            ("harvest", run_id, refresh)
+        )
+
+        code, lines, _ = _run(phases)
+
+        self.assertEqual(code, ExitCode.MISSING_RESULTS)
+        self.assertIn(
+            (
+                "WARNING",
+                "1 task(s) of run RUN0 have no result yet; the loop stopped. "
+                "Resume with: enge run --resume RUN0",
+            ),
+            lines,
+        )
+        self.assertNotIn("rerun", [c[0] for c in phases.calls])
+
+    def test_a_harvest_that_caches_some_tasks_stops_the_loop_with_4(self):
+        phases = FakePhases(
+            [
+                task("a", "RUN0", "2026-10-01T00", "PASSED"),
+                task("b", "RUN0", "2026-10-01T00", "FAILED"),
+            ]
+        )
+        harvest = phases.harvest
+
+        def caches_only_the_first(run_id, refresh=False):
+            harvest(run_id, refresh=refresh)
+            phases.cached[run_id] = phases.cached[run_id][:1]
+
+        phases.harvest = caches_only_the_first
+
+        code, lines, _ = _run(phases)
+
+        # b failed but was never cached: neither rerun nor graded 0.
+        self.assertEqual(code, ExitCode.MISSING_RESULTS)
+        self.assertIn(
+            (
+                "WARNING",
+                "1 task(s) of run RUN0 have no result yet; the loop stopped. "
+                "Resume with: enge run --resume RUN0",
+            ),
+            lines,
+        )
+        self.assertNotIn("rerun", [c[0] for c in phases.calls])
+
     def test_a_rejected_rerun_ends_its_keys_at_their_last_result(self):
         phases = FakePhases([task("r", "RUN0", "2026-10-01T00", "FAILED")])
         phases.reruns.append((RerunSubmission(run_id=None, payloads=1, failed=1), []))
