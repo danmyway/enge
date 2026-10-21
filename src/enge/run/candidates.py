@@ -19,7 +19,9 @@ harvested:
 Exit code (Q-R6-F, Q-R6-K, Q-R6-L), over every cell of both table views:
 the last value E -> 3, F -> 2, C or "." (no result) -> 4, P or S -> 0,
 combined by precedence 3 > 2 > 4 > 0. Tasks with no result at all (timed
-out, unreachable, or rejected at gen 0) contribute 4.
+out, unreachable, or rejected at gen 0) contribute 4. A lineage the table
+has no row for (no task of it ever had a plan result, and it is alone in
+its table) is graded by its last task's verdict instead (`rowless_lineages`).
 """
 
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, cast
@@ -44,6 +46,16 @@ _CODE_OF_LAST_VALUE: Dict[str, ExitCode] = {
     ".": ExitCode.MISSING_RESULTS,
     "P": ExitCode.SUCCESS,
     "S": ExitCode.SUCCESS,
+}
+
+
+_CODE_OF_LAST_VERDICT: Dict[Optional[str], ExitCode] = {
+    "ERROR": ExitCode.TEST_ERROR,
+    "FAILED": ExitCode.TEST_FAILURE,
+    "CANCELED": ExitCode.MISSING_RESULTS,
+    None: ExitCode.MISSING_RESULTS,
+    "PASSED": ExitCode.SUCCESS,
+    "SKIPPED": ExitCode.SUCCESS,
 }
 
 
@@ -150,16 +162,37 @@ def select_candidates(
     return candidates
 
 
+def rowless_lineages(
+    tables: Iterable[LineageTable],
+) -> List[Tuple[ExecutionColumn, ExecutionColumn]]:
+    """(root, last task) of every lineage in a table without rows, once.
+
+    A table has no rows when none of its tasks has a plan result; its
+    lineages are then invisible to the cells, in both views.
+    """
+    found: Dict[str, Tuple[ExecutionColumn, ExecutionColumn]] = {}
+    for table in tables:
+        if table.rows:
+            continue
+        for root, lineage in zip(table.columns, table.generations):
+            found.setdefault(root.task_id, (root, lineage[-1][1]))
+    return list(found.values())
+
+
 def final_exit_code(
     tables: Iterable[LineageTable], *, without_result: int = 0
 ) -> ExitCode:
     """The loop's exit code from the final tables (both views)."""
+    tables = list(tables)
     code: Optional[ExitCode] = ExitCode.SUCCESS
     for table in tables:
         for row in table.rows:
             for cell in row.cells:
                 if cell is not None and cell.values:
                     code = worst_exit_code(code, _CODE_OF_LAST_VALUE[cell.values[-1]])
+    for _, last in rowless_lineages(tables):
+        verdict = _CODE_OF_LAST_VERDICT.get(last.verdict, ExitCode.TEST_ERROR)
+        code = worst_exit_code(code, verdict)
     if without_result:
         code = worst_exit_code(code, ExitCode.MISSING_RESULTS)
     return cast(ExitCode, code)

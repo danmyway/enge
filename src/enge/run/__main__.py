@@ -37,7 +37,11 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence, Set
 from enge.dispatch.__main__ import DispatchSubmission
 from enge.rerun.__main__ import RerunCandidate, RerunSubmission
 from enge.run import poller
-from enge.run.candidates import final_exit_code, select_candidates
+from enge.run.candidates import (
+    final_exit_code,
+    rowless_lineages,
+    select_candidates,
+)
 from enge.utils.errors import NetworkError, ValidationError
 from enge.utils.globals import ExitCode
 
@@ -309,6 +313,20 @@ class RunLoop:
         if self.phases.cache(root) is not None:
             self.phases.render(root, self.retry_count)
         tables = self.phases.final_tables(root, self.retry_count)
+        for lineage_root, last in rowless_lineages(tables):
+            LOGGER.warning(
+                "the lineage of task %s (%s, %s, %s) ended %s; the final table "
+                "has no row for it",
+                lineage_root.task_id,
+                lineage_root.set,
+                lineage_root.tier,
+                lineage_root.arch,
+                (
+                    f"{last.verdict} without a plan result"
+                    if last.verdict
+                    else "without a result"
+                ),
+            )
         return int(final_exit_code(tables, without_result=self.without_result))
 
     def _generations(self, generation: Optional[_Generation]) -> None:
