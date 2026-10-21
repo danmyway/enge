@@ -386,6 +386,28 @@ class TestStopRules(unittest.TestCase):
         )
         self.assertNotIn("rerun", [c[0] for c in phases.calls])
 
+    def test_a_complete_but_unfinalized_cache_is_graded_from_its_entries(self):
+        # Every task entry is cached but the root verdict never got written
+        # (report swallows a finalization failure). The task verdicts are
+        # all there and grading reads only them, so the loop goes on: a stop
+        # would turn complete results into "missing" (exit 4) and a resume
+        # would hit the same failure again (re-review R1, declined).
+        phases = FakePhases([task("r", "RUN0", "2026-10-01T00", "FAILED")])
+        phases.reruns.append(_rerun_run("RUN1", "c1", "r", "PASSED", "2026-10-02T00"))
+        cache = phases.cache
+
+        def never_finalized(run_id):
+            found = cache(run_id)
+            return found and SimpleNamespace(verdict=None, results=found.results)
+
+        phases.cache = never_finalized
+
+        code, lines, _ = _run(phases)
+
+        self.assertEqual(code, ExitCode.SUCCESS)
+        self.assertEqual([c[1] for c in phases.calls if c[0] == "rerun"], ["RUN0"])
+        self.assertFalse([m for _, m in lines if "the loop stopped" in m])
+
     def test_a_rejected_rerun_ends_its_keys_at_their_last_result(self):
         phases = FakePhases([task("r", "RUN0", "2026-10-01T00", "FAILED")])
         phases.reruns.append((RerunSubmission(run_id=None, payloads=1, failed=1), []))
