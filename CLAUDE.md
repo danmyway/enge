@@ -39,6 +39,10 @@ src/enge/
                      Read-only consumer of results.json — never parses xunit, never
                      writes a cache, see "Results.json format"
   rerun/             requalify FAILED/ERROR plans and re-dispatch
+  run/               enge run, the supervised rerun loop: RunLoop (__main__), candidates
+                     (what to rerun + exit code, over enge.lineage), phases (the real
+                     dispatch/report/rerun/compare calls, quiet), poller (concurrent TF
+                     state wait). See "Run loop"
   cancel/            cancel TF tasks
   reportportal/      launch finish/enrich/delete subcommands (unified pipeline
                      via operations.py + utils.py)
@@ -131,17 +135,18 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   matches no runs on report, compare, rerun, or cancel, and for report's
   raw `-i`/`-f` input holding no parseable task ID — nothing ran at
   all (an unknown or ambiguous `--run` value already exited 2 this way).
-  Report is the ONLY subcommand that returns codes 3
+  Report and run are the ONLY subcommands that return codes 3
   (errors in parsed results) and 4 (missing/partial results, including
   unrecognized TF overall values — rerun candidates, maintainer-ratified
   2026-07-17 — and requested tasks that could not be fetched or graded:
   dropped at the task-info fetch (404, schema miss, retries exhausted,
   worker exception) or whose xunit fetch raised or failed transiently —
   HTTP 5xx, 408, 429, a read timeout; a 404 or another 4xx stays 3), and
-  the only one requiring severity precedence
+  the only ones requiring severity precedence
   (3 > 2 > 4 > 0, error-dominates — missing results are rerun candidates
-  and must not mask a real error), because it is the only command that
-  grades multi-plan result sets.
+  and must not mask a real error), because they are the only commands that
+  grade multi-plan result sets. `enge run` grades every key's final
+  lineage state (see "Run loop").
 - **State files**: JSON manifests under `~/.local/share/enge/runs/<run_id>.json`
   (XDG_DATA_HOME respected; config-overridable). Each dispatch/rerun writes
   one versioned manifest (schema_version=1) with structured per-request
@@ -244,6 +249,24 @@ an agent must not violate before opening that file:
 - Read the full doc before touching `compare/engine.py`,
   `compare/loader.py`, or the descriptor-sourcing/artifacts-URL fallback
   rules.
+
+## Run loop
+
+Full contract: `docs/run-loop.md` (loop shape, retry accounting, stop
+rules, resume, exit code, dated rulings Q-R6-*). Invariants an agent must
+not violate before opening that file:
+
+- **`enge run` writes no manifest or state of its own** (R7-4): every
+  manifest comes from the reused `submit_dispatch`/`submit_rerun`, every
+  `results.json` from report's cache writer.
+- **Retry accounting is re-derived from the cache through `enge.lineage`
+  every generation**; the loop and the final table read the same lineage
+  (Q-L5-3). Never add a loop-side counter.
+- **A harvest that returns is not proof of a result**: report swallows
+  caching errors, so the loop checks cache coverage and stops (exit
+  includes 4) on a gap.
+- **The final table is the only stdout**; phases run quiet, progress is
+  stderr on `enge.run.__main__`, pinned verbatim in `tests/test_run_loop.py`.
 
 ## Manifest schema
 

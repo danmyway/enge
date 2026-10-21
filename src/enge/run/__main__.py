@@ -1,6 +1,6 @@
 """`enge run`: dispatch, wait, harvest and rerun until every key settles.
 
-The loop of contract v3 §4 under the rulings of 2026-10-12/13:
+The loop as docs/run-loop.md records it (ruling IDs below are that file's):
 
     gen 0:  dispatch -> wait -> harvest -> [every task unparseable? -> exit 3]
     gen G:  index -> candidates -> [none? -> FINAL] -> rerun -> wait -> harvest
@@ -77,7 +77,7 @@ class _Phases(Protocol):
 
 
 def _is_unparseable(entry: Any) -> bool:
-    """A cached task with no xunit: ERROR and no plans (contract §1.6)."""
+    """A cached task with no xunit: ERROR and no plans (docs/run-loop.md)."""
     return entry.verdict == "ERROR" and not entry.plans
 
 
@@ -362,7 +362,7 @@ class RunLoop:
 
 
 class _Abort(Exception):
-    """Gen 0 produced no parseable result at all (contract §1.6 run guard)."""
+    """Gen 0 produced no parseable result at all (docs/run-loop.md)."""
 
     def __init__(self, run_id: str) -> None:
         super().__init__(run_id)
