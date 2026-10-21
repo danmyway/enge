@@ -140,10 +140,16 @@ class Phases:
         try:
             response = http_get(url, timeout=REQUEST_TIMEOUT_DEFAULT)
             response.raise_for_status()
-            return str(response.json()["state"])
+            state = response.json()["state"]
         except (RequestException, ValueError, KeyError, TypeError) as e:
             LOGGER.debug("state poll for %s failed: %s", task_id, e)
             return None
+        if not isinstance(state, str) or not state:
+            # A failed poll, not a live task: three in a row make the task
+            # unreachable. Unknown state names stay live; --timeout bounds them.
+            LOGGER.debug("state poll for %s returned state %r", task_id, state)
+            return None
+        return state
 
     def harvest(self, run_id: str, *, refresh: bool = False) -> None:
         """`enge report --run <id>` without the table; NetworkError propagates."""
