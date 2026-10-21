@@ -182,3 +182,9 @@ own argument checks, so an invalid config exits 99 first.
   exactly that.
 - After a harvest `NetworkError`, the WARNING counts every task of the
   run, including tasks an earlier partial harvest had already cached.
+- A cache holding every task entry but no root verdict (report logs and
+  swallows a finalization failure) does not stop the loop: grading reads
+  the task entries only, so the result is complete and correct. A later
+  `--resume` re-harvests that run, since it is not finalized
+  (re-review R1, 2026-10-21, declined: stopping would grade complete
+  results as missing).
