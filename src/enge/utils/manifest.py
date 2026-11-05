@@ -68,6 +68,7 @@ class ManifestWriter:
         git_ref: Optional[str] = None,
         event: Optional[str] = None,
         build_ids: Optional[List[str]] = None,
+        build_artifacts: Optional[List[Dict[str, str]]] = None,
         tests: Optional[List[str]] = None,
     ) -> None:
         self._requests.append(
@@ -89,6 +90,7 @@ class ManifestWriter:
                 "git_ref": git_ref,
                 "event": event,
                 "build_ids": (list(build_ids) if build_ids else []),
+                "build_artifacts": (list(build_artifacts) if build_artifacts else []),
                 "tests": (list(tests) if tests else []),
             }
         )

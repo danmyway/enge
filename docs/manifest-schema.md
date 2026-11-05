@@ -243,6 +243,21 @@ Field-by-field, type / nullability / producing writer:
   whether any downstream consumer relies on parsing this suffix is
   unverified). State this as a caution only — this document asserts
   nothing about consumers.
+- `build_artifacts` (list of dict, default `[]`, never `null` when the
+  key is present; each dict has `"id"` and `"type"` keys) — optional key
+  (absent on migrated manifests only; always emitted on the native path).
+  Parallel to `build_ids`, recording the artifact family alongside each
+  ID. Native dispatch and rerun:
+  `[{"id": a["id"], "type": a["type"]} for a in <artifacts>]`
+  (`dispatch/set_flow.py:548`, `rerun/__main__.py:1244`, filtered to
+  entries with an `id` on the rerun side). The `type` values are the
+  Testing Farm artifact type strings from `ARTIFACT_MAPPING`
+  (`utils/globals.py:14`): `"fedora-copr-build"` and
+  `"redhat-brew-build"`. The `id` values are byte-identical to those in
+  `build_ids`, preserving COPR's `"<build_id>:<chroot>"` format. Always
+  present on native manifests (empty list when no artifacts); consumers
+  `.get()` it (never `[key]`) because migrated manifests omit it
+  entirely.
 - `tests` (list of str, default `[]`, never `null` when the key is
   present) — optional key (absent on migrated manifests only; always
   emitted on the native path). The test NAMES the request was
@@ -296,15 +311,16 @@ does not match most rerun tasks, not a crash.
 
 ## Shape by origin
 
-Native `requests[]` entries carry 17 keys (`task_id` plus the 16
+Native `requests[]` entries carry 18 keys (`task_id` plus the 17
 optional keyword fields of `add_request`). Migrated entries carry 9:
 `task_id`, `set`, `tier`, `arch`, `plan`, `source_compose`,
-`target_compose`, `artifacts_url`, `dispatched_at`. The 8 keys migrated
+`target_compose`, `artifacts_url`, `dispatched_at`. The 9 keys migrated
 entries omit (`launch_uuid`, `rerun_of`, `source`, `target`, `git_ref`,
-`event`, `build_ids`, `tests`) are ABSENT, not `null` and not `[]`.
+`event`, `build_ids`, `build_artifacts`, `tests`) are ABSENT, not `null`
+and not `[]`.
 
 **Hard consumer invariant: use `.get(key, default)` on `requests[]`
-entries, never `[key]`.** Bracket access on any of the 8
+entries, never `[key]`.** Bracket access on any of the 9
 migrate-omitted keys raises `KeyError` on a legitimate manifest.
 
 `utils/task_resolver.py:87` reads `m['run_id']` with bracket access
