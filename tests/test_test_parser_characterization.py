@@ -49,13 +49,9 @@ class TestTestSubparserCharacterization(unittest.TestCase):
         rows = [_canonical(a) for a in _subparser("test")._actions]
 
         self.assertEqual(len(rows), 35)
-        self.assertEqual(_digest(rows), "c6a76d3156b27547ddeb4b2532469eaf")
+        self.assertEqual(_digest(rows), "c013e0443832741a10f20879ffd3aa92")
 
-    def test_copr_and_brew_stay_mutually_exclusive(self):
+    def test_test_subparser_has_no_mutually_exclusive_groups(self):
         groups = _subparser("test")._mutually_exclusive_groups
-        rows = [
-            sorted(o for a in g._group_actions for o in a.option_strings)
-            for g in groups
-        ]
 
-        self.assertEqual(rows, [["--brew", "--copr"]])
+        self.assertEqual(groups, [])

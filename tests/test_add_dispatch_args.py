@@ -8,8 +8,6 @@ builder exists.
 
 import argparse
 import unittest
-from contextlib import redirect_stderr
-from io import StringIO
 
 from enge.utils.arg_parser import build_parser
 
@@ -90,14 +88,13 @@ class TestAddDispatchArgs(unittest.TestCase):
         self.assertEqual(len(expected), len(DISPATCH_DESTS))
         self.assertEqual([_canonical(a) for a in parser._actions], expected)
 
-    def test_copr_and_brew_are_mutually_exclusive(self):
+    def test_copr_and_brew_parse_together(self):
         parser = _bare_parser_with_dispatch_args()
-        # Premise: each flag parses on its own, so the SystemExit below
-        # can only come from the exclusion.
+        # Both flags parse on their own
         self.assertEqual(len(parser.parse_args(["--copr", "x"]).copr), 1)
         self.assertEqual(len(parser.parse_args(["--brew", "y"]).brew), 1)
 
-        with self.assertRaises(SystemExit) as caught, redirect_stderr(StringIO()):
-            parser.parse_args(["--copr", "x", "--brew", "y"])
-
-        self.assertEqual(caught.exception.code, 2)
+        # And both land on one namespace without SystemExit
+        args = parser.parse_args(["--copr", "x", "--brew", "y"])
+        self.assertEqual(len(args.copr), 1)
+        self.assertEqual(len(args.brew), 1)

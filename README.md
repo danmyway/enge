@@ -195,7 +195,7 @@ eval "$(register-python-argcomplete enge)"
 
 The goal of enge is to make requesting test jobs as easy as possible.<br>
 A default artifact to install (if not specified otherwise) is the one available in the compose.<br>
-The `--brew` and `--copr` options denote which type of a build artifact is to be requested for testing.<br>
+The `--brew` and `--copr` options denote which type of a build artifact is to be requested for testing. Both may be combined to install builds from both sources in one request.<br>
 
 **COPR Builds:**
 - **Reference Format**: `alias:reference` (e.g., `lp:pr123`) or direct Build ID (integer, e.g., `12345`)
@@ -238,6 +238,9 @@ enge test --brew 0.12-3 --plan /plans
 
 # Specify more individual test plans
 enge test --brew 0.12-3 --plan /plans/tier0/basic_sanity_checks --plan /plans/tier1/whatever_else
+
+# Test with both COPR and brew builds in one request
+enge test --copr lp:pr123 --brew lpr-0.1-2.el9 --source 9.7 --tier tier0
 
 # Test using predefined tiers with leapp PR
 enge test --copr lp:pr123 --source 9.7 --tier tier0 --tier tier1

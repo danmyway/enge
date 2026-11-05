@@ -231,10 +231,8 @@ def _add_dispatch_args(parser: argparse.ArgumentParser) -> None:
         "<major>.<minor>), falling back to <source_major + 1>.<source_minor - 6> on a miss.",
     )
 
-    # Artifact type (mutually exclusive)
-    artifact_type = parser.add_mutually_exclusive_group()
-
-    artifact_type.add_argument(
+    # Artifact sources
+    parser.add_argument(
         "--copr",
         type=_copr_ref_type,
         action="append",
@@ -243,10 +241,11 @@ def _add_dispatch_args(parser: argparse.ArgumentParser) -> None:
         const=None,
         help="COPR build reference: alias:version (e.g., lp:pr123, lpr:main) or numeric BuildID. "
         "Aliases: lp=leapp, lpr=leapp-repository. "
-        "If neither --copr nor --brew is specified, compose artifacts are used.",
+        "If neither --copr nor --brew is specified, compose artifacts are used. "
+        "Both may be combined to install builds from both sources in one request.",
     )
 
-    artifact_type.add_argument(
+    parser.add_argument(
         "--brew",
         type=_brew_ref_type,
         action="append",
@@ -256,7 +255,8 @@ def _add_dispatch_args(parser: argparse.ArgumentParser) -> None:
         help="Test a brew build RC. "
         "Accepts either version reference (0.1.2-3) or TaskID. Both are validated via Brew API. "
         "Task IDs are resolved to their NVR, and the NVR is used in the Testing Farm payload. "
-        "If neither of copr/brew is specified, the compose build is tested.",
+        "If neither of copr/brew is specified, the compose build is tested. "
+        "Both may be combined to install builds from both sources in one request.",
     )
 
     # Test planning and filtering
@@ -516,6 +516,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  enge test -s 9.7 -T tier0                           # compose build\n"
             "  enge test --copr lp:pr123 -s 9.7 -T tier0           # COPR PR build\n"
             "  enge test --brew leapp-0.1-2.el9 -T tier0            # brew build\n"
+            "  enge test --copr lp:pr123 --brew lpr-0.1-2.el9 -T tier0  # COPR + brew\n"
             "  enge test -S pre-release-smoke                       # pre-configured test set\n"
             "  enge test -S pre-release-smoke -n                    # preview payload\n"
         ),
