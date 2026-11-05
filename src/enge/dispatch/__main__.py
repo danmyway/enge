@@ -31,7 +31,11 @@ from rich.markup import escape
 
 from enge.utils.globals import ARTIFACT_MAPPING
 from enge.utils.console import console
-from enge.utils.errors import ConfigurationError, ValidationError
+from enge.utils.errors import (
+    ArtifactResolutionError,
+    ConfigurationError,
+    ValidationError,
+)
 from enge.utils.tf_artifact import CoprRef, BrewRef
 from .tf_send_request import SubmitTest
 from .set_flow import expand_set_requests, process_request_spec
@@ -43,6 +47,12 @@ from enge.utils.validators import (
 from .plan_flow import build_tier_plan_specs
 
 LOGGER = logging.getLogger(__name__)
+
+# Bound at import time on purpose: these are pure reference parsers, and the
+# binding keeps them reachable when a test patches CoprRef/BrewRef with a
+# double that only implements get_info().
+_parse_copr_reference = CoprRef._parse_copr_reference
+_parse_brew_nvr_package = BrewRef._parse_package_name_from_nvr
 
 
 def _compute_tiers_and_plans(ctx):
@@ -62,18 +72,6 @@ def _compute_tiers_and_plans(ctx):
         tiers = None
         plans = cli_plans or config_plans
     return tiers, plans
-
-
-def _determine_artifact_type(ctx) -> str:
-    copr_artifact = getattr(ctx.cli_args, "copr", None)
-    brew_artifact = getattr(ctx.cli_args, "brew", None)
-    has_copr = copr_artifact or getattr(ctx, "copr_references", [])
-    has_brew = brew_artifact or getattr(ctx, "brew_references", [])
-    if has_copr:
-        return ARTIFACT_MAPPING["copr"]
-    if has_brew:
-        return ARTIFACT_MAPPING["brew"]
-    return "compose"
 
 
 def validate_git_repository(url: str) -> None:
@@ -126,154 +124,220 @@ def setup_submit_test(ctx) -> SubmitTest:
         raise ConfigurationError("Failed to initialize SubmitTest") from e
 
 
+def _as_reference_list(value: Any) -> List[Any]:
+    """Normalize a reference holder into a list, dropping an absent one."""
+    if value is None:
+        return []
+    return list(value) if isinstance(value, list) else [value]
+
+
+def _reference_label(reference: List[Any]) -> str:
+    """How a reference is named in a user-facing error."""
+    return ", ".join(str(ref) for ref in reference) or "<unset>"
+
+
+def _copr_requested_package(reference: List[Any], ctx) -> Optional[str]:
+    """The package a COPR reference asks for.
+
+    The alias table answers it for ``alias:ref`` form; a bare build ID has
+    no package in it, so the configured name stands in -- the same
+    resolution the COPR query itself uses.
+    """
+    parsed = None
+    if reference and reference[0] is not None:
+        parsed, _ = _parse_copr_reference(str(reference[0]))
+    return parsed or ctx.copr_api.get("package") or ctx.project.get("name") or None
+
+
+def _brew_requested_package(build: Dict[str, Any]) -> Optional[str]:
+    """The package a resolved Brew build was asked for, from its NVR."""
+    nvr = build.get("nvr")
+    parsed = _parse_brew_nvr_package(str(nvr)) if nvr else None
+    if parsed:
+        return parsed
+    packages = build.get("packages") or []
+    return packages[0] if packages else None
+
+
+def _require_builds(builds: List[Dict[str, Any]], family: str, reference: str) -> None:
+    """Every configured reference must resolve; half a dependency pair is
+    worse than nothing, so an empty result fails the request."""
+    if not builds:
+        raise ArtifactResolutionError(
+            f"{family} reference '{reference}' resolved to no builds"
+        )
+
+
+def _resolve_copr_builds(compose_name: str, ctx) -> List[Dict[str, Any]]:
+    """Resolve every configured COPR reference into stamped build dicts.
+
+    Within the family the precedence is unchanged: CLI ``--copr`` replaces
+    configured ``copr_references``, which replace the legacy single
+    ``copr_reference``.
+    """
+    copr_artifacts = _as_reference_list(getattr(ctx.cli_args, "copr", None))
+    copr_references = list(getattr(ctx, "copr_references", None) or [])
+    legacy_reference = getattr(ctx, "copr_reference", None)
+    if not copr_artifacts and not copr_references and legacy_reference:
+        LOGGER.debug("Getting COPR artifact information from configuration (legacy)")
+        copr_references = [legacy_reference]
+    elif copr_references:
+        LOGGER.debug("Getting COPR artifact information from configuration")
+    if not copr_artifacts and not copr_references:
+        return []
+
+    copr_pkg_name = ctx.copr_api.get("package") or ctx.project.get("name") or ""
+    copr_repo = ctx.copr_api.get("repository") or copr_pkg_name or ""
+
+    # (artifact, reference list) pairs, CLI objects first or config refs.
+    if copr_artifacts:
+        LOGGER.debug("Getting COPR artifact information from CLI")
+        pending = []
+        for copr_artifact in copr_artifacts:
+            reference = getattr(copr_artifact, "ref", None)
+            if reference is None:
+                reference = [legacy_reference] if legacy_reference else []
+            else:
+                reference = _as_reference_list(reference)
+            pending.append((copr_artifact, reference))
+    else:
+        pending = [(CoprRef([ref]), [ref]) for ref in copr_references]
+
+    all_builds: List[Dict[str, Any]] = []
+    for copr_artifact, reference in pending:
+        builds = copr_artifact.get_info(
+            packages=copr_pkg_name,
+            repo=copr_repo,
+            reference=reference,
+            composes=[compose_name],
+            options=ctx,
+        )
+        label = _reference_label(reference)
+        _require_builds(builds, "COPR", label)
+        requested_package = _copr_requested_package(reference, ctx)
+        for build in builds:
+            build["type"] = ARTIFACT_MAPPING["copr"]
+            build["requested_package"] = requested_package
+            build["requested_reference"] = label
+        all_builds.extend(builds)
+    return all_builds
+
+
+def _resolve_brew_builds(compose_name: str, ctx) -> List[Dict[str, Any]]:
+    """Resolve every configured Brew reference into stamped build dicts.
+
+    Within the family the precedence is unchanged: CLI ``--brew`` replaces
+    configured ``brew_references``, which replace the legacy single
+    ``brew_reference``.
+    """
+    brew_artifacts = _as_reference_list(getattr(ctx.cli_args, "brew", None))
+    brew_references = list(getattr(ctx, "brew_references", None) or [])
+    legacy_reference = getattr(ctx, "brew_reference", None)
+    if not brew_artifacts and not brew_references and legacy_reference:
+        LOGGER.debug("Getting brew artifact information from configuration (legacy)")
+        brew_references = [legacy_reference]
+    elif brew_references:
+        LOGGER.debug("Getting brew artifact information from configuration")
+    if not brew_artifacts and not brew_references:
+        return []
+
+    brew_pkg_name = ctx.brew_api.get("package") or ctx.project.get("name") or ""
+
+    if brew_artifacts:
+        LOGGER.debug("Getting brew artifact information from CLI")
+        pending = []
+        for brew_artifact in brew_artifacts:
+            reference = getattr(brew_artifact, "ref", None)
+            if reference is None:
+                reference = [legacy_reference] if legacy_reference else []
+            else:
+                reference = _as_reference_list(reference)
+            pending.append((brew_artifact, reference))
+    else:
+        pending = [(BrewRef([ref]), [ref]) for ref in brew_references]
+
+    all_builds: List[Dict[str, Any]] = []
+    for brew_artifact, reference in pending:
+        builds = brew_artifact.get_info(
+            packages=brew_pkg_name,
+            reference=reference,
+            composes=[compose_name],
+            options=ctx,
+        )
+        label = _reference_label(reference)
+        _require_builds(builds, "Brew", label)
+        for build in builds:
+            build["type"] = ARTIFACT_MAPPING["brew"]
+            build["requested_package"] = _brew_requested_package(build)
+            build["requested_reference"] = label
+        all_builds.extend(builds)
+    return all_builds
+
+
+def _assert_no_package_collision(
+    copr_builds: List[Dict[str, Any]], brew_builds: List[Dict[str, Any]]
+) -> None:
+    """Refuse the same package from both families.
+
+    The comparison is between what each reference *asked for*, never the
+    resolved ``packages`` lists: COPR fills those with binary NVRAs and
+    Brew with a bare source name, so intersecting them would be a silent
+    no-op.
+    """
+    by_package: Dict[str, str] = {
+        build["requested_package"]: build.get("requested_reference", "<unset>")
+        for build in copr_builds
+        if build.get("requested_package")
+    }
+    for build in brew_builds:
+        package = build.get("requested_package")
+        if not package or package not in by_package:
+            continue
+        raise ArtifactResolutionError(
+            f"Package '{package}' is requested from both artifact families: "
+            f"COPR reference '{by_package[package]}' and Brew reference "
+            f"'{build.get('requested_reference', '<unset>')}'. Refusing to "
+            f"install two versions of one package in a single request."
+        )
+
+
 def get_artifact_info(compose_name: str, ctx) -> List[Dict[str, Any]]:
-    """Get artifact information based on the artifact type."""
+    """Resolve every configured artifact reference, both families.
+
+    Each returned build carries its own Testing Farm ``type`` and the
+    ``requested_package`` its reference asked for. With no references
+    configured at all, the single compose-only entry stands in and its
+    ``type`` is None.
+    """
     try:
-        copr_artifacts = getattr(ctx.cli_args, "copr", None)
-        brew_artifacts = getattr(ctx.cli_args, "brew", None)
+        copr_builds = _resolve_copr_builds(compose_name, ctx)
+        brew_builds = _resolve_brew_builds(compose_name, ctx)
+        _assert_no_package_collision(copr_builds, brew_builds)
 
-        all_builds = []
+        if copr_builds or brew_builds:
+            return copr_builds + brew_builds
 
-        if copr_artifacts:
-            LOGGER.debug("Getting COPR artifact information from CLI")
-            # Handle multiple COPR artifacts from CLI
-            if not isinstance(copr_artifacts, list):
-                copr_artifacts = [copr_artifacts]
+        # No build artifacts anywhere - install from the source compose.
+        LOGGER.debug(
+            "Using artifact installed from the source compose - no build artifacts in payload"
+        )
+        return [
+            {
+                "compose": compose_name,
+                "build_id": None,  # No build_id for compose artifacts
+                "distro": ctx.tmt_context.get(
+                    "distro",
+                    f"rhel-{ctx.source_spec['major']}.{ctx.source_spec['minor']}",
+                ),
+                "type": None,
+                "requested_package": None,
+            }
+        ]
 
-            for copr_artifact in copr_artifacts:
-                # Extract reference from the artifact object itself
-                artifact_reference = getattr(copr_artifact, "ref", None)
-                if artifact_reference is None:
-                    artifact_reference = (
-                        [ctx.copr_reference] if ctx.copr_reference else []
-                    )
-                elif not isinstance(artifact_reference, list):
-                    artifact_reference = [artifact_reference]
-
-                copr_pkg_name = (
-                    ctx.copr_api.get("package") or ctx.project.get("name") or ""
-                )
-                copr_repo = ctx.copr_api.get("repository") or copr_pkg_name or ""
-                builds = copr_artifact.get_info(
-                    packages=copr_pkg_name,
-                    repo=copr_repo,
-                    reference=artifact_reference,
-                    composes=[compose_name],
-                    options=ctx,
-                )
-                if builds:
-                    all_builds.extend(builds)
-
-        elif brew_artifacts:
-            LOGGER.debug("Getting brew artifact information from CLI")
-            # Handle multiple Brew artifacts from CLI
-            if not isinstance(brew_artifacts, list):
-                brew_artifacts = [brew_artifacts]
-
-            for brew_artifact in brew_artifacts:
-                # Extract reference from the artifact object itself
-                artifact_reference = getattr(brew_artifact, "ref", None)
-                if artifact_reference is None:
-                    artifact_reference = (
-                        [ctx.brew_reference] if ctx.brew_reference else []
-                    )
-                elif not isinstance(artifact_reference, list):
-                    artifact_reference = [artifact_reference]
-                brew_pkg_name = (
-                    ctx.brew_api.get("package") or ctx.project.get("name") or ""
-                )
-                builds = brew_artifact.get_info(
-                    packages=brew_pkg_name,
-                    reference=artifact_reference,
-                    composes=[compose_name],
-                    options=ctx,
-                )
-                if builds:
-                    all_builds.extend(builds)
-        elif getattr(ctx, "copr_references", []):
-            LOGGER.debug("Getting COPR artifact information from configuration")
-            # Handle COPR references from test set or config (no CLI artifacts)
-            for copr_ref in ctx.copr_references:
-                copr_pkg_name = (
-                    ctx.copr_api.get("package") or ctx.project.get("name") or ""
-                )
-                copr_repo = ctx.copr_api.get("repository") or copr_pkg_name or ""
-                copr_artifact = CoprRef([copr_ref])
-                builds = copr_artifact.get_info(
-                    packages=copr_pkg_name,
-                    repo=copr_repo,
-                    reference=[copr_ref],
-                    composes=[compose_name],
-                    options=ctx,
-                )
-                if builds:
-                    all_builds.extend(builds)
-        elif getattr(ctx, "brew_references", []):
-            LOGGER.debug("Getting brew artifact information from configuration")
-            # Handle Brew references from test set or config (no CLI artifacts)
-            for brew_ref in ctx.brew_references:
-                brew_pkg_name = (
-                    ctx.brew_api.get("package") or ctx.project.get("name") or ""
-                )
-                brew_artifact = BrewRef([brew_ref])
-                builds = brew_artifact.get_info(
-                    packages=brew_pkg_name,
-                    reference=[brew_ref],
-                    composes=[compose_name],
-                    options=ctx,
-                )
-                if builds:
-                    all_builds.extend(builds)
-        elif ctx.copr_reference:
-            LOGGER.debug(
-                "Getting COPR artifact information from configuration (legacy)"
-            )
-            # Backward compatibility for single reference
-            copr_pkg_name = ctx.copr_api.get("package") or ctx.project.get("name") or ""
-            copr_repo = ctx.copr_api.get("repository") or copr_pkg_name or ""
-            copr_artifact = CoprRef([ctx.copr_reference])
-            builds = copr_artifact.get_info(
-                packages=copr_pkg_name,
-                repo=copr_repo,
-                reference=[ctx.copr_reference],
-                composes=[compose_name],
-                options=ctx,
-            )
-            if builds:
-                all_builds.extend(builds)
-        elif ctx.brew_reference:
-            LOGGER.debug(
-                "Getting brew artifact information from configuration (legacy)"
-            )
-            # Backward compatibility for single reference
-            brew_pkg_name = ctx.brew_api.get("package") or ctx.project.get("name") or ""
-            brew_artifact = BrewRef([ctx.brew_reference])
-            builds = brew_artifact.get_info(
-                packages=brew_pkg_name,
-                reference=[ctx.brew_reference],
-                composes=[compose_name],
-                options=ctx,
-            )
-            if builds:
-                all_builds.extend(builds)
-        else:
-            # Handle compose artifact type - no build artifacts needed
-            LOGGER.debug(
-                "Using artifact installed from the source compose - no build artifacts in payload"
-            )
-            all_builds = [
-                {
-                    "compose": compose_name,
-                    "build_id": None,  # No build_id for compose artifacts
-                    "distro": ctx.tmt_context.get(
-                        "distro",
-                        f"rhel-{ctx.source_spec['major']}.{ctx.source_spec['minor']}",
-                    ),
-                }
-            ]
-
-        return all_builds
-
+    except ArtifactResolutionError:
+        # A per-request failure the caller records and continues from; it
+        # must not be flattened into a run-level ValidationError.
+        raise
     except Exception as e:
         LOGGER.critical(f"Failed to get artifact information: {e}")
         raise ValidationError("Failed to get artifact information") from e
@@ -434,8 +498,6 @@ def submit_dispatch(ctx) -> Optional[DispatchSubmission]:
         )
 
     tiers, plans = _compute_tiers_and_plans(ctx)
-    # Run-wide by design; mixed copr/brew per-spec is a known limitation (project ledger).
-    artifact_type = _determine_artifact_type(ctx)
 
     manifest_writer = _build_manifest_writer(ctx)
 
@@ -451,7 +513,6 @@ def submit_dispatch(ctx) -> Optional[DispatchSubmission]:
                 idx,
                 total_expected_requests,
                 spec,
-                artifact_type,
                 resolver,
                 ctx=ctx,
                 manifest_writer=manifest_writer,
@@ -480,7 +541,6 @@ def submit_dispatch(ctx) -> Optional[DispatchSubmission]:
                 i,
                 total_expected_requests,
                 spec,
-                artifact_type,
                 resolver,
                 ctx=ctx,
                 manifest_writer=manifest_writer,

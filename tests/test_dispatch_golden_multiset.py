@@ -188,6 +188,7 @@ class TestDispatchGoldenMultiset(unittest.TestCase):
                     "build_id": 12345,
                     "packages": [ref_label],
                     "nvr": ref_label,
+                    "type": "fedora-koji-build",
                 }
             ]
 
@@ -215,7 +216,6 @@ class TestDispatchGoldenMultiset(unittest.TestCase):
                 idx=idx,
                 total_expected_requests=2,
                 spec=spec,
-                artifact_type="fedora-koji-build",
                 artifact_resolver=resolver,
                 ctx=resolved_opts,
             )

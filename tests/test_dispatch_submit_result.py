@@ -30,9 +30,7 @@ _MOD = "enge.dispatch.__main__"
 
 
 def _submitted(summary):
-    def process(
-        idx, total, spec, artifact_type, resolver=None, *, ctx, manifest_writer=None
-    ):
+    def process(idx, total, spec, resolver=None, *, ctx, manifest_writer=None):
         if not getattr(ctx.cli_args, "dryrun", False):
             manifest_writer.add_request(
                 f"task-{idx}", set_name="demo", tier="tier0", arch="x86_64"
@@ -45,9 +43,7 @@ def _submitted(summary):
     return process
 
 
-def _failed(
-    idx, total, spec, artifact_type, resolver=None, *, ctx, manifest_writer=None
-):
+def _failed(idx, total, spec, resolver=None, *, ctx, manifest_writer=None):
     return {"status": "failed", "error": "boom", "set_name": "demo"}
 
 

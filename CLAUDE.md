@@ -82,6 +82,29 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   run-level collapse in `build_test_attributes`
   (`effective_values = individual_test_sets[0]`) remains as the fallback
   source; single-set and no-set flows are unchanged.
+  **The consumer is additive**: `dispatch/__main__.get_artifact_info()`
+  resolves both families (`_resolve_copr_builds` then
+  `_resolve_brew_builds`) and concatenates — COPR entries first, then
+  Brew, each in configured order.  It no longer picks one family.  Each
+  build carries its own `type` (an `ARTIFACT_MAPPING` value, `None` for
+  the compose-only entry) and the `requested_package` its reference asked
+  for; `set_flow._resolve_artifacts` passes `build["type"]` straight to
+  `add_artifact`, so one payload can mix `fedora-copr-build` and
+  `redhat-brew-build`.  There is no run-level artifact type any more —
+  `_determine_artifact_type` and `RequestContext.artifact_type` are gone;
+  do not reintroduce either.  **Every configured reference must resolve**
+  to at least one build: an empty result raises `ArtifactResolutionError`
+  naming the reference, and the same package requested from both families
+  (compared on requested identity — COPR alias table vs Brew NVR — never
+  on the resolved `packages` lists, whose vocabularies differ) raises it
+  too.  That exception is a per-request failure: it propagates unwrapped
+  out of `get_artifact_info`'s `except Exception → ValidationError`
+  wrapper so `_resolve_artifacts` can turn it into a failed-request dict
+  (run continues, exit 2).  Wrapping it would abort the run with exit 1.
+  For the same reason it is exempt from `ArtifactResolver.resolve_builds`'s
+  CRITICAL log (`dispatch/artifacts.py`) — the dispatch summary's
+  `FAILED set/tier/arch` line is the one report of that event.
+  TMT context NVR enrichment stays Brew-only by design.
 - **39 deferred in-function imports remain** as circular-import workarounds.
   Do not "clean them up" casually; the surviving genuine cycles are:
   `source_target_parser ↔ dispatch.pin_compose`,

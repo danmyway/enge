@@ -17,7 +17,6 @@ class RequestContext:
     set_env_vars: Dict[str, str]
     cli_env_vars: Dict[str, str]
     set_reportportal_config: Dict[str, Any]
-    artifact_type: str
 
     @property
     def set_name(self) -> Optional[str]:

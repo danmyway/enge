@@ -70,7 +70,7 @@ class TestCloudImageComposeRouting(unittest.TestCase):
 
         submit = MagicMock()
         submit.artifacts = []
-        result = _resolve_artifacts(spec, submit, {}, ctx, "compose", StubResolver())
+        result = _resolve_artifacts(spec, submit, {}, ctx, StubResolver())
         return source_spec, submit, result
 
     def test_alma_alias_routes_to_cloud_image_compose_name(self):

@@ -111,6 +111,7 @@ class TestDispatchRejectedRequests(unittest.TestCase):
                     "build_id": "pkg-1.0",
                     "packages": ["pkg-1.0"],
                     "nvr": "pkg-1.0",
+                    "type": "fedora-koji-build",
                 }
             ]
 
@@ -136,7 +137,6 @@ class TestDispatchRejectedRequests(unittest.TestCase):
                         idx=idx,
                         total_expected_requests=len(set_names),
                         spec=self._spec(name),
-                        artifact_type="fedora-koji-build",
                         artifact_resolver=self._resolver(),
                         ctx=ctx,
                         manifest_writer=writer,
@@ -216,9 +216,7 @@ class TestDispatchExitCodes(unittest.TestCase):
         )
 
     def _run(self, statuses):
-        def fake(
-            idx, total, spec, artifact_type, resolver=None, *, ctx, manifest_writer=None
-        ):
+        def fake(idx, total, spec, resolver=None, *, ctx, manifest_writer=None):
             status = statuses[idx - 1]
             if status == "failed":
                 return {

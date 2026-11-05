@@ -52,7 +52,7 @@ class TestDispatchRunIdLogging(unittest.TestCase):
 
     @staticmethod
     def _fake_process_flushing(
-        idx, total, spec, artifact_type, resolver=None, *, ctx, manifest_writer=None
+        idx, total, spec, resolver=None, *, ctx, manifest_writer=None
     ):
         manifest_writer.add_request(
             f"task-{idx}", set_name="demo", tier="tier0", arch="x86_64"
@@ -62,7 +62,7 @@ class TestDispatchRunIdLogging(unittest.TestCase):
 
     @staticmethod
     def _fake_process_no_flush(
-        idx, total, spec, artifact_type, resolver=None, *, ctx, manifest_writer=None
+        idx, total, spec, resolver=None, *, ctx, manifest_writer=None
     ):
         # Mirrors dryrun's real behavior: submit_test "succeeds" but the
         # manifest is never touched.
@@ -70,7 +70,7 @@ class TestDispatchRunIdLogging(unittest.TestCase):
 
     @staticmethod
     def _fake_process_failed(
-        idx, total, spec, artifact_type, resolver=None, *, ctx, manifest_writer=None
+        idx, total, spec, resolver=None, *, ctx, manifest_writer=None
     ):
         return {
             "status": "failed",
