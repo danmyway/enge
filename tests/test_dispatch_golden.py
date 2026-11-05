@@ -220,7 +220,6 @@ class TestDispatchGolden(unittest.TestCase):
                     idx=idx,
                     total_expected_requests=4,
                     spec=spec,
-                    artifact_type="compose",
                     ctx=resolved_opts,
                 )
 

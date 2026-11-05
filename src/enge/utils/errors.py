@@ -13,6 +13,13 @@ class ValidationError(EngeError):
     """Invalid user input or option dependency failure."""
 
 
+class ArtifactResolutionError(EngeError):
+    """A configured artifact reference resolved to no builds, or two
+    families asked for the same package. This is a per-request failure --
+    the set/tier/arch request is recorded as failed and the run continues
+    with the remaining specs -- not a run-level abort."""
+
+
 class ConflictError(EngeError):
     """An idempotent gap-fill write encountered pre-existing, incompatible
     state (e.g. results.json upsert_task_result/write_xunit in

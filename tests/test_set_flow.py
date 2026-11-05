@@ -119,7 +119,6 @@ class TestSetFlow(unittest.TestCase):
                     idx=1,
                     total_expected_requests=1,
                     spec=spec,
-                    artifact_type="compose",
                     ctx=po,
                 )
 
@@ -185,7 +184,6 @@ class TestSetFlow(unittest.TestCase):
                 idx=1,
                 total_expected_requests=1,
                 spec=spec,
-                artifact_type="compose",
                 ctx=po,
             )
 
@@ -323,12 +321,8 @@ class TestPerSetArtifactReferences(unittest.TestCase):
         submit_beta.artifacts = []
         resolver = SpyResolver()
 
-        _resolve_artifacts(
-            spec_alpha, submit_alpha, tmt_context, ctx, "compose", resolver
-        )
-        _resolve_artifacts(
-            spec_beta, submit_beta, tmt_context, ctx, "compose", resolver
-        )
+        _resolve_artifacts(spec_alpha, submit_alpha, tmt_context, ctx, resolver)
+        _resolve_artifacts(spec_beta, submit_beta, tmt_context, ctx, resolver)
 
         self.assertEqual(len(captured_ctxs), 2)
         alpha_ctx = captured_ctxs[0]
@@ -405,7 +399,7 @@ class TestPerSetArtifactReferences(unittest.TestCase):
         submit.artifacts = []
         resolver = SpyResolver()
 
-        _resolve_artifacts(spec_beta, submit, tmt_context, ctx, "compose", resolver)
+        _resolve_artifacts(spec_beta, submit, tmt_context, ctx, resolver)
 
         self.assertEqual(len(captured_ctxs), 1)
         beta_ctx = captured_ctxs[0]
@@ -467,7 +461,7 @@ class TestPerSetArtifactReferences(unittest.TestCase):
         submit.artifacts = []
         resolver = SpyResolver()
 
-        _resolve_artifacts(spec, submit, tmt_context, ctx, "compose", resolver)
+        _resolve_artifacts(spec, submit, tmt_context, ctx, resolver)
 
         self.assertEqual(len(captured_ctxs), 1)
         beta_ctx = captured_ctxs[0]
@@ -528,7 +522,7 @@ class TestPerSetArtifactReferences(unittest.TestCase):
         submit.artifacts = []
         resolver = SpyResolver()
 
-        _resolve_artifacts(spec, submit, tmt_context, ctx, "compose", resolver)
+        _resolve_artifacts(spec, submit, tmt_context, ctx, resolver)
 
         self.assertEqual(len(captured_ctxs), 1)
         beta_ctx = captured_ctxs[0]
@@ -550,6 +544,110 @@ class TestPerSetArtifactReferences(unittest.TestCase):
                 "build_references": ["pkg-beta-copr"],
             },
             "set-level copr_api keys must merge over run-level dict",
+        )
+
+
+class TestResolveArtifactsPerBuildType(unittest.TestCase):
+    """Each resolved build is added with the type it carries, and an
+    unresolvable reference fails only its own request."""
+
+    @staticmethod
+    def _ctx():
+        ctx = MagicMock()
+        ctx.cli_args = MagicMock()
+        ctx.cli_args.copr = None
+        ctx.cli_args.brew = None
+        ctx.copr_reference = None
+        ctx.copr_references = []
+        ctx.copr_api = {}
+        ctx.brew_reference = None
+        ctx.brew_references = []
+        ctx.brew_api = {}
+        ctx.project = {"name": "leapp"}
+        return ctx
+
+    @staticmethod
+    def _spec():
+        return RequestSpec(
+            set_name="mixed",
+            tier="tier0",
+            plan=None,
+            arch="x86_64",
+            source_spec={"major": 8, "minor": 10, "compose_name": "RHEL-8.10.0"},
+            target_spec={"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"},
+            upgrade_path="rhel-8.10-to-9.4",
+            effective_values={"brew_api": {}, "copr_api": {}},
+        )
+
+    def test_resolve_artifacts_adds_each_build_with_its_own_type(self):
+        from enge.dispatch.set_flow import _resolve_artifacts
+
+        class MixedResolver:
+            def resolve_builds(self, compose_name, ctx):
+                return [
+                    {
+                        "compose": compose_name,
+                        "distro": "rhel-8.10",
+                        "build_id": "9100001",
+                        "packages": ["leapp-0.21.0-1.el8.noarch"],
+                        "type": "fedora-copr-build",
+                    },
+                    {
+                        "compose": compose_name,
+                        "distro": "rhel-8.10",
+                        "build_id": "leapp-repository-0.25.0-2.el8_10",
+                        "packages": ["leapp-repository"],
+                        "nvr": "leapp-repository-0.25.0-2.el8_10",
+                        "type": "redhat-brew-build",
+                    },
+                ]
+
+        submit = MagicMock()
+        submit.artifacts = []
+        result = _resolve_artifacts(
+            self._spec(), submit, {}, self._ctx(), MixedResolver()
+        )
+
+        self.assertIsNone(result)
+        added = [
+            (c.kwargs["artifact_id"], c.kwargs["artifact_type"])
+            for c in submit.add_artifact.call_args_list
+        ]
+        self.assertEqual(
+            added,
+            [
+                ("9100001", "fedora-copr-build"),
+                ("leapp-repository-0.25.0-2.el8_10", "redhat-brew-build"),
+            ],
+            "each build must be added with its own type, not one run-level type",
+        )
+
+    def test_resolve_artifacts_returns_failure_dict_on_artifact_resolution_error(self):
+        """An unresolvable reference fails this request; the run continues."""
+        from enge.dispatch.set_flow import _resolve_artifacts
+        from enge.utils.errors import ArtifactResolutionError
+
+        class RaisingResolver:
+            def resolve_builds(self, compose_name, ctx):
+                raise ArtifactResolutionError(
+                    "COPR reference 'copr-stale-ref' resolved to no builds"
+                )
+
+        submit = MagicMock()
+        submit.artifacts = []
+        result = _resolve_artifacts(
+            self._spec(), submit, {}, self._ctx(), RaisingResolver()
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "status": "failed",
+                "set_name": "mixed",
+                "tier": "tier0",
+                "arch": "x86_64",
+                "error": "COPR reference 'copr-stale-ref' resolved to no builds",
+            },
         )
 
 
@@ -607,7 +705,7 @@ class TestArtifactApiDictMerge(unittest.TestCase):
 
         submit = MagicMock()
         submit.artifacts = []
-        _resolve_artifacts(spec, submit, {}, ctx, "compose", SpyResolver())
+        _resolve_artifacts(spec, submit, {}, ctx, SpyResolver())
         return captured[0]
 
     def test_set_refs_inherit_run_level_endpoints(self):
@@ -752,6 +850,7 @@ class TestManifestDispatchContextNonCollapse(unittest.TestCase):
                     "build_id": ref,
                     "packages": [ref],
                     "nvr": ref,
+                    "type": "fedora-koji-build",
                 }
             ]
 
@@ -811,7 +910,6 @@ class TestManifestDispatchContextNonCollapse(unittest.TestCase):
                         idx=idx,
                         total_expected_requests=2,
                         spec=spec,
-                        artifact_type="fedora-koji-build",
                         artifact_resolver=resolver,
                         ctx=po,
                         manifest_writer=manifest_writer,
@@ -906,6 +1004,7 @@ class TestManifestRecordsDispatchedTestNames(unittest.TestCase):
                     "build_id": "pkg-1.0",
                     "packages": ["pkg-1.0"],
                     "nvr": "pkg-1.0",
+                    "type": "fedora-koji-build",
                 }
             ]
 
@@ -965,7 +1064,6 @@ class TestManifestRecordsDispatchedTestNames(unittest.TestCase):
                     idx=1,
                     total_expected_requests=1,
                     spec=spec,
-                    artifact_type="fedora-koji-build",
                     artifact_resolver=self._resolver_stub(),
                     ctx=po,
                     manifest_writer=manifest_writer,

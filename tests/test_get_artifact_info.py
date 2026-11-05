@@ -158,6 +158,13 @@ class TestGetArtifactInfo(unittest.TestCase):
         self.assertIsNone(result[0]["build_id"])
         self.assertEqual(result[0]["distro"], ctx.tmt_context["distro"])
 
+    def test_no_references_entry_has_no_artifact_type(self):
+        """The compose-only entry carries no Testing Farm artifact type."""
+        ctx = _make_ctx()
+        result = get_artifact_info("RHEL-9.6.0-updates-20261105.0", ctx)
+
+        self.assertIsNone(result[0]["type"])
+
     def test_bare_copr_flag_raises_validation_error(self):
         """Bare --copr flag (parsed as [None]) raises ValidationError."""
         ctx = _make_ctx(cli_copr=[None])

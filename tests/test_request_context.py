@@ -31,7 +31,6 @@ class TestRequestContext(unittest.TestCase):
             set_env_vars={},
             cli_env_vars={},
             set_reportportal_config={},
-            artifact_type="compose",
         )
         defaults.update(overrides)
         return RequestContext(**defaults)

@@ -24,7 +24,7 @@ from enge.utils.globals import (
     TMT_PLUGIN_REPORT_REPORTPORTAL_PREFIX,
     RP_COMPATIBLE_EVENT,
 )
-from enge.utils.errors import SubmissionError
+from enge.utils.errors import ArtifactResolutionError, SubmissionError
 from enge.utils.manifest import split_test_filter
 from enge.dispatch.tf_send_request import SubmitTest
 from enge.dispatch.artifacts import ArtifactResolver
@@ -344,9 +344,7 @@ def _resolve_spec_artifact_refs(spec, ctx):
     }
 
 
-def _resolve_artifacts(
-    spec, submit_test, tmt_context, ctx, artifact_type, artifact_resolver
-):
+def _resolve_artifacts(spec, submit_test, tmt_context, ctx, artifact_resolver):
     """Resolve build artifacts; returns a failure dict or None on success."""
     artifact_refs = _resolve_spec_artifact_refs(spec, ctx)
     spec_ctx = SimpleNamespace(
@@ -362,7 +360,17 @@ def _resolve_artifacts(
         source_spec=spec.source_spec,
     )
     resolver = artifact_resolver or ArtifactResolver()
-    info = resolver.resolve_builds(spec.source_spec["compose_name"], ctx=spec_ctx)
+    try:
+        info = resolver.resolve_builds(spec.source_spec["compose_name"], ctx=spec_ctx)
+    except ArtifactResolutionError as e:
+        # One request's references are unusable; the rest of the run goes on.
+        return {
+            "status": "failed",
+            "set_name": spec.set_name,
+            "tier": spec.tier,
+            "arch": spec.arch,
+            "error": str(e),
+        }
     if not info:
         LOGGER.warning(
             f"No artifact information found for {spec.set_name}"
@@ -390,7 +398,7 @@ def _resolve_artifacts(
         if build.get("build_id") is not None:
             submit_test.add_artifact(
                 artifact_id=str(build["build_id"]),
-                artifact_type=artifact_type,
+                artifact_type=build["type"],
                 packages=build["packages"],
                 nvr=build.get("nvr"),
             )
@@ -454,7 +462,7 @@ def _create_launch(spec, submit_test, rp_context, merged_env_vars, ctx, run_id=N
     return None
 
 
-def _build_request_context(spec, per_set_event, ctx, artifact_type):
+def _build_request_context(spec, per_set_event, ctx):
     """Construct the RequestContext for one dispatch request."""
     copr_artifact = getattr(ctx.cli_args, "copr", None)
     brew_artifact = getattr(ctx.cli_args, "brew", None)
@@ -485,7 +493,6 @@ def _build_request_context(spec, per_set_event, ctx, artifact_type):
         set_env_vars=set_env_vars,
         cli_env_vars=cli_env_vars,
         set_reportportal_config=spec.effective_values.get("reportportal", {}),
-        artifact_type=artifact_type,
     )
 
 
@@ -571,7 +578,6 @@ def process_request_spec(
     idx: int,
     total_expected_requests: int,
     spec: RequestSpec,
-    artifact_type: str,
     artifact_resolver: Optional[ArtifactResolver] = None,
     *,
     ctx,
@@ -591,7 +597,7 @@ def process_request_spec(
         return plan_filter_result
     submit_test.planfilter = plan_filter_result
 
-    req_ctx = _build_request_context(spec, per_set_event, ctx, artifact_type)
+    req_ctx = _build_request_context(spec, per_set_event, ctx)
     tmt_context, merged_env_vars = _build_tmt_context_and_env(
         spec, per_set_event, ctx, req_ctx
     )
@@ -599,9 +605,7 @@ def process_request_spec(
     pool = spec.effective_values.get("pool")
     submit_test.set_specific_data([spec.arch], merged_env_vars, tmt_context, pool=pool)
 
-    failure = _resolve_artifacts(
-        spec, submit_test, tmt_context, ctx, artifact_type, artifact_resolver
-    )
+    failure = _resolve_artifacts(spec, submit_test, tmt_context, ctx, artifact_resolver)
     if failure:
         return failure
 
