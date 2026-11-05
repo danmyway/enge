@@ -1241,6 +1241,9 @@ def submit_rerun(jobs: "RerunJobs", ctx: AppContext) -> RerunSubmission:
                 git_ref=request_data.get("tests_git_ref"),
                 event=request_data.get("event"),
                 build_ids=[a["id"] for a in artifacts if a.get("id")],
+                build_artifacts=[
+                    {"id": a["id"], "type": a["type"]} for a in artifacts if a.get("id")
+                ],
                 # From the payload actually sent, not from `request_data`,
                 # whose `test_name` is a display string built for the
                 # dry-run table.

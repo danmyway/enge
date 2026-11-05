@@ -355,6 +355,7 @@ def _manifest_request(task_id, rerun_of, plan, tests, **overrides):
         "git_ref": "main",
         "event": "nightly",
         "build_ids": ["123:rhel-9-x86_64"],
+        "build_artifacts": [{"id": "123:rhel-9-x86_64", "type": "fedora-copr-build"}],
         "tests": tests,
     }
     entry.update(overrides)

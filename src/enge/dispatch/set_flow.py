@@ -545,6 +545,9 @@ def _send_and_collect(
             git_ref=submit_test.tests_git_ref,
             event=event,
             build_ids=[a["id"] for a in submit_test.artifacts],
+            build_artifacts=[
+                {"id": a["id"], "type": a["type"]} for a in submit_test.artifacts
+            ],
             tests=split_test_filter(submit_test.test_name),
         )
         manifest_writer.flush(Path(ctx.manifest_runs_dir), Path(ctx.manifest_latest))

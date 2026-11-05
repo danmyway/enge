@@ -394,5 +394,126 @@ class TestMixedRequestPayload(unittest.TestCase):
         self.assertNotIn("leapp", enriched)
 
 
+class TestMixedRequestManifest(unittest.TestCase):
+    """Manifest records build_artifacts with both id and type for mixed requests."""
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        from pathlib import Path
+
+        tmp = Path(self._tmp.name)
+        self.runs_dir = tmp / "runs"
+        self.latest = tmp / "latest"
+
+    def test_dispatch_manifest_records_build_artifacts_with_type(self):
+        """The dispatch writer records build_artifacts alongside build_ids."""
+        import json
+        from types import SimpleNamespace
+
+        from enge.utils.manifest import ManifestWriter
+        from enge.utils.ulid import generate_ulid
+
+        ctx = _dryrun_ctx()
+        ctx.cli_args.dryrun = False
+        # Override the MagicMock with real values for fields written to manifest
+        ctx.cli_args = SimpleNamespace(
+            dryrun=False,
+            copr=None,
+            brew=None,
+            testfilter=None,
+            test=None,
+            planfilter=None,
+            environment=None,
+            rp=False,
+            output_format="json",
+        )
+        ctx.manifest_runs_dir = str(self.runs_dir)
+        ctx.manifest_latest = str(self.latest)
+
+        spec = RequestSpec(
+            set_name="mixed",
+            tier="tier0",
+            plan="/plans/p1",
+            arch="x86_64",
+            source_spec={"major": 9, "minor": 2, "compose_name": "RHEL-9.2.0"},
+            target_spec={"major": 9, "minor": 4, "compose_name": "RHEL-9.4.0"},
+            upgrade_path="rhel-9.2-to-9.4",
+            effective_values={"copr_api": {}, "brew_api": {}},
+        )
+        resolver = MagicMock()
+        resolver.resolve_builds = lambda compose_name, ctx: [
+            dict(b) for b in MIXED_BUILDS
+        ]
+
+        manifest_writer = ManifestWriter(
+            run_id=generate_ulid(),
+            command="test",
+            argv=["enge", "test"],
+        )
+
+        # Mock TF HTTP POST to return success
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"id": "aaaaaaaa-0000-0000-0000-000000000001"}
+
+        with (
+            patch(
+                "enge.dispatch.set_flow.generate_tier_plan_filter",
+                return_value="name: /plans/.*",
+            ),
+            patch(
+                "enge.dispatch.set_flow.generate_environment_variables", return_value={}
+            ),
+            patch(
+                "enge.dispatch.set_flow.parse_environment_variables", return_value={}
+            ),
+            patch(
+                "enge.dispatch.set_flow.merge_set_environment_variables",
+                return_value={},
+            ),
+            patch("enge.dispatch.tf_send_request.requests.Session") as mock_session,
+        ):
+            mock_session.return_value.post.return_value = mock_response
+            process_request_spec(
+                idx=1,
+                total_expected_requests=1,
+                spec=spec,
+                artifact_resolver=resolver,
+                ctx=ctx,
+                manifest_writer=manifest_writer,
+            )
+
+        # Read the flushed manifest
+        paths = list(self.runs_dir.glob("*.json"))
+        self.assertEqual(len(paths), 1, "exactly one manifest should be written")
+        manifest = json.loads(paths[0].read_text())
+
+        # Verify the request entry has build_artifacts
+        self.assertEqual(len(manifest["requests"]), 1)
+        entry = manifest["requests"][0]
+
+        # build_artifacts should mirror build_ids in order
+        self.assertIn("build_artifacts", entry)
+        self.assertEqual(
+            entry["build_artifacts"],
+            [
+                {"id": "9100001", "type": ARTIFACT_MAPPING["copr"]},
+                {
+                    "id": "leapp-repository-0.25.0-2.el9",
+                    "type": ARTIFACT_MAPPING["brew"],
+                },
+            ],
+        )
+
+        # build_ids should have the same IDs in the same order
+        self.assertEqual(
+            entry["build_ids"],
+            ["9100001", "leapp-repository-0.25.0-2.el9"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

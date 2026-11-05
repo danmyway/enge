@@ -200,6 +200,89 @@ class TestManifestTestsKey(unittest.TestCase):
         self.assertEqual(self._flushed_entry(tests=[])["tests"], [])
 
 
+class TestManifestBuildArtifacts(unittest.TestCase):
+    """build_artifacts records artifact family alongside each ID (ledger K1).
+
+    Parallel to build_ids (which stays unchanged), build_artifacts is a list
+    of {"id": str, "type": str} dicts. Always present, [] when empty.
+    Migrated manifests omit it entirely, so consumers .get() it.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.runs_dir = self.tmp / "runs"
+        self.latest = self.tmp / "latest"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _flushed_entry(self, **add_request_kwargs):
+        """The first requests[] entry as it landed on disk."""
+        w = ManifestWriter(
+            run_id=generate_ulid(), command="test", argv=["enge", "test"]
+        )
+        w.add_request("uuid-1", tier="tier0", arch="x86_64", **add_request_kwargs)
+        path = w.flush(self.runs_dir, self.latest)
+        return json.loads(path.read_text())["requests"][0]
+
+    def test_add_request_records_build_artifacts_with_type(self):
+        """build_artifacts captures both id and type for each artifact."""
+        entry = self._flushed_entry(
+            build_artifacts=[
+                {"id": "12345:centos-stream9-x86_64", "type": "fedora-copr-build"},
+                {"id": "67890", "type": "redhat-brew-build"},
+            ]
+        )
+
+        self.assertIn("build_artifacts", entry)
+        self.assertEqual(len(entry["build_artifacts"]), 2)
+        self.assertEqual(
+            entry["build_artifacts"][0]["id"], "12345:centos-stream9-x86_64"
+        )
+        self.assertEqual(entry["build_artifacts"][0]["type"], "fedora-copr-build")
+        self.assertEqual(entry["build_artifacts"][1]["id"], "67890")
+        self.assertEqual(entry["build_artifacts"][1]["type"], "redhat-brew-build")
+
+    def test_add_request_emits_empty_list_when_no_artifacts(self):
+        """build_artifacts defaults to [] when not provided, never null."""
+        entry_none = self._flushed_entry(build_artifacts=None)
+        entry_empty = self._flushed_entry(build_artifacts=[])
+        entry_omitted = self._flushed_entry()
+
+        for entry in (entry_none, entry_empty, entry_omitted):
+            self.assertIn("build_artifacts", entry)
+            self.assertEqual(entry["build_artifacts"], [])
+
+    def test_copr_build_id_keeps_its_chroot_suffix_verbatim(self):
+        """COPR IDs with chroot suffix appear byte-identical in build_artifacts."""
+        copr_id = "12345:centos-stream9-x86_64"
+        entry = self._flushed_entry(
+            build_artifacts=[{"id": copr_id, "type": "fedora-copr-build"}]
+        )
+
+        self.assertEqual(entry["build_artifacts"][0]["id"], copr_id)
+
+    def test_build_artifacts_ids_match_build_ids_exactly(self):
+        """build_artifacts[].id values match build_ids in same order."""
+        artifacts = [
+            {"id": "111:centos-stream9-x86_64", "type": "fedora-copr-build"},
+            {"id": "222", "type": "redhat-brew-build"},
+            {"id": "333:centos-stream10-aarch64", "type": "fedora-copr-build"},
+        ]
+        entry = self._flushed_entry(
+            build_ids=[
+                "111:centos-stream9-x86_64",
+                "222",
+                "333:centos-stream10-aarch64",
+            ],
+            build_artifacts=artifacts,
+        )
+
+        artifact_ids = [a["id"] for a in entry["build_artifacts"]]
+        self.assertEqual(artifact_ids, entry["build_ids"])
+
+
 class TestSplitTestFilter(unittest.TestCase):
     """`split_test_filter` turns a TF `test.fmf.test_name` into the list.
 
