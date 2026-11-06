@@ -732,9 +732,11 @@ class TestArtifactApiDictMerge(unittest.TestCase):
             "build_references must come from set-level",
         )
 
-    def test_endpoint_only_override_preserves_run_refs(self):
-        """Set overrides session_url but defines no build_references;
-        references must resolve from run-level, endpoint from the set."""
+    def test_endpoint_only_override_drops_run_level_refs(self):
+        """Set overrides session_url but defines no build_references:
+        the endpoint comes from the set, the other keys still inherit from
+        run-level, and no references are inherited -- a set's references
+        come only from the set, its preset and the CLI (Q-ART-3, Q-ART-6)."""
         ctx = self._make_ctx()
         spec = self._make_spec({"session_url": "https://other.example/hub"})
         resolved = self._resolve(spec, ctx)
@@ -751,9 +753,10 @@ class TestArtifactApiDictMerge(unittest.TestCase):
         )
         self.assertEqual(
             resolved.brew_references,
-            ["run-level-ref"],
-            "references must come from run-level when set has none",
+            [],
+            "a set with no references must not inherit run-level ones",
         )
+        self.assertNotIn("build_references", resolved.brew_api)
 
     def test_empty_string_unset_inherits_run_level(self):
         """Set-level session_url="" must inherit the run-level value,
