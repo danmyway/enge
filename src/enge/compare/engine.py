@@ -91,6 +91,35 @@ from enge.lineage import (
 
 ABSENT = "—"  # em dash -- unified absence marker (C3)
 
+# Distro family of a column, from its source compose name (Q-CMP-1).
+# results.json records releases without a distro ("9.7"), so two distros on
+# the same release path would otherwise be one coordinate. Prefixes follow
+# the compose names `utils/source_target_parser.py` produces: RHEL composes
+# (`RHEL-9.10.0-…`, symbolic `RHEL-8-rhui`), CentOS Stream
+# (`CentOS-Stream-9`) and the cloud images (`AlmaLinux OS 9.7.…`,
+# `Rocky-9-EC2-…`, `Oracle:Oracle-Linux:…`). The family is stable across a
+# lineage's compose drift, so reruns still share a coordinate.
+_DISTRO_PREFIXES: Tuple[Tuple[str, str], ...] = (
+    ("RHEL-", "rhel"),
+    ("CentOS-Stream", "centos"),
+    ("AlmaLinux", "alma"),
+    ("Rocky-", "rocky"),
+    ("Oracle:", "oracle"),
+)
+
+
+def distro_family(source_compose: Optional[str]) -> Optional[str]:
+    """`rhel`/`centos`/`alma`/`rocky`/`oracle`, or None when the compose is
+    missing or unrecognized (such a column keeps today's release-only
+    coordinate)."""
+    if not source_compose:
+        return None
+    for prefix, family in _DISTRO_PREFIXES:
+        if source_compose.startswith(prefix):
+            return family
+    return None
+
+
 _STAGE1_EXCLUDED = {"SKIPPED", "CANCELED"}
 _STAGE2_RANK: Dict[str, int] = {"PASSED": 0, "FAILED": 1, "ERROR": 2}
 
@@ -128,6 +157,11 @@ class ExecutionColumn:
     plan: Optional[str] = None
     tests: Optional[Sequence[str]] = None
 
+    @property
+    def distro(self) -> Optional[str]:
+        """Distro family, derived from `source_compose` (Q-CMP-1)."""
+        return distro_family(self.source_compose)
+
 
 @dataclass(frozen=True)
 class RowResult:
@@ -148,6 +182,7 @@ class ComparisonTable:
     arch: Optional[str] = None
     source: Optional[str] = None
     target: Optional[str] = None
+    distro: Optional[str] = None
 
 
 def _sortable(value: Optional[str]) -> Tuple[bool, str]:
@@ -160,6 +195,7 @@ def _sortable(value: Optional[str]) -> Tuple[bool, str]:
 def _column_sort_key(col: ExecutionColumn) -> Tuple[Any, ...]:
     return (
         col.arch,
+        _sortable(col.distro),
         _sortable(col.source),
         _sortable(col.target),
         col.dispatched_at,
@@ -171,19 +207,19 @@ def group_columns(
     columns: List[ExecutionColumn], *, splitarch: bool, splitpath: bool
 ) -> Dict[Tuple[Any, ...], List[ExecutionColumn]]:
     """Table partitioning (C2). Tier is always in the key. `splitarch`
-    adds arch; `splitpath` adds (source, target). Neither flag means one
-    table per tier, with every (arch, path) coordinate folding in as
-    columns. `set` never participates. Columns within a group are sorted
-    by (arch, source, target, dispatched_at, run_created_at) so same-
-    coordinate reruns stay chronologically adjacent regardless of which
-    axes are actually split."""
+    adds arch; `splitpath` adds (distro, source, target). Neither flag
+    means one table per tier, with every (arch, path) coordinate folding in
+    as columns. `set` never participates. Columns within a group are sorted
+    by (arch, distro, source, target, dispatched_at, run_created_at) so
+    same-coordinate reruns stay chronologically adjacent regardless of
+    which axes are actually split."""
     groups: Dict[Tuple[Any, ...], List[ExecutionColumn]] = {}
     for col in columns:
         key: List[Any] = [col.tier]
         if splitarch:
             key.append(col.arch)
         if splitpath:
-            key.append((col.source, col.target))
+            key.append((col.distro, col.source, col.target))
         groups.setdefault(tuple(key), []).append(col)
     for cols in groups.values():
         cols.sort(key=_column_sort_key)
@@ -252,7 +288,9 @@ def _row_is_flaky(per_column: Tuple[str, ...]) -> bool:
 
 def _coordinate_key(col: ExecutionColumn, index: int) -> Tuple[Any, ...]:
     """Two columns are only ever the same stage-1 coordinate when source
-    AND target are BOTH known and match. A None source/target means the
+    AND target are BOTH known and match, on the same arch and distro family
+    (Q-CMP-1: Alma and Rocky on one release path are not reruns of each
+    other). A None source/target means the
     coordinate is unknown (e.g. a multi-set legacy manifest predating the
     dispatch-context-schema fields, where item 7's fallback deliberately
     does not apply) -- and two unknown-path columns are never assumed to
@@ -260,7 +298,7 @@ def _coordinate_key(col: ExecutionColumn, index: int) -> Tuple[Any, ...]:
     `index` makes each such column its own singleton bucket instead."""
     if col.source is None or col.target is None:
         return (col.arch, col.source, col.target, index)
-    return (col.arch, col.source, col.target)
+    return (col.arch, col.distro, col.source, col.target)
 
 
 def consolidate_row(
@@ -372,12 +410,19 @@ def build_tables(
                 arch=cols[0].arch if splitarch else None,
                 source=cols[0].source if splitpath else None,
                 target=cols[0].target if splitpath else None,
+                distro=cols[0].distro if splitpath else None,
                 columns=tuple(cols),
                 rows=tuple(rows),
             )
         )
     tables.sort(
-        key=lambda t: (_safe(t.tier), _safe(t.arch), _safe(t.source), _safe(t.target))
+        key=lambda t: (
+            _safe(t.tier),
+            _safe(t.arch),
+            _safe(t.distro),
+            _safe(t.source),
+            _safe(t.target),
+        )
     )
     return tables
 
@@ -435,6 +480,7 @@ class LineageTable:
     arch: Optional[str] = None
     source: Optional[str] = None
     target: Optional[str] = None
+    distro: Optional[str] = None
 
 
 def _worst_outcome(outcomes: Iterable[Optional[str]]) -> Optional[str]:
@@ -677,12 +723,19 @@ def build_lineage_tables(
                 arch=cols[0].arch if splitarch else None,
                 source=cols[0].source if splitpath else None,
                 target=cols[0].target if splitpath else None,
+                distro=cols[0].distro if splitpath else None,
                 columns=tuple(cols),
                 generations=generations,
                 rows=tuple(rows),
             )
         )
     tables.sort(
-        key=lambda t: (_safe(t.tier), _safe(t.arch), _safe(t.source), _safe(t.target))
+        key=lambda t: (
+            _safe(t.tier),
+            _safe(t.arch),
+            _safe(t.distro),
+            _safe(t.source),
+            _safe(t.target),
+        )
     )
     return tables

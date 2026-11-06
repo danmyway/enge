@@ -43,9 +43,10 @@ By default arch and upgrade-path (`source`/`target`, the run-envelope-
 or-per-task upgrade-path values, e.g. `"9.9"`/`"10.3"` — see "Descriptor
 sourcing" below) fold into columns within one table per tier.
 `--splitarch` adds arch to the table key (one table per `(tier, arch)`,
-columns per upgrade-path); `--splitpath` adds `(source, target)` (one
-table per `(tier, source, target)`, columns per arch); both together
-yield one table per `(tier, arch, source, target)` — the old
+columns per upgrade-path); `--splitpath` adds `(distro, source, target)`
+(one table per `(tier, distro, source, target)`, columns per arch); both
+together yield one table per `(tier, arch, distro, source, target)` — the
+old
 consolidation-mode grouping, now reachable via explicit flags rather
 than being the only shape available.
 
@@ -91,8 +92,8 @@ PASS-wins-else-latest-wins rule; fence-critical, do not "align" with the
 ranks `ERROR > FAILED > CANCELED > PASSED > SKIPPED` for a different
 purpose (deriving ONE representative verdict for an entire run) and is
 explicitly off-limits here):
-- **Stage 1**, within each `(arch, source, target)` coordinate present in
-  a row, over that coordinate's chronologically-ordered columns: any
+- **Stage 1**, within each `(arch, distro, source, target)` coordinate
+  present in a row, over that coordinate's chronologically-ordered columns: any
   `PASSED` wins; otherwise the latest REAL result wins. `SKIPPED`,
   `CANCELED`, and absent (`—`, the em dash — the sole absence marker
   after this branch; the old consolidation-only `-` marker is gone) are
@@ -103,6 +104,16 @@ explicitly off-limits here):
   is a schema-legal plan/test-level verdict per this file's own
   "documented gaps"; excluding it from both stages was the ruling, so it
   is excluded from stage 1's scan too, not just stage 2's rank).
+- **Distro family** (Q-CMP-1, 2026-11-06): `distro` is derived from the
+  column's `source_compose` by prefix — `RHEL-` → `rhel`,
+  `CentOS-Stream` → `centos`, `AlmaLinux` → `alma`, `Rocky-` → `rocky`,
+  `Oracle:` → `oracle`; anything else, or no compose, is no family
+  (`ExecutionColumn.distro`, `engine.distro_family`). results.json records
+  releases without a distro, so without it Alma and Rocky on one release
+  path were one coordinate and a PASS on one masked a FAIL on the other.
+  The family survives a lineage's compose drift, so reruns still share a
+  coordinate. It is render- and engine-layer only; results.json is
+  unchanged.
 - Coordinate identity requires known-and-matching source+target (bugfix,
   2026-07-23): two columns are only the same stage-1 coordinate when
   both are non-None and equal. A multi-set manifest predating the
