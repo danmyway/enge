@@ -295,10 +295,16 @@ markers are render-layer — never written to `results.json`.
 - *Rendering*: the table caption states the retry policy
   (`lineage view; retry policy: --retry-count N`, or `lineage view; no
   retry policy given, so [X] (exhausted) is not evaluated`); one legend
-  line follows every table; under `~~~ TASK REFERENCE` each column gets
-  `(i) <arch> <source>→<target>` then `gen<G>=<artifacts_url>` per task
-  (two tasks of one generation both appear; there is no `run=` field),
-  and, when the lineage's source composes differ, ` composes: ` with
-  `gen<G>=<source_compose>` per task. A cell is colored by its last
+  line follows every table; under `~~~ TASK REFERENCE` (L71) each column
+  gets a header line `(i) <arch> <distro> <source>→<target>  set <set>`
+  (no distro when unknown, no set part when the column has none), then
+  one indented `    gen<G>  <artifacts_url>` line per task (two tasks of
+  one generation both appear; there is no `run` field; a missing URL
+  prints `—`). When the lineage's source composes differ, every task line
+  ends with `  compose <source_compose>`. Normal mode uses the same header
+  followed by one indented `    run <run_id>  <artifacts_url>` line. Path
+  labels everywhere (titles, column headers, TASK REFERENCE) read
+  `<distro> <source>→<target>`, e.g. `alma 9.7→10.1` (Q-CMP-2). A cell is
+  colored by its last
   verdict; a cell ending in `.` stays uncolored. `-o json` prints nothing,
   as in normal mode.
