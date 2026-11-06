@@ -105,6 +105,7 @@ def _task(task_id, verdict="FAILED", **overrides):
         "git_ref": None,
         "event": None,
         "build_ids": [],
+        "build_artifacts": [],
         "rerun_of": None,
         "artifacts_url": f"https://a/{task_id}",
         "plan": None,

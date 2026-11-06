@@ -137,6 +137,9 @@ envelope -> per-task results -> per-plan -> per-test.
       "git_ref": "main",
       "event": "preliminary",
       "build_ids": ["12345:centos-stream9-x86_64"],
+      "build_artifacts": [
+        {"id": "12345:centos-stream9-x86_64", "type": "fedora-copr-build"}
+      ],
       "rerun_of": null,
       "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/5d67eecf-a02d-46b7-aee2-9ffb673f40df",
       "plan": "plans",
@@ -269,6 +272,31 @@ means it WAS recorded and there was no test filter, i.e. the request
 asked for the whole plan. The harvest therefore copies the manifest
 value straight through rather than defaulting it to `[]`, which would
 assert something nobody knows.
+
+`build_artifacts` (nullable list of objects, 2026-11-06) is **optional**
+on exactly the same terms, and is likewise copied verbatim from the
+manifest request with **no envelope fallback** — there is no such thing
+as a run's "envelope artifact list." Each element is
+`{"id": <str>, "type": <str>}`, where `id` is byte-identical to the
+matching `build_ids` entry (including a COPR reference's `:chroot`
+suffix) and `type` is one of `ARTIFACT_MAPPING`'s values —
+`fedora-copr-build` or `redhat-brew-build`. It records the artifact
+FAMILY, which `build_ids` alone cannot express now that a single
+request can carry COPR and Brew artifacts at once. `build_ids` keeps
+its shape, content, and semantics exactly (including its `[]`-not-null
+empty state, ruling Q-D3-1); the duplication is the accepted cost of
+not breaking existing readers.
+
+Its nullability follows `tests`, NOT `build_ids`: `null` (or the key
+absent) means no manifest ever recorded the provenance — the run's
+manifest was written before the manifest key existed, which covers
+every manifest already on disk when this landed as well as every
+migrated one, or the cache itself predates 2026-11-06 — while `[]`
+means it WAS recorded and the request genuinely carried no artifacts. Collapsing the two with `build_ids`' `or []` would let an
+entry assert `build_artifacts: []` next to a populated `build_ids`
+listing two IDs, which is a lie about what is known. Written by both
+manifest writers (`dispatch/set_flow.py`, `rerun/__main__.py`) via
+`utils/manifest.py::add_request`, which always emits the key.
 
 **Plan — all required**: `name` (str, verbatim `testsuite@name` from
 xunit), `verdict` (enum), `tests` (list of test objects — the harvested
@@ -481,7 +509,10 @@ data-loss vector:
   ambiguous — the writer emits it both for "no builds" and for "not
   recorded" — whereas `tests: []` is not, because the results-entry
   shape distinguishes the two itself (`null` vs `[]`). An empty `tests`
-  is a populated value and G4 keeps it.
+  is a populated value and G4 keeps it. `build_artifacts: []` is
+  excluded for the same reason as `tests: []` (2026-11-06): it is
+  three-valued, so `[]` is a real recorded value and only `null` means
+  unknown — the ordinary fill-only rule already covers it.
 
 A fifth guard is an ordering rule rather than a policy: **the merge
 happens on raw dicts, before the `TaskEntry` round-trip**, because the
@@ -507,8 +538,9 @@ gap and a rerun candidate, and visibility beats silence.
 
 **Adding a task-entry key makes every older cache stale.** This is the
 cost of the design, accepted rather than worked around (maintainer
-ruling Q-D3-2, 2026-09-24, on the `tests` key). Concretely, after such
-a key lands:
+ruling Q-D3-2, 2026-09-24, on the `tests` key, and re-affirmed
+2026-11-06 for `build_artifacts` — visibility over silence, no
+suppression). Concretely, after such a key lands:
 
 - Every `results.json` written before it lacks the key, so the
   aggregated staleness WARNING fires on every `enge report` and every
@@ -522,6 +554,13 @@ a key lands:
   all (G2 needs every cached task present and terminal in the
   invocation), so its WARNING is permanent. The fix is to stop
   selecting the run, not to silence the warning.
+- Most recently, `build_artifacts` (2026-11-06) triggered exactly this:
+  **every finalized cache written before it reports stale**, and both
+  `enge report` and `enge compare` warn on every invocation that
+  selects such a run, until `enge report <same selectors> --refresh`
+  rewrites it. Nothing is lost — the refresh emits the key as `null`
+  for a run whose manifest also predates it, which is the honest
+  answer.
 
 `--refresh` is rejected with a `ValidationError` (exit 2), raised
 before any network fetch, when the invocation has no manifest-backed
@@ -532,27 +571,29 @@ A useless repair fails loudly rather than being silently ignored.
 **Golden fixture MD5s** (`tests/fixtures/`; updated when the
 dispatch-context-schema fields — `source`/`target`/`git_ref`/`event`/
 `build_ids` — were added to every task entry below, later when
-`rerun_of`/`artifacts_url`/`plan`/`plan_filter` were added, and later
-still when `tests` was added):
+`rerun_of`/`artifacts_url`/`plan`/`plan_filter` were added, later
+still when `tests` was added, and most recently when `build_artifacts`
+was added — every entry's value mirrors its `build_ids`, so a fixture
+with `build_ids: []` carries `build_artifacts: []`):
 - `results_golden.json` (finalized multi-task run; 3 task entries —
   PASSED, FAILED-with-a-SKIPPED-plan, and an ERROR task with
   `plans: []`; root `verdict` = `"ERROR"`, the severity-max of
-  PASSED/FAILED/ERROR): `5503dbf13ecf4a316a683055ba13bdf3`
+  PASSED/FAILED/ERROR): `7bf1882bdf11690dc3ee8e5c5478d3c2`
 - `results_golden_partial.json` (unfinalized run; root `verdict: null`,
   2 task entries against an assumed `expected_count=3` — a third
   tier1/aarch64 task has not reported in yet):
-  `fb818cb505540ac9bd87253e5b729e61`
+  `748ddee3f762b9f8e3cc59cb356e40a4`
 - `results_golden_canceled.json` (finalized run mixing a CANCELED task,
   `plans: []`, `total_duration_seconds: 32.4`, with a PASSED task; root
   `verdict` = `"CANCELED"`, demonstrating CANCELED outranking PASSED in
-  the severity ranking): `b6a99d54677d3f88674b387e4a8305a2`
+  the severity ranking): `f96cf3d5c4694be5c980413d12c812e0`
 - `results_golden_multiset.json` (finalized two-set run sharing one
   upgrade path across different tier/arch coordinates —
   `verification-alpha`/`tier0only`/`x86_64` and `verification-beta`/
   `tier1only`/`aarch64`, both `9.9`→`10.3`; root `verdict` = `"PASSED"`;
   demonstrates the envelope's `event`/`source`/`target` all `null`
   despite the matching path, while both task entries correctly carry
-  `source`/`target`/`tier`/`arch`): `6da0daa76a1b0e343cf260a5994c466f`
+  `source`/`target`/`tier`/`arch`): `b5f5c816cc72031ab97ff82a2a3923a6`
 
 This schema is contract-pinned as of 2026-07-14. Cross-cutting contract:
 schema changes require maintainer sign-off.

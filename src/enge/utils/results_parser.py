@@ -278,6 +278,14 @@ class TaskEntry:
     git_ref: Optional[str] = None
     event: Optional[str] = None
     build_ids: List[str] = field(default_factory=list)
+    # Three-valued, unlike `build_ids` directly above, which it mirrors
+    # with the artifact family attached: None means no manifest ever
+    # recorded the provenance (a cache written before this key existed,
+    # or one backed by a migrated manifest), while `[]` means it was
+    # recorded and the request genuinely carried no artifacts. Collapsing
+    # the two would let an entry assert `build_artifacts: []` next to a
+    # populated `build_ids` -- a claim about provenance nobody made.
+    build_artifacts: Optional[List[Dict[str, str]]] = None
     rerun_of: Optional[str] = None
     artifacts_url: Optional[str] = None
     plan: Optional[str] = None
@@ -307,6 +315,9 @@ class TaskEntry:
             "git_ref": self.git_ref,
             "event": self.event,
             "build_ids": list(self.build_ids),
+            "build_artifacts": (
+                list(self.build_artifacts) if self.build_artifacts is not None else None
+            ),
             "rerun_of": self.rerun_of,
             "artifacts_url": self.artifacts_url,
             "plan": self.plan,
@@ -368,6 +379,26 @@ class TaskEntry:
                 f"got {raw_build_ids!r}"
             )
 
+        # Deliberately not the `or []` shape used for build_ids above,
+        # for the same reason `tests` below avoids it: an absent or null
+        # 'build_artifacts' must stay None so that "provenance never
+        # recorded" survives the round trip distinct from "recorded: no
+        # artifacts".
+        raw_build_artifacts = data.get("build_artifacts")
+        if raw_build_artifacts is not None and (
+            not isinstance(raw_build_artifacts, list)
+            or not all(
+                isinstance(artifact, dict)
+                and isinstance(artifact.get("id"), str)
+                and isinstance(artifact.get("type"), str)
+                for artifact in raw_build_artifacts
+            )
+        ):
+            raise ValidationError(
+                f"{context}: 'build_artifacts' must be an array of objects with "
+                f"string 'id' and 'type', got {raw_build_artifacts!r}"
+            )
+
         rerun_of = _validate_optional_string(
             data.get("rerun_of"), "rerun_of", context=context
         )
@@ -407,6 +438,11 @@ class TaskEntry:
             git_ref=git_ref,
             event=event,
             build_ids=list(raw_build_ids),
+            build_artifacts=(
+                [dict(artifact) for artifact in raw_build_artifacts]
+                if raw_build_artifacts is not None
+                else None
+            ),
             rerun_of=rerun_of,
             artifacts_url=artifacts_url,
             plan=plan,

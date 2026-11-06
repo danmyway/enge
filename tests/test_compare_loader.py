@@ -99,9 +99,9 @@ def _write_results_json(
 
 
 def _task_entry(task_id, **overrides):
-    """A task entry carrying all twenty keys the current writer emits.
+    """A task entry carrying all twenty-one keys the current writer emits.
 
-    The nine optional keys are spelled out as explicit nulls rather than
+    The ten optional keys are spelled out as explicit nulls rather than
     left absent: `TaskEntry.from_dict` reads them through `.get()`, so the
     parsed shape is identical either way -- but the staleness predicate
     (`stale_task_keys`) works on the RAW dict, where absence is exactly
@@ -132,6 +132,7 @@ def _task_entry(task_id, **overrides):
         "git_ref": None,
         "event": None,
         "build_ids": [],
+        "build_artifacts": [],
         "rerun_of": None,
         "artifacts_url": None,
         "plan": None,

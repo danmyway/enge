@@ -1288,5 +1288,144 @@ class TestTestsKeyCopiedFromManifest(_CacheTestCase):
         self.assertIsNone(by_id["77777777-0000-0000-0000-000000000005"]["tests"])
 
 
+class TestBuildArtifactsCopiedFromManifest(_CacheTestCase):
+    """`build_artifacts` is a straight copy from the manifest request.
+
+    It joins `rerun_of`/`artifacts_url`/`plan`/`tests` -- no run-envelope
+    equivalent exists for a per-request artifact list, so there is
+    nothing to fall back to and the single-set/multi-set distinction
+    does not apply.
+
+    The copy is deliberately NOT `build_ids`' `or []`: a manifest that
+    lacks the key (written before this schema, or by the retired
+    `enge migrate-archive`) must yield `null`, meaning "provenance
+    unknown", not `[]`, which would claim the request carried no
+    artifacts -- a claim that would sit next to a populated `build_ids`.
+    """
+
+    COPR = {"id": "12345:centos-stream9-x86_64", "type": "fedora-copr-build"}
+    BREW = {"id": "4150453", "type": "redhat-brew-build"}
+
+    def _entry(self, *requests, run_id="01RUNIDBUILDARTIFACTSAAAAA"):
+        """Cache one harvested task per request and return the RAW entries.
+
+        Raw, not parsed: `TaskEntry.from_dict` maps an absent key to None
+        just as it maps an explicit null to None, so only the file itself
+        distinguishes what was written.
+        """
+        from enge.report.results_cache import cache_report_results
+
+        runs_dir, results_dir_path = self._tmp_dirs()
+        _write_manifest(runs_dir, run_id, list(requests))
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        cache_report_results(
+            ctx,
+            [
+                _make_task_result(request_uuid=r["task_id"], xunit_bytes=_xunit_bytes())
+                for r in requests
+            ],
+        )
+        raw = json.loads((results_dir_path / f"{run_id}.json").read_text())
+        return raw["results"]
+
+    def test_cache_copies_build_artifacts_from_manifest_request(self):
+        entries = self._entry(
+            _request(
+                "88888888-0000-0000-0000-000000000001",
+                build_ids=[self.COPR["id"], self.BREW["id"]],
+                build_artifacts=[self.COPR, self.BREW],
+            )
+        )
+
+        self.assertEqual(entries[0]["build_artifacts"], [self.COPR, self.BREW])
+        self.assertEqual(entries[0]["build_ids"], [self.COPR["id"], self.BREW["id"]])
+
+    def test_cache_keeps_a_recorded_empty_list_empty(self):
+        entries = self._entry(
+            _request("88888888-0000-0000-0000-000000000002", build_artifacts=[])
+        )
+
+        self.assertEqual(entries[0]["build_artifacts"], [])
+        self.assertIsNotNone(entries[0]["build_artifacts"])
+
+    def test_cache_writes_none_when_manifest_lacks_the_key(self):
+        request = _request(
+            "88888888-0000-0000-0000-000000000003",
+            build_ids=[self.COPR["id"]],
+        )
+        # Guard the premise: the manifest entry really lacks the key while
+        # carrying a populated build_ids -- the exact shape an `or []`
+        # copy would turn into a lie.
+        self.assertNotIn("build_artifacts", request)
+
+        entries = self._entry(request)
+
+        self.assertIn("build_artifacts", entries[0])
+        self.assertIsNone(entries[0]["build_artifacts"])
+        self.assertEqual(entries[0]["build_ids"], [self.COPR["id"]])
+
+    def test_cache_gives_build_artifacts_no_envelope_fallback(self):
+        """Not even on a single-set manifest whose envelope offers one.
+
+        `source`/`target`/`event` fall back to the envelope when the
+        manifest holds exactly one set; `build_artifacts` must not, so a
+        single-set legacy manifest still yields null.
+        """
+        runs_dir, results_dir_path = self._tmp_dirs()
+        run_id = "01RUNIDBUILDARTIFACTSBBBBB"
+        request = _request("88888888-0000-0000-0000-000000000004")
+        _write_manifest(
+            runs_dir,
+            run_id,
+            [request],
+            context={
+                "event": "preliminary",
+                "source": "9.9",
+                "target": "10.3",
+                "build_artifacts": [self.COPR],
+            },
+        )
+        ctx = self._ctx(runs_dir, results_dir_path, extra_cli={"run": run_id})
+
+        from enge.report.results_cache import cache_report_results
+
+        cache_report_results(
+            ctx,
+            [
+                _make_task_result(
+                    request_uuid=request["task_id"], xunit_bytes=_xunit_bytes()
+                )
+            ],
+        )
+        entries = json.loads((results_dir_path / f"{run_id}.json").read_text())[
+            "results"
+        ]
+
+        self.assertIsNone(entries[0]["build_artifacts"])
+        # Guard the premise: the single-set envelope fallback really is
+        # live for the fields that do have one.
+        self.assertEqual(entries[0]["source"], "9.9")
+
+    def test_cache_copies_per_request_on_a_multi_set_manifest(self):
+        entries = self._entry(
+            _request(
+                "88888888-0000-0000-0000-000000000005",
+                set_name="alpha",
+                build_artifacts=[self.COPR],
+            ),
+            _request("88888888-0000-0000-0000-000000000006", set_name="beta"),
+        )
+
+        by_id = {e["task_id"]: e for e in entries}
+        self.assertEqual(
+            by_id["88888888-0000-0000-0000-000000000005"]["build_artifacts"],
+            [self.COPR],
+        )
+        self.assertIsNone(
+            by_id["88888888-0000-0000-0000-000000000006"]["build_artifacts"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
