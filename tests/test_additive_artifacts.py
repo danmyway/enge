@@ -197,6 +197,52 @@ class TestPackageCollision(unittest.TestCase):
         self.assertIn(self.COPR_REF, message)
         self.assertIn(self.BREW_SAME, message)
 
+    # A COPR reference with no alias: the alias table answers nothing, so
+    # the configured package name stands in -- the same resolution the
+    # COPR query itself uses. `_make_ctx` configures `test-pkg`.
+    BARE_BUILD_ID = "9100001"
+    BREW_CONFIGURED_PKG = "test-pkg-0.21.0-3.el9"  # NVR -> test-pkg
+
+    def test_bare_build_id_falls_back_to_the_configured_package(self):
+        """`_copr_requested_package`'s fallback chain, value by value."""
+        from enge.dispatch.__main__ import _copr_requested_package
+
+        ctx = _make_ctx()
+        self.assertEqual(_copr_requested_package([self.BARE_BUILD_ID], ctx), "test-pkg")
+
+        ctx.copr_api = {}
+        self.assertEqual(
+            _copr_requested_package([self.BARE_BUILD_ID], ctx), "test-project"
+        )
+
+        ctx.project = {}
+        self.assertIsNone(_copr_requested_package([self.BARE_BUILD_ID], ctx))
+
+    @patch("enge.dispatch.__main__.CoprRef", RefAwareCoprRef)
+    @patch("enge.dispatch.__main__.BrewRef", RefAwareBrewRef)
+    def test_bare_copr_build_id_collides_through_the_fallback(self):
+        """The collision fires on a reference that names no package itself.
+
+        A bare build ID is attributed to the configured COPR package, so
+        `--copr 9100001 --brew <that package's NVR>` is refused even
+        though the build ID alone says nothing about which package it
+        holds. That over-firing is the accepted cost of the fallback --
+        the alternative is resolving the build to learn its package --
+        and this test is what makes it a decision rather than an
+        accident.
+        """
+        ctx = _make_ctx(
+            copr_references=[self.BARE_BUILD_ID],
+            brew_references=[self.BREW_CONFIGURED_PKG],
+        )
+
+        with self.assertRaises(ArtifactResolutionError) as cm:
+            get_artifact_info(COMPOSE, ctx)
+        message = str(cm.exception)
+        self.assertIn("test-pkg", message)
+        self.assertIn(self.BARE_BUILD_ID, message)
+        self.assertIn(self.BREW_CONFIGURED_PKG, message)
+
     @patch("enge.dispatch.__main__.CoprRef", RefAwareCoprRef)
     @patch("enge.dispatch.__main__.BrewRef", RefAwareBrewRef)
     def test_different_packages_from_both_families_dispatch(self):
