@@ -99,8 +99,11 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   on the resolved `packages` lists, whose vocabularies differ) raises it
   too.  That exception is a per-request failure: it propagates unwrapped
   out of `get_artifact_info`'s `except Exception → ValidationError`
-  wrapper so `_resolve_artifacts` can turn it into a failed-request dict
-  (run continues, exit 2).  Wrapping it would abort the run with exit 1.
+  wrapper so `_resolve_artifacts` can turn it into a failed-request dict:
+  the remaining specs are still dispatched, and the run exits under
+  `dispatch/__main__.main`'s standing mapping — 2 when other requests
+  were submitted, 1 when none were, so a single-request run exits 1, not
+  2.  Wrapping it would abort the run with exit 1.
   For the same reason it is exempt from `ArtifactResolver.resolve_builds`'s
   CRITICAL log (`dispatch/artifacts.py`) — the dispatch summary's
   `FAILED set/tier/arch` line is the one report of that event.
