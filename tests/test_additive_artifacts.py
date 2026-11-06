@@ -364,34 +364,47 @@ class TestMixedRequestPayload(unittest.TestCase):
             ],
         )
 
-    def test_mixed_request_enriches_tmt_context_with_brew_nvrs_only(self):
-        """Deliberate gap: COPR builds never reach the TMT context.
+    def test_mixed_request_adds_no_nvrs_to_the_tmt_context(self):
+        """Deliberate gap: the TMT context gains nothing, for either family.
 
-        ``_enrich_tmt_context_with_brew_nvrs`` filters on the Brew type, so a
-        mixed request records the Brew RC and not the COPR build that makes
-        it installable. Pinned so a later change to that filter is a
-        conscious one.
+        ``_enrich_tmt_context_with_brew_nvrs`` reads ``artifact["package"]``
+        and skips the entry when it is empty -- and NO production path
+        writes that key. ``add_artifact`` writes ``id``, ``type``,
+        ``packages`` and optionally ``nvr``; the rerun path copies Testing
+        Farm's request body, which carries ``id``/``type``/``packages``.
+        So the enrichment is inert today, and a mixed request records
+        neither the Brew NVR nor the COPR build in the context.
+
+        Driven through the real ``add_artifact`` so that the assertion is
+        about the system and not about a hand-built shape. Repairing the
+        gate would change single-family payloads' TMT context, which the
+        design lists as a non-goal; this pins the gap so a later change to
+        that filter is a conscious one.
         """
         submit = SubmitTest.__new__(SubmitTest)
-        submit.artifacts = [
-            {
-                "id": "leapp-0.21.0-1.el9",
-                "type": ARTIFACT_MAPPING["copr"],
-                "package": "leapp",
-                "packages": ["leapp-0.21.0-1.el9.noarch"],
-            },
-            {
-                "id": "leapp-repository-0.25.0-2.el9",
-                "type": ARTIFACT_MAPPING["brew"],
-                "package": "leapp-repository",
-                "packages": ["leapp-repository"],
-            },
-        ]
+        submit.artifacts = []
+        submit.add_artifact(
+            "9100001:rhel-9-x86_64",
+            ARTIFACT_MAPPING["copr"],
+            ["leapp-0.21.0-1.el9.noarch"],
+        )
+        submit.add_artifact(
+            "leapp-repository-0.25.0-2.el9",
+            ARTIFACT_MAPPING["brew"],
+            ["leapp-repository"],
+            nvr="leapp-repository-0.25.0-2.el9",
+        )
 
-        enriched = submit._enrich_tmt_context_with_brew_nvrs({"distro": "rhel-9.2"})
+        # The gate's input: no entry the writer produces has the key.
+        self.assertEqual(
+            [sorted(a) for a in submit.artifacts],
+            [["id", "packages", "type"], ["id", "nvr", "packages", "type"]],
+        )
 
-        self.assertEqual(enriched.get("leapp-repository"), "0.25.0-2.el9")
-        self.assertNotIn("leapp", enriched)
+        base = {"distro": "rhel-9.2"}
+        enriched = submit._enrich_tmt_context_with_brew_nvrs(base)
+
+        self.assertEqual(enriched, base, "no artifact carries a 'package' key")
 
 
 class TestMixedRequestManifest(unittest.TestCase):
@@ -417,7 +430,6 @@ class TestMixedRequestManifest(unittest.TestCase):
         from enge.utils.ulid import generate_ulid
 
         ctx = _dryrun_ctx()
-        ctx.cli_args.dryrun = False
         # Override the MagicMock with real values for fields written to manifest
         ctx.cli_args = SimpleNamespace(
             dryrun=False,

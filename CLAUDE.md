@@ -104,7 +104,17 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   For the same reason it is exempt from `ArtifactResolver.resolve_builds`'s
   CRITICAL log (`dispatch/artifacts.py`) — the dispatch summary's
   `FAILED set/tier/arch` line is the one report of that event.
-  TMT context NVR enrichment stays Brew-only by design.
+  TMT context NVR enrichment is **currently inert**, not Brew-only:
+  `_enrich_tmt_context_with_brew_nvrs` skips any artifact whose
+  `package` key is missing or empty, and nothing writes that key —
+  `add_artifact` writes `id`, `type`, `packages` and optionally `nvr`,
+  and the rerun path copies Testing Farm's request body, which carries
+  `id`/`type`/`packages`.  So a mixed request adds no NVRs to the TMT
+  context for EITHER family, and neither does a single-family one.
+  Pinned by `test_mixed_request_adds_no_nvrs_to_the_tmt_context`.
+  Repairing the gate would change single-family payloads' TMT context,
+  which the additive-artifacts design lists as a non-goal — maintainer
+  sign-off first.
 - **39 deferred in-function imports remain** as circular-import workarounds.
   Do not "clean them up" casually; the surviving genuine cycles are:
   `source_target_parser ↔ dispatch.pin_compose`,
