@@ -1241,14 +1241,18 @@ def submit_rerun(jobs: "RerunJobs", ctx: AppContext) -> RerunSubmission:
                 git_ref=request_data.get("tests_git_ref"),
                 event=request_data.get("event"),
                 # `artifacts` is the refetched Testing Farm request body,
-                # so neither key is guaranteed. Both lists skip an entry
-                # missing either one: they stay element-aligned, and
-                # `type` keeps the ARTIFACT_MAPPING value domain that
-                # `results.json` copies verbatim and `TaskEntry.from_dict`
-                # validates. Recording `type: ""` instead would pass
-                # validation silently and assert a build family nobody
-                # knows, which is worse than a dropped record.
-                build_ids=[a["id"] for a in artifacts if a.get("id") and a.get("type")],
+                # so neither key is guaranteed. `build_ids` keeps every
+                # entry carrying an `id`, unchanged from before
+                # `build_artifacts` existed. `build_artifacts`
+                # additionally requires a `type`, so `type` keeps the
+                # ARTIFACT_MAPPING value domain that `results.json`
+                # copies verbatim and `TaskEntry.from_dict` validates;
+                # recording `type: ""` instead would pass validation
+                # silently and assert a build family nobody knows, which
+                # is worse than a dropped record. The two lists are
+                # element-aligned whenever every entry carries a type,
+                # which Testing Farm requires of an accepted request.
+                build_ids=[a["id"] for a in artifacts if a.get("id")],
                 build_artifacts=[
                     {"id": a["id"], "type": a["type"]}
                     for a in artifacts
