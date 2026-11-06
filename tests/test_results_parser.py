@@ -440,6 +440,104 @@ class TestTaskEntryTestsKey(unittest.TestCase):
         self.assertIn("'tests'", str(cm.exception))
 
 
+class TestTaskEntryBuildArtifactsKey(unittest.TestCase):
+    """`build_artifacts` on a results.json task entry.
+
+    Records the artifact family alongside each build ID, as
+    `{"id": ..., "type": ...}` objects. Shaped like `tests`, NOT like
+    `build_ids` beside it: `None` and `[]` mean different things and both
+    have to survive a round-trip.
+
+    - `None` -- no manifest ever recorded the provenance (a cache written
+      before this key existed, or one backed by a migrated manifest).
+    - `[]`   -- recorded, and the request genuinely carried no artifacts.
+
+    Collapsing the two the way `build_ids`' `or []` does would let an
+    entry assert `build_artifacts: []` next to a populated `build_ids`
+    listing two IDs -- a lie about what is known.
+    """
+
+    COPR = {"id": "12345:centos-stream9-x86_64", "type": "fedora-copr-build"}
+    BREW = {"id": "4150453", "type": "redhat-brew-build"}
+
+    def test_task_entry_round_trips_build_artifacts(self):
+        task = TaskEntry.from_dict(
+            _task_payload(build_artifacts=[self.COPR, self.BREW])
+        )
+
+        self.assertEqual(task.build_artifacts, [self.COPR, self.BREW])
+
+        emitted = task.to_dict()["build_artifacts"]
+        self.assertEqual(emitted, [self.COPR, self.BREW])
+        # The emitted list is a copy: mutating it must not reach the entry.
+        emitted.append({"id": "x", "type": "fedora-copr-build"})
+        self.assertEqual(task.build_artifacts, [self.COPR, self.BREW])
+
+        self.assertEqual(
+            TaskEntry.from_dict(task.to_dict()).build_artifacts,
+            [self.COPR, self.BREW],
+        )
+
+    def test_absent_build_artifacts_parses_as_none(self):
+        payload = _task_payload()
+        # Guard the premise: a legacy cache really lacks the key.
+        self.assertNotIn("build_artifacts", payload)
+
+        task = TaskEntry.from_dict(payload)
+        self.assertIsNone(task.build_artifacts)
+        # Emit-always: the key is present with a null value, never omitted.
+        self.assertIn("build_artifacts", task.to_dict())
+        self.assertIsNone(task.to_dict()["build_artifacts"])
+
+    def test_null_build_artifacts_parses_as_none(self):
+        task = TaskEntry.from_dict(_task_payload(build_artifacts=None))
+        self.assertIsNone(task.build_artifacts)
+        self.assertIsNone(TaskEntry.from_dict(task.to_dict()).build_artifacts)
+
+    def test_empty_build_artifacts_stays_empty_list(self):
+        task = TaskEntry.from_dict(_task_payload(build_artifacts=[]))
+
+        self.assertEqual(task.build_artifacts, [])
+        self.assertIsNotNone(task.build_artifacts)
+        # Distinct from "never recorded" across the round-trip, in both
+        # directions: [] stays [], absent stays None.
+        self.assertEqual(TaskEntry.from_dict(task.to_dict()).build_artifacts, [])
+        self.assertIsNone(
+            TaskEntry.from_dict(
+                TaskEntry.from_dict(_task_payload()).to_dict()
+            ).build_artifacts
+        )
+
+    def test_build_artifacts_rejects_a_list_of_strings(self):
+        with self.assertRaises(ValidationError) as cm:
+            TaskEntry.from_dict(_task_payload(build_artifacts=["12345"]))
+        self.assertIn("'build_artifacts'", str(cm.exception))
+
+    def test_build_artifacts_rejects_an_entry_missing_type(self):
+        with self.assertRaises(ValidationError) as cm:
+            TaskEntry.from_dict(_task_payload(build_artifacts=[{"id": "12345"}]))
+        self.assertIn("'build_artifacts'", str(cm.exception))
+
+    def test_build_artifacts_rejects_an_entry_missing_id(self):
+        with self.assertRaises(ValidationError) as cm:
+            TaskEntry.from_dict(
+                _task_payload(build_artifacts=[{"type": "redhat-brew-build"}])
+            )
+        self.assertIn("'build_artifacts'", str(cm.exception))
+
+    def test_build_artifacts_rejects_non_string_id_and_type(self):
+        for bad in ({"id": 12345, "type": "redhat-brew-build"}, {"id": "1", "type": 7}):
+            with self.subTest(entry=bad):
+                with self.assertRaises(ValidationError) as cm:
+                    TaskEntry.from_dict(_task_payload(build_artifacts=[bad]))
+                self.assertIn("'build_artifacts'", str(cm.exception))
+
+    def test_build_artifacts_rejects_a_bare_object(self):
+        with self.assertRaises(ValidationError) as cm:
+            TaskEntry.from_dict(_task_payload(build_artifacts={"id": "1"}))
+        self.assertIn("'build_artifacts'", str(cm.exception))
+
+
 class TestResultsJsonSchemaValidation(unittest.TestCase):
     def test_valid_root_payload_parses(self):
         schema = ResultsJsonSchema.from_dict(_root_payload())
@@ -934,6 +1032,16 @@ class TestGoldenResultsFixturesAreSchemaCurrent(unittest.TestCase):
         for name in self.GOLDEN_NAMES:
             for entry in self._golden(name)["results"]:
                 self.assertIn("tests", entry, name)
+
+    def test_every_task_entry_records_the_artifact_provenance(self):
+        """The same absolute pin for `build_artifacts`.
+
+        A fixture that loses the key would still satisfy the relative
+        pins above if the writer lost it too; naming it outright is what
+        makes the pair fail separately."""
+        for name in self.GOLDEN_NAMES:
+            for entry in self._golden(name)["results"]:
+                self.assertIn("build_artifacts", entry, name)
 
     def test_no_golden_fixture_is_stale(self):
         from enge.utils.results_parser import stale_task_keys

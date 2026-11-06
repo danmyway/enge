@@ -73,6 +73,7 @@ def request_meta(task_id, **overrides):
         "git_ref": "main",
         "event": "preliminary",
         "build_ids": ["copr:12345"],
+        "build_artifacts": [{"id": "copr:12345", "type": "fedora-copr-build"}],
         "tests": [],
     }
     base.update(overrides)
@@ -117,7 +118,7 @@ def plan_block(name="/plans/p1", verdict="PASSED", duration=12.0):
 
 
 def cached_task(task_id, *, drop=(), **overrides):
-    """A results.json task entry carrying all twenty keys the current
+    """A results.json task entry carrying all twenty-one keys the current
     writer emits. `drop` removes keys outright -- the only faithful way to
     model a cache written by an older enge version."""
     base = {
@@ -136,6 +137,7 @@ def cached_task(task_id, *, drop=(), **overrides):
         "git_ref": "main",
         "event": "preliminary",
         "build_ids": ["copr:12345"],
+        "build_artifacts": [{"id": "copr:12345", "type": "fedora-copr-build"}],
         "rerun_of": None,
         "artifacts_url": f"https://tf.example.com/artifacts/{task_id}",
         "plan": None,
@@ -322,6 +324,22 @@ class TestTaskEntryKeyParity(unittest.TestCase):
 
         self.assertEqual(
             stale_task_keys(cached_task("t1", drop=("tests",))), frozenset({"tests"})
+        )
+
+    def test_every_pre_build_artifacts_key_cache_is_stale(self):
+        """The same accepted fallout, one key later: `build_artifacts`
+        makes every cache written before it stale too, and a cache
+        predating BOTH keys is stale by both. Visibility over silence --
+        no suppression (maintainer ruling, 2026-09-23)."""
+        from enge.utils.results_parser import stale_task_keys
+
+        self.assertEqual(
+            stale_task_keys(cached_task("t1", drop=("build_artifacts",))),
+            frozenset({"build_artifacts"}),
+        )
+        self.assertEqual(
+            stale_task_keys(cached_task("t1", drop=("tests", "build_artifacts"))),
+            frozenset({"tests", "build_artifacts"}),
         )
 
 
@@ -760,6 +778,40 @@ class TestRefreshMetadataFill(RefreshTestCase):
 
         self.assertEqual(entry["tests"], [])
 
+    def test_an_empty_build_artifacts_list_is_kept_not_treated_as_absent(self):
+        """The same exclusion, for the same reason, one key later.
+
+        G4's empty-list clause stays `build_ids`-only. `build_artifacts`
+        is three-valued like `tests`: `[]` means the manifest recorded
+        that the request carried no artifacts, so it is a populated value
+        and a later harvest must not overwrite it with a list of builds
+        the request never had. Without this, `docs/results-json-schema.md`
+        asserts a contract nothing enforces."""
+        entry = self._refresh(
+            cached_task("t1", build_artifacts=[]),
+            meta_overrides={
+                "build_artifacts": [{"id": "copr:12345", "type": "fedora-copr-build"}]
+            },
+        )
+
+        self.assertEqual(entry["build_artifacts"], [])
+
+    def test_a_populated_build_artifacts_list_is_kept_when_fresh_differs(self):
+        entry = self._refresh(
+            cached_task(
+                "t1",
+                build_artifacts=[{"id": "copr:OLD", "type": "fedora-copr-build"}],
+            ),
+            meta_overrides={
+                "build_artifacts": [{"id": "4150453", "type": "redhat-brew-build"}]
+            },
+        )
+
+        self.assertEqual(
+            entry["build_artifacts"],
+            [{"id": "copr:OLD", "type": "fedora-copr-build"}],
+        )
+
     def test_a_populated_tests_list_is_kept_when_the_fresh_value_differs(self):
         entry = self._refresh(
             cached_task("t1", tests=["/tests/a"]),
@@ -865,6 +917,7 @@ class TestRefreshNoSilentNormalization(RefreshTestCase):
         "git_ref",
         "event",
         "build_ids",
+        "build_artifacts",
         "rerun_of",
         "artifacts_url",
         "plan",
@@ -915,6 +968,10 @@ class TestRefreshNoSilentNormalization(RefreshTestCase):
         self.assertEqual(entry["git_ref"], "main")
         self.assertEqual(entry["event"], "preliminary")
         self.assertEqual(entry["build_ids"], ["copr:12345"])
+        self.assertEqual(
+            entry["build_artifacts"],
+            [{"id": "copr:12345", "type": "fedora-copr-build"}],
+        )
         self.assertEqual(entry["artifacts_url"], "https://tf.example.com/artifacts/t1")
         self.assertEqual(entry["plan"], "/plans/p1")
         self.assertEqual(entry["plan_filter"], "tag:tier1")

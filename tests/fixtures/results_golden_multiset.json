@@ -39,6 +39,12 @@
       "build_ids": [
         "12345:centos-stream9-x86_64"
       ],
+      "build_artifacts": [
+        {
+          "id": "12345:centos-stream9-x86_64",
+          "type": "fedora-copr-build"
+        }
+      ],
       "rerun_of": null,
       "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/6f72fbaf-2028-4d46-8cc9-073c3d92e197",
       "plan": "plans",
@@ -76,6 +82,12 @@
       "event": "preliminary",
       "build_ids": [
         "12345:centos-stream9-aarch64"
+      ],
+      "build_artifacts": [
+        {
+          "id": "12345:centos-stream9-aarch64",
+          "type": "fedora-copr-build"
+        }
       ],
       "rerun_of": null,
       "artifacts_url": "http://artifacts.osci.redhat.com/testing-farm/875292b3-0d28-45ca-b6ce-97b63bc81a53",
