@@ -77,11 +77,20 @@ tests/               unittest.TestCase style ONLY (see Conventions)
   effective api dict: per-key merge of run-level ctx dict (base) with
   set-level `copr_api`/`brew_api` from `spec.effective_values` layered
   over it; set-level keys win per-key, empty-string values inherit the
-  run-level value.  References precedence: CLI `--copr`/`--brew` >
-  merged dict's `build_references` > run-level references.  The
-  run-level collapse in `build_test_attributes`
-  (`effective_values = individual_test_sets[0]`) remains as the fallback
-  source; single-set and no-set flows are unchanged.
+  run-level value.  **Set isolation (Q-ART-3, Q-ART-6):** a set's
+  references come only from the set (with its preset) and the CLI — never
+  from another set or from run-level `[copr_api]`/`[brew_api]`
+  `build_references`, which `_run_level_api` drops for set specs (other
+  keys still inherit).  CLI `--copr`/`--brew` wins per family and applies
+  to every scheduled set; otherwise a set with no references in a family
+  sends none.  Only non-set specs (`spec.set_name is None`) fall back to
+  the run-level references.  `build_test_attributes` still collapses
+  `ctx.copr_references`/`brew_references` from `individual_test_sets[0]`;
+  set dispatch must never read them except when the CLI family is set.
+  `_build_request_context` derives `has_copr`/`has_brew`
+  (`INSTALL_LEAPP_FROM_COMPOSE`) from the same resolved references.
+  `warn_on_reference_inheritance` logs the Q-ART-4/6/7 WARNINGs once per
+  invocation from `submit_dispatch`; never per request, never an error.
   **The consumer is additive**: `dispatch/__main__.get_artifact_info()`
   resolves both families (`_resolve_copr_builds` then
   `_resolve_brew_builds`) and concatenates — COPR entries first, then

@@ -118,6 +118,66 @@ def expand_set_requests(ctx) -> List[RequestSpec]:
     return specs
 
 
+_FAMILY_LABEL = {"copr": "COPR", "brew": "Brew"}
+
+
+def warn_on_reference_inheritance(ctx) -> None:
+    """Log the build-reference WARNINGs, once per invocation (Q-ART-4/6/7).
+
+    Set dispatch, per family:
+    - run-level ``[<family>_api].build_references`` non-empty: it is ignored
+      for sets (Q-ART-6);
+    - the family given on the CLI while any scheduled set (with its preset)
+      defines build references in any family: every set inherits it (W1);
+    - the family given on the CLI while scheduled sets define references in
+      that same family: name those sets (W2).
+    Non-set dispatch: W2 only, when the CLI family replaces non-empty
+    run-level references.  Never an error.
+    """
+    sets = getattr(ctx, "individual_test_sets", None) or []
+
+    def set_refs(test_set, family):
+        api = test_set["effective_values"].get(f"{family}_api") or {}
+        return _build_reference_list(api.get("build_references"))
+
+    for family in ("copr", "brew"):
+        label = _FAMILY_LABEL[family]
+        on_cli = bool(getattr(ctx.cli_args, family, None))
+        run_api = getattr(ctx, f"{family}_api", None) or {}
+        run_refs = _build_reference_list(run_api.get("build_references"))
+        if not sets:
+            if on_cli and run_refs:
+                LOGGER.warning(
+                    "--%s replaces [%s_api].build_references", family, family
+                )
+            continue
+        if run_refs:
+            LOGGER.warning(
+                "[%s_api].build_references is ignored for set dispatch; define "
+                "references in the set or its preset, or pass --%s",
+                family,
+                family,
+            )
+        if not on_cli:
+            continue
+        if any(set_refs(s, f) for s in sets for f in _FAMILY_LABEL):
+            LOGGER.warning(
+                "All scheduled sets will inherit command-line defined %s builds "
+                "(--%s), in-set definitions might be overwritten and scheduled "
+                "runs might be polluted",
+                label,
+                family,
+            )
+        replaced = [s["name"] for s in sets if set_refs(s, family)]
+        if replaced:
+            LOGGER.warning(
+                "--%s replaces %s references defined in set(s): %s",
+                family,
+                label,
+                ", ".join(replaced),
+            )
+
+
 def _log_request(spec, idx, total):
     """Log the request header."""
     label_parts = [f"[{idx}/{total}]"]
@@ -281,19 +341,46 @@ def _build_tmt_context_and_env(spec, per_set_event, ctx, req_ctx):
     return tmt_context, merged_env_vars
 
 
+def _build_reference_list(value) -> List[Any]:
+    """Normalize a ``build_references`` value; absent or empty gives []."""
+    if not value:
+        return []
+    return list(value) if isinstance(value, list) else [value]
+
+
+def _run_level_api(api: Dict[str, Any], spec) -> Dict[str, Any]:
+    """The run-level api dict a spec may inherit from.
+
+    A set's references come only from the set (with its preset) and the
+    CLI (Q-ART-3/Q-ART-6), so for a set spec the run-level
+    ``build_references`` key is dropped; every other key (package,
+    endpoints, repository) still inherits.  Non-set specs keep the whole
+    dict.
+    """
+    if spec.set_name is None:
+        return dict(api)
+    return {k: v for k, v in api.items() if k != "build_references"}
+
+
 def _resolve_spec_artifact_refs(spec, ctx):
-    """Derive per-spec artifact references with CLI > set-level > run-level precedence.
+    """Derive per-spec artifact references for one request.
 
     Each artifact family (copr, brew) is resolved independently — a CLI
     override in one family must not suppress set-level resolution in the
     other.  Within a family, the effective api dict is a per-key merge of
     the run-level ctx dict (base) with the set-level dict layered over it;
     set-level keys win per-key, empty-string values are dropped (inherit
-    the run-level value).  References precedence: CLI > merged dict's
-    build_references > run-level references.
+    the run-level value).
+
+    References: the CLI family wins and applies to every scheduled set.
+    Otherwise a set spec uses only its own (preset-resolved)
+    ``build_references`` and never the run-level ones or another set's
+    (Q-ART-3, Q-ART-6); a set with none sends none for that family.  A
+    non-set spec falls back to the run-level references.
     """
     cli_copr = getattr(ctx.cli_args, "copr", None)
     cli_brew = getattr(ctx.cli_args, "brew", None)
+    is_set = spec.set_name is not None
 
     set_copr_api = spec.effective_values.get("copr_api", {})
     set_brew_api = spec.effective_values.get("brew_api", {})
@@ -303,7 +390,7 @@ def _resolve_spec_artifact_refs(spec, ctx):
         copr_api = ctx.copr_api
     else:
         copr_api = {
-            **ctx.copr_api,
+            **_run_level_api(ctx.copr_api, spec),
             **{k: v for k, v in set_copr_api.items() if v != ""},
         }
         merged_copr_refs = copr_api.get("build_references")
@@ -313,6 +400,8 @@ def _resolve_spec_artifact_refs(spec, ctx):
                 if isinstance(merged_copr_refs, list)
                 else [merged_copr_refs]
             )
+        elif is_set:
+            copr_refs = []
         else:
             copr_refs = ctx.copr_references
 
@@ -321,7 +410,7 @@ def _resolve_spec_artifact_refs(spec, ctx):
         brew_api = ctx.brew_api
     else:
         brew_api = {
-            **ctx.brew_api,
+            **_run_level_api(ctx.brew_api, spec),
             **{k: v for k, v in set_brew_api.items() if v != ""},
         }
         merged_brew_refs = brew_api.get("build_references")
@@ -331,6 +420,8 @@ def _resolve_spec_artifact_refs(spec, ctx):
                 if isinstance(merged_brew_refs, list)
                 else [merged_brew_refs]
             )
+        elif is_set:
+            brew_refs = []
         else:
             brew_refs = ctx.brew_references
 
@@ -466,17 +557,13 @@ def _build_request_context(spec, per_set_event, ctx):
     """Construct the RequestContext for one dispatch request."""
     copr_artifact = getattr(ctx.cli_args, "copr", None)
     brew_artifact = getattr(ctx.cli_args, "brew", None)
+    # Same references `_resolve_artifacts` sends (XR-artifacts-2).
+    artifact_refs = _resolve_spec_artifact_refs(spec, ctx)
     auto_env_vars = generate_environment_variables(
         spec.source_spec,
         spec.target_spec,
-        has_copr=bool(
-            copr_artifact
-            or spec.effective_values.get("copr_api", {}).get("build_references")
-        ),
-        has_brew=bool(
-            brew_artifact
-            or spec.effective_values.get("brew_api", {}).get("build_references")
-        ),
+        has_copr=bool(copr_artifact or artifact_refs["copr_references"]),
+        has_brew=bool(brew_artifact or artifact_refs["brew_references"]),
     )
     cli_env_args = getattr(ctx.cli_args, "environment", None)
     cli_env_vars = parse_environment_variables(cli_env_args)
