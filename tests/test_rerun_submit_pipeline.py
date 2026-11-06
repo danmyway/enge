@@ -54,12 +54,16 @@ def _reject():
     return _Reply(400, {"message": "bad"})
 
 
-def _tf_details(task_uuid, plan="/plan/tier0"):
+def _tf_details(task_uuid, plan="/plan/tier0", artifacts=None):
     """Testing Farm request details as `http_get(...).json()` returns them.
 
     Carries a PACKIT_* and a CI_* variable and a tmt `uniq_id`, which the
     rerun scrub must drop, and a trigger/initiator it must overwrite.
+    `artifacts` replaces the environment's artifact list, which is
+    external data the rerun path copies through unvalidated.
     """
+    if artifacts is None:
+        artifacts = [{"type": "fedora-copr-build", "id": "123:rhel-9-x86_64"}]
     return {
         "id": task_uuid,
         "state": "complete",
@@ -84,7 +88,7 @@ def _tf_details(task_uuid, plan="/plan/tier0"):
                     "TARGET_RELEASE": "10.0",
                     "KEEP": "k",
                 },
-                "artifacts": [{"type": "fedora-copr-build", "id": "123:rhel-9-x86_64"}],
+                "artifacts": artifacts,
                 "tmt": {
                     "context": {
                         "uniq_id": "old-launch",
@@ -202,6 +206,7 @@ class SubmitHarness:
         extra_cli=None,
         call=None,
         plans=None,
+        artifacts=None,
     ):
         """Run `call(ctx)` (default `rerun.main`) over canned Testing Farm data.
 
@@ -218,7 +223,9 @@ class SubmitHarness:
         uuids = list(parsed)
         urls = [f"{API}/{u}" for u in uuids]
         details = {
-            f"{API}/{u}": _tf_details(u, plans[u] if plans else "/plan/tier0")
+            f"{API}/{u}": _tf_details(
+                u, plans[u] if plans else "/plan/tier0", artifacts
+            )
             for u in uuids
         }
         counter = itertools.count(1)
@@ -545,6 +552,39 @@ class TestRerunMainSubmitPath(SubmitHarness, unittest.TestCase):
             run.info_plus(),
         )
         self.assertIn(("INFO", f"Run ID: {run_id}"), run.info_plus())
+
+    def test_main_artifact_without_a_type_does_not_break_the_manifest(self):
+        """A parent artifact entry carrying an `id` and no `type` is
+        skipped, not crashed on.
+
+        `artifacts` is the refetched Testing Farm request body -- external
+        data -- and the manifest write happens AFTER `send_request` has
+        succeeded. An unguarded `a["type"]` there raised `KeyError` on a
+        request that had already been dispatched: nothing was recorded and
+        the remaining payloads were never sent. Both lists skip the entry
+        so they stay element-aligned and `type` keeps its documented
+        `ARTIFACT_MAPPING` value domain, which `results.json` copies
+        verbatim.
+        """
+        run = self.script(
+            {UUID_ONE: two_failed_tasks()[UUID_ONE]},
+            [_accept("new-1")],
+            launches=False,
+            artifacts=[
+                {"type": "fedora-copr-build", "id": "123:rhel-9-x86_64"},
+                {"id": "no-type-1"},
+            ],
+        )
+
+        self.assertIsNone(run.value)
+        _, manifest = self.masked_manifest()
+        self.assertEqual(len(manifest["requests"]), 1)
+        entry = manifest["requests"][0]
+        self.assertEqual(entry["build_ids"], ["123:rhel-9-x86_64"])
+        self.assertEqual(
+            entry["build_artifacts"],
+            [{"id": "123:rhel-9-x86_64", "type": "fedora-copr-build"}],
+        )
 
     def test_main_failure_mapping_and_lines(self):
         cases = {

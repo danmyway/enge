@@ -417,14 +417,20 @@ class SubmitTest:
         if self.artifacts:
             artifact_lines = []
             for artifact in self.artifacts:
+                # On rerun the artifacts come from the refetched Testing
+                # Farm request body, so no key is guaranteed; this summary
+                # is rendered after the request was already created and
+                # must never be the thing that fails it.
+                artifact_type = artifact.get("type") or "unknown"
+                artifact_id = artifact.get("id") or "unknown"
                 packages = (
                     artifact.get("packages", [])
                     if artifact.get("packages")
-                    else [f"{artifact.get('type')}: {artifact.get('id')}"]
+                    else [f"{artifact_type}: {artifact_id}"]
                 )
                 if artifact.get("nvr"):
                     artifact_lines.append(
-                        f"• {artifact['type']}: {artifact['id']} ({artifact['nvr']})"
+                        f"• {artifact_type}: {artifact_id} ({artifact['nvr']})"
                     )
                 else:
                     pkg_str = (
@@ -433,7 +439,7 @@ class SubmitTest:
                         else (packages[0] if packages else "no packages")
                     )
                     artifact_lines.append(
-                        f"• {artifact['type']}: {artifact['id']} ({pkg_str})"
+                        f"• {artifact_type}: {artifact_id} ({pkg_str})"
                     )
                 if len(packages) > 1:
                     for pkg in packages:

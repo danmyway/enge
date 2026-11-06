@@ -235,7 +235,8 @@ Field-by-field, type / nullability / producing writer:
   emitted on the native path).
   Native dispatch and rerun: `[a["id"] for a in <artifacts>]`
   (`dispatch/set_flow.py:527`, `rerun/__main__.py:1142`, filtered to
-  entries with an `id` on the rerun side). Format is
+  entries carrying both an `id` and a `type` on the rerun side, so that
+  it stays element-aligned with `build_artifacts`). Format is
   `"<build_id>:<chroot>"` for COPR-resolved artifacts
   (`utils/tf_artifact.py:434`). **Caution**: the chroot suffix is NOT
   an arch signal for the run as a whole — an `s390x` run can
@@ -250,7 +251,9 @@ Field-by-field, type / nullability / producing writer:
   ID. Native dispatch and rerun:
   `[{"id": a["id"], "type": a["type"]} for a in <artifacts>]`
   (`dispatch/set_flow.py:548`, `rerun/__main__.py:1244`, filtered to
-  entries with an `id` on the rerun side). The `type` values are the
+  entries carrying both an `id` and a `type` on the rerun side, where
+  the artifacts come from the refetched Testing Farm request body and
+  neither key is guaranteed). The `type` values are the
   Testing Farm artifact type strings from `ARTIFACT_MAPPING`
   (`utils/globals.py:14`): `"fedora-copr-build"` and
   `"redhat-brew-build"`. The `id` values are byte-identical to those in
