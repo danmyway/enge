@@ -1240,9 +1240,18 @@ def submit_rerun(jobs: "RerunJobs", ctx: AppContext) -> RerunSubmission:
                 target=env_vars.get("TARGET_RELEASE"),
                 git_ref=request_data.get("tests_git_ref"),
                 event=request_data.get("event"),
-                build_ids=[a["id"] for a in artifacts if a.get("id")],
+                # `artifacts` is the refetched Testing Farm request body,
+                # so neither key is guaranteed. Both lists skip an entry
+                # missing either one: they stay element-aligned, and
+                # `type` keeps the ARTIFACT_MAPPING value domain that
+                # `results.json` copies verbatim and `TaskEntry.from_dict`
+                # validates. Recording `type: ""` instead would widen a
+                # signed-off schema without sign-off.
+                build_ids=[a["id"] for a in artifacts if a.get("id") and a.get("type")],
                 build_artifacts=[
-                    {"id": a["id"], "type": a["type"]} for a in artifacts if a.get("id")
+                    {"id": a["id"], "type": a["type"]}
+                    for a in artifacts
+                    if a.get("id") and a.get("type")
                 ],
                 # From the payload actually sent, not from `request_data`,
                 # whose `test_name` is a display string built for the
