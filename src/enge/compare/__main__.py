@@ -41,7 +41,7 @@ _AnyTable = Union["engine.ComparisonTable", "engine.LineageTable"]
 
 LINEAGE_LEGEND = (
     "Legend: P passed, F failed, E error or unparseable, S skipped, "
-    "C canceled, . covered without a result, — not covered; [X] exhausted, "
+    "C canceled, . covered without a result; [X] exhausted, "
     "[?] unparseable twice, [-] canceled (terminal)"
 )
 
@@ -62,14 +62,27 @@ def _descriptor(value):
     return value if value is not None else engine.ABSENT
 
 
+def _path_label(
+    distro: Optional[str], source: Optional[str], target: Optional[str]
+) -> str:
+    """`alma 9.7→10.1`; the family is omitted when unknown (Q-CMP-2)."""
+    path = f"{_descriptor(source)}{_UPGRADE_ARROW}{_descriptor(target)}"
+    return f"{distro} {path}" if distro else path
+
+
+def _reference_header(index: int, col: "engine.ExecutionColumn") -> str:
+    """`(1) x86_64 alma 9.7→10.1  set alma9` (L71); no set part when the
+    column has none."""
+    header = f"({index}) {col.arch} {_path_label(col.distro, col.source, col.target)}"
+    return f"{header}  set {col.set}" if col.set else header
+
+
 def _table_title(table: _AnyTable) -> str:
     parts = []
     if table.arch is not None:
         parts.append(table.arch)
     if table.source is not None or table.target is not None:
-        parts.append(
-            f"{_descriptor(table.source)}{_UPGRADE_ARROW}{_descriptor(table.target)}"
-        )
+        parts.append(_path_label(table.distro, table.source, table.target))
     parts.append(f"tier: {table.tier}" if table.tier is not None else "tier: untiered")
     return " | ".join(parts)
 
@@ -80,9 +93,7 @@ def _column_header(table: _AnyTable, index: int) -> str:
     if table.arch is None:
         parts.append(col.arch)
     if table.source is None and table.target is None:
-        parts.append(
-            f"{_descriptor(col.source)}{_UPGRADE_ARROW}{_descriptor(col.target)}"
-        )
+        parts.append(_path_label(col.distro, col.source, col.target))
     parts.append(f"({index + 1})")
     return "\n".join(parts)
 
@@ -115,17 +126,14 @@ def _render_table(table: "engine.ComparisonTable", *, short: bool) -> Table:
     return rich_table
 
 
-def _footer_entries(table: "engine.ComparisonTable"):
+def _footer_lines(table: "engine.ComparisonTable") -> List[str]:
+    """TASK REFERENCE (L71): per column a header line, then one indented
+    `run <run_id>  <artifacts_url>` line."""
+    lines = []
     for index, col in enumerate(table.columns, start=1):
-        yield {
-            "index": index,
-            "run_id": col.run_id,
-            "task_id": col.task_id,
-            "arch": col.arch,
-            "path": f"{_descriptor(col.source)}{_UPGRADE_ARROW}{_descriptor(col.target)}",
-            "set": col.set,
-            "artifacts_url": col.artifacts_url,
-        }
+        lines.append(_reference_header(index, col))
+        lines.append(f"    run {col.run_id}  {col.artifacts_url or engine.ABSENT}")
+    return lines
 
 
 def _validate_lineage_args(cli_args: Any) -> None:
@@ -204,28 +212,23 @@ def _render_lineage_table(
 
 
 def _lineage_footer_lines(table: "engine.LineageTable") -> List[str]:
-    """One TASK REFERENCE line per lineage column (no `run=` field).
-
-    `({i}) {arch} {source}→{target}`, then `gen{G}={artifacts_url}` for
-    every task of the lineage in lineage order (two tasks of one generation
+    """TASK REFERENCE (L71): per lineage column a header line (the root's
+    arch, path and set), then one indented `gen<G>  <artifacts_url>` line
+    per task of the lineage in lineage order (two tasks of one generation
     both appear). When the lineage's source composes are not all equal,
-    ` composes: ` follows with `gen{G}={source_compose}` for every task.
+    every task line ends with `  compose <source_compose>`.
     """
     lines = []
     for index, (col, lineage) in enumerate(
         zip(table.columns, table.generations), start=1
     ):
-        parts = [
-            f"({index}) {col.arch} "
-            f"{col.source or engine.ABSENT}{_UPGRADE_ARROW}{col.target or engine.ABSENT}"
-        ]
-        parts.extend(f"gen{gen}={task.artifacts_url or ''}" for gen, task in lineage)
-        if len({task.source_compose for _, task in lineage}) > 1:
-            parts.append("composes:")
-            parts.extend(
-                f"gen{gen}={_descriptor(task.source_compose)}" for gen, task in lineage
-            )
-        lines.append(" ".join(parts))
+        lines.append(_reference_header(index, col))
+        drifted = len({task.source_compose for _, task in lineage}) > 1
+        for gen, task in lineage:
+            line = f"    gen{gen}  {task.artifacts_url or engine.ABSENT}"
+            if drifted:
+                line += f"  compose {_descriptor(task.source_compose)}"
+            lines.append(line)
     return lines
 
 
@@ -332,12 +335,8 @@ def main(ctx: AppContext) -> int:
 
         console.print()
         console.print("~~~ TASK REFERENCE ~~~~~~~~~~~~~~~~", style="dim")
-        for entry in _footer_entries(table):
-            console.print(
-                f"({entry['index']}) {entry['arch']} {entry['path']} "
-                f"run={entry['run_id']} {entry['artifacts_url'] or ''}",
-                style="dim",
-            )
+        for line in _footer_lines(table):
+            console.print(escape(line), style="dim")
         has_content = True
 
     if not has_content:
