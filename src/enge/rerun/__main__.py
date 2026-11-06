@@ -1245,8 +1245,9 @@ def submit_rerun(jobs: "RerunJobs", ctx: AppContext) -> RerunSubmission:
                 # missing either one: they stay element-aligned, and
                 # `type` keeps the ARTIFACT_MAPPING value domain that
                 # `results.json` copies verbatim and `TaskEntry.from_dict`
-                # validates. Recording `type: ""` instead would widen a
-                # signed-off schema without sign-off.
+                # validates. Recording `type: ""` instead would pass
+                # validation silently and assert a build family nobody
+                # knows, which is worse than a dropped record.
                 build_ids=[a["id"] for a in artifacts if a.get("id") and a.get("type")],
                 build_artifacts=[
                     {"id": a["id"], "type": a["type"]}

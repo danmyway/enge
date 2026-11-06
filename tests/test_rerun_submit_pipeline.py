@@ -564,7 +564,8 @@ class TestRerunMainSubmitPath(SubmitHarness, unittest.TestCase):
         the remaining payloads were never sent. Both lists skip the entry
         so they stay element-aligned and `type` keeps its documented
         `ARTIFACT_MAPPING` value domain, which `results.json` copies
-        verbatim.
+        verbatim; recording `type: ""` would assert an unknown build
+        family.
         """
         run = self.script(
             {UUID_ONE: two_failed_tasks()[UUID_ONE]},
