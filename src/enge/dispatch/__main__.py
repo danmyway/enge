@@ -38,7 +38,11 @@ from enge.utils.errors import (
 )
 from enge.utils.tf_artifact import CoprRef, BrewRef
 from .tf_send_request import SubmitTest
-from .set_flow import expand_set_requests, process_request_spec
+from .set_flow import (
+    expand_set_requests,
+    process_request_spec,
+    warn_on_reference_inheritance,
+)
 from .artifacts import ArtifactResolver
 from enge.utils.validators import (
     validate_git_repository as validate_git_repo_util,
@@ -498,6 +502,8 @@ def submit_dispatch(ctx) -> Optional[DispatchSubmission]:
         )
 
     tiers, plans = _compute_tiers_and_plans(ctx)
+
+    warn_on_reference_inheritance(ctx)
 
     manifest_writer = _build_manifest_writer(ctx)
 
