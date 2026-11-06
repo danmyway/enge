@@ -234,9 +234,11 @@ Field-by-field, type / nullability / producing writer:
   present) — optional key (absent on migrated manifests only; always
   emitted on the native path).
   Native dispatch and rerun: `[a["id"] for a in <artifacts>]`
-  (`dispatch/set_flow.py:527`, `rerun/__main__.py:1142`, filtered to
-  entries carrying both an `id` and a `type` on the rerun side, so that
-  it stays element-aligned with `build_artifacts`). Format is
+  (`dispatch/set_flow.py:527`, `rerun/__main__.py:1142`, on the rerun
+  side, every entry carrying an `id`; `build_artifacts` additionally
+  skips an entry without a `type`, so the two lists are element-aligned
+  whenever every artifact carries a type, which Testing Farm requires).
+  Format is
   `"<build_id>:<chroot>"` for COPR-resolved artifacts
   (`utils/tf_artifact.py:434`). **Caution**: the chroot suffix is NOT
   an arch signal for the run as a whole — an `s390x` run can
@@ -257,7 +259,8 @@ Field-by-field, type / nullability / producing writer:
   Testing Farm artifact type strings from `ARTIFACT_MAPPING`
   (`utils/globals.py:14`): `"fedora-copr-build"` and
   `"redhat-brew-build"`. The `id` values are byte-identical to those in
-  `build_ids`, preserving COPR's `"<build_id>:<chroot>"` format. Always
+  `build_ids`, in the same order, preserving COPR's
+  `"<build_id>:<chroot>"` format. Always
   present on native manifests (empty list when no artifacts); consumers
   `.get()` it (never `[key]`) because migrated manifests omit it
   entirely.
