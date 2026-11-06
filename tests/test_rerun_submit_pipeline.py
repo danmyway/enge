@@ -561,11 +561,15 @@ class TestRerunMainSubmitPath(SubmitHarness, unittest.TestCase):
         data -- and the manifest write happens AFTER `send_request` has
         succeeded. An unguarded `a["type"]` there raised `KeyError` on a
         request that had already been dispatched: nothing was recorded and
-        the remaining payloads were never sent. Both lists skip the entry
-        so they stay element-aligned and `type` keeps its documented
+        the remaining payloads were never sent.
+
+        `build_ids` records every sent entry that has an `id`, exactly as
+        it did before `build_artifacts` existed. `build_artifacts` skips
+        an entry without a `type`, so `type` keeps its documented
         `ARTIFACT_MAPPING` value domain, which `results.json` copies
         verbatim; recording `type: ""` would assert an unknown build
-        family.
+        family. The two lists are element-aligned whenever every entry
+        carries a type.
         """
         run = self.script(
             {UUID_ONE: two_failed_tasks()[UUID_ONE]},
@@ -581,7 +585,7 @@ class TestRerunMainSubmitPath(SubmitHarness, unittest.TestCase):
         _, manifest = self.masked_manifest()
         self.assertEqual(len(manifest["requests"]), 1)
         entry = manifest["requests"][0]
-        self.assertEqual(entry["build_ids"], ["123:rhel-9-x86_64"])
+        self.assertEqual(entry["build_ids"], ["123:rhel-9-x86_64", "no-type-1"])
         self.assertEqual(
             entry["build_artifacts"],
             [{"id": "123:rhel-9-x86_64", "type": "fedora-copr-build"}],
