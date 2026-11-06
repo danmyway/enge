@@ -6,9 +6,10 @@ patched in for the module's `console` -- the one named exception to the
 item. Captions are compared with whitespace normalized: rich wraps a table
 caption to the table's own width.
 
-The normal-mode block at the bottom was captured from `origin/devel`'s
-renderer at the RED commit and is committed verbatim: lineage mode must
-leave normal `enge compare` output byte-identical.
+The normal-mode block at the bottom pins normal `enge compare` output
+byte for byte: lineage fields must never change it. It was re-captured
+for L71 (distro in the path label, TASK REFERENCE per column); its data
+rows are unchanged from the original capture.
 """
 
 import io
@@ -25,7 +26,7 @@ A2 = "/plans/b"
 
 LEGEND = (
     "Legend: P passed, F failed, E error or unparseable, S skipped, "
-    "C canceled, . covered without a result, — not covered; [X] exhausted, "
+    "C canceled, . covered without a result; [X] exhausted, "
     "[?] unparseable twice, [-] canceled (terminal)"
 )
 
@@ -198,18 +199,24 @@ class TestFooter(unittest.TestCase):
             retry_count=None,
         )
         expected = [
-            "(1) aarch64 8.10→9.6 gen0=https://a/ra gen1=https://a/ca1 "
-            "gen2=https://a/ca2",
-            "(2) s390x 8.10→9.6 gen0=https://a/rs gen1=https://a/cs1",
-            "(3) x86_64 8.10→9.6 gen0=https://a/rx gen1=https://a/cx1 "
-            "gen2=https://a/cx2",
+            "(1) aarch64 rhel 8.10→9.6  set s",
+            "    gen0  https://a/ra",
+            "    gen1  https://a/ca1",
+            "    gen2  https://a/ca2",
+            "(2) s390x rhel 8.10→9.6  set s",
+            "    gen0  https://a/rs",
+            "    gen1  https://a/cs1",
+            "(3) x86_64 rhel 8.10→9.6  set s",
+            "    gen0  https://a/rx",
+            "    gen1  https://a/cx1",
+            "    gen2  https://a/cx2",
         ]
         self.assertEqual(_lineage_footer_lines(tables[0]), expected)
 
         _, text = _capture(
             _ctx(lineage=True), lineage=(columns, ["rx", "ra", "rs"], None)
         )
-        footer = text[text.index("~~~ TASK REFERENCE") :].splitlines()[1:4]
+        footer = text[text.index("~~~ TASK REFERENCE") :].splitlines()[1:12]
         self.assertEqual([line.rstrip() for line in footer], expected)
 
     def test_footer_lists_composes_only_when_they_drift(self):
@@ -229,7 +236,10 @@ class TestFooter(unittest.TestCase):
             splitpath=False,
             retry_count=None,
         )
-        self.assertNotIn("composes:", _lineage_footer_lines(tables[0])[0])
+        lines = _lineage_footer_lines(tables[0])
+        # Premise: a header and both generations are listed.
+        self.assertEqual(len(lines), 3)
+        self.assertFalse(any("compose" in line for line in lines), lines)
 
 
 class TestCells(unittest.TestCase):
@@ -314,47 +324,55 @@ class TestCells(unittest.TestCase):
         )
 
 
-# Captured from origin/devel's renderer (tree 4cf3004) at the RED commit.
+# Captured from this branch's renderer at the L71 commit (Q-CMP-2/3):
+# the path label gains the distro family and TASK REFERENCE is laid out
+# per column. Data rows are unchanged from origin/devel (tree 4cf3004).
 _NORMAL_MODE_EXPECTED = {
     False: (
         "\n"
         "~~~ COMPARE RESULT ~~~~~~~~~~~~~~~~\n"
-        "                        tier: tier0                        \n"
-        "╭─────────┬──────────┬──────────┬──────────┬──────────────╮\n"
-        "│         │ aarch64  │ x86_64   │ x86_64   │              │\n"
-        "│         │ 8.10→9.6 │ 8.10→9.6 │ 8.10→9.6 │              │\n"
-        "│ Name    │ (1)      │ (2)      │ (3)      │ Consolidated │\n"
-        "├─────────┼──────────┼──────────┼──────────┼──────────────┤\n"
-        "│ plans/a │ ERROR    │ FAILED   │ PASSED   │ ERROR        │\n"
-        "│ plans/b │ —        │ PASSED   │ —        │ PASSED       │\n"
-        "╰─────────┴──────────┴──────────┴──────────┴──────────────╯\n"
+        "                               tier: tier0                                \n"
+        "╭─────────┬───────────────┬───────────────┬───────────────┬──────────────╮\n"
+        "│         │ aarch64       │ x86_64        │ x86_64        │              │\n"
+        "│         │ rhel 8.10→9.6 │ rhel 8.10→9.6 │ rhel 8.10→9.6 │              │\n"
+        "│ Name    │ (1)           │ (2)           │ (3)           │ Consolidated │\n"
+        "├─────────┼───────────────┼───────────────┼───────────────┼──────────────┤\n"
+        "│ plans/a │ ERROR         │ FAILED        │ PASSED        │ ERROR        │\n"
+        "│ plans/b │ —             │ PASSED        │ —             │ PASSED       │\n"
+        "╰─────────┴───────────────┴───────────────┴───────────────┴──────────────╯\n"
         "\n"
         "~~~ TASK REFERENCE ~~~~~~~~~~~~~~~~\n"
-        "(1) aarch64 8.10→9.6 run=RUN-t3 https://a/t3\n"
-        "(2) x86_64 8.10→9.6 run=RUN-t1 https://a/t1\n"
-        "(3) x86_64 8.10→9.6 run=RUN-t2 https://a/t2\n"
+        "(1) aarch64 rhel 8.10→9.6  set s\n"
+        "    run RUN-t3  https://a/t3\n"
+        "(2) x86_64 rhel 8.10→9.6  set s\n"
+        "    run RUN-t1  https://a/t1\n"
+        "(3) x86_64 rhel 8.10→9.6  set s\n"
+        "    run RUN-t2  https://a/t2\n"
     ),
     True: (
         "\n"
         "~~~ COMPARE RESULT ~~~~~~~~~~~~~~~~\n"
-        "                           tier: tier0                           \n"
-        "╭───────────────┬──────────┬──────────┬──────────┬──────────────╮\n"
-        "│               │ aarch64  │ x86_64   │ x86_64   │              │\n"
-        "│               │ 8.10→9.6 │ 8.10→9.6 │ 8.10→9.6 │              │\n"
-        "│ Name          │ (1)      │ (2)      │ (3)      │ Consolidated │\n"
-        "├───────────────┼──────────┼──────────┼──────────┼──────────────┤\n"
-        "│ plans/a       │          │          │          │              │\n"
-        "│     [bracket] │ ERROR    │ —        │ —        │ ERROR        │\n"
-        "│     t1        │ —        │ FAILED   │ PASSED   │ PASSED       │\n"
-        "│     t2        │ —        │ PASSED   │ —        │ PASSED       │\n"
-        "│ plans/b       │          │          │          │              │\n"
-        "│     t3        │ —        │ PASSED   │ —        │ PASSED       │\n"
-        "╰───────────────┴──────────┴──────────┴──────────┴──────────────╯\n"
+        "                                  tier: tier0                                   \n"
+        "╭───────────────┬───────────────┬───────────────┬───────────────┬──────────────╮\n"
+        "│               │ aarch64       │ x86_64        │ x86_64        │              │\n"
+        "│               │ rhel 8.10→9.6 │ rhel 8.10→9.6 │ rhel 8.10→9.6 │              │\n"
+        "│ Name          │ (1)           │ (2)           │ (3)           │ Consolidated │\n"
+        "├───────────────┼───────────────┼───────────────┼───────────────┼──────────────┤\n"
+        "│ plans/a       │               │               │               │              │\n"
+        "│     [bracket] │ ERROR         │ —             │ —             │ ERROR        │\n"
+        "│     t1        │ —             │ FAILED        │ PASSED        │ PASSED       │\n"
+        "│     t2        │ —             │ PASSED        │ —             │ PASSED       │\n"
+        "│ plans/b       │               │               │               │              │\n"
+        "│     t3        │ —             │ PASSED        │ —             │ PASSED       │\n"
+        "╰───────────────┴───────────────┴───────────────┴───────────────┴──────────────╯\n"
         "\n"
         "~~~ TASK REFERENCE ~~~~~~~~~~~~~~~~\n"
-        "(1) aarch64 8.10→9.6 run=RUN-t3 https://a/t3\n"
-        "(2) x86_64 8.10→9.6 run=RUN-t1 https://a/t1\n"
-        "(3) x86_64 8.10→9.6 run=RUN-t2 https://a/t2\n"
+        "(1) aarch64 rhel 8.10→9.6  set s\n"
+        "    run RUN-t3  https://a/t3\n"
+        "(2) x86_64 rhel 8.10→9.6  set s\n"
+        "    run RUN-t1  https://a/t1\n"
+        "(3) x86_64 rhel 8.10→9.6  set s\n"
+        "    run RUN-t2  https://a/t2\n"
     ),
 }
 
@@ -420,7 +438,7 @@ class TestNormalModeUnchanged(unittest.TestCase):
 
     def test_normal_mode_ignores_the_lineage_fields(self):
         """The loader fills the lineage fields in normal mode too; normal
-        compare must still render origin/devel's bytes. Column t2 is a rerun
+        compare must still render the pinned bytes. Column t2 is a rerun
         of t1, so a normal-mode sort or row that read `rerun_of` would move
         or change it."""
         from dataclasses import replace

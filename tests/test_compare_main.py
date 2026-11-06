@@ -100,15 +100,15 @@ class TestDescriptorRenderFallback(unittest.TestCase):
     'None'."""
 
     def test_none_source_and_target_render_as_em_dash_in_footer(self):
-        from enge.compare.__main__ import _footer_entries
+        from enge.compare.__main__ import _footer_lines
 
         col = _column(source=None, target=None)
         table = ComparisonTable(tier="tier1", columns=(col,), rows=())
 
-        (entry,) = list(_footer_entries(table))
+        header, _run_line = _footer_lines(table)
 
-        self.assertNotIn("None", entry["path"])
-        self.assertIn("—", entry["path"])
+        self.assertNotIn("None", header)
+        self.assertEqual(header, "(1) x86_64 rhel —→—  set setA")
 
 
 class TestUntieredTableTitle(unittest.TestCase):
@@ -334,7 +334,7 @@ class TestColumnHeaderNewlineJoin(unittest.TestCase):
 
         header = _column_header(table, 0)
 
-        self.assertEqual(header, "x86_64\n9.9→10.3\n(1)")
+        self.assertEqual(header, "x86_64\nrhel 9.9→10.3\n(1)")
 
     def test_header_is_index_only_when_arch_and_path_are_table_level(self):
         from enge.compare.__main__ import _column_header
@@ -354,13 +354,14 @@ class TestColumnHeaderNewlineJoin(unittest.TestCase):
         self.assertEqual(header, "(1)")
 
 
-class TestFooterDropsSetAndTask(unittest.TestCase):
-    """RULING F3 (maintainer, 2026-07-29): the TASK REFERENCE footer drops
-    `set=` and `task=`; `run=` stays unconditional -- the task is already
-    in results.json, run_id is not otherwise discoverable without grepping
-    the caches."""
+class TestFooterHeaderAndRunLine(unittest.TestCase):
+    """L71 (maintainer, 2026-11-06; supersedes RULING F3's set drop): each
+    TASK REFERENCE column is a header line naming arch, distro, path and
+    set, then an indented run line. `task=` stays out; the run id stays
+    unconditional -- it is not otherwise discoverable without grepping the
+    caches."""
 
-    def test_footer_line_omits_set_and_task_keeps_run_unconditionally(self):
+    def test_footer_header_names_the_set_and_the_run_line_follows(self):
         import enge.compare.__main__ as cm
 
         cols = [
@@ -382,22 +383,20 @@ class TestFooterDropsSetAndTask(unittest.TestCase):
         ):
             cm.main(_ctx())
 
-        footer_lines = [
+        printed = [
             call.args[0]
             for call in mock_print.call_args_list
-            if call.args
-            and isinstance(call.args[0], str)
-            and call.args[0].startswith("(1)")
+            if call.args and isinstance(call.args[0], str)
         ]
-        self.assertEqual(len(footer_lines), 1)
-        footer_line = footer_lines[0]
-
+        start = printed.index("(1) x86_64 rhel 9.9→10.3  set setA")
         self.assertEqual(
-            footer_line,
-            "(1) x86_64 9.9→10.3 run=run1 https://example.test/artifacts",
+            printed[start : start + 2],
+            [
+                "(1) x86_64 rhel 9.9→10.3  set setA",
+                "    run run1  https://example.test/artifacts",
+            ],
         )
-        self.assertNotIn("set=", footer_line)
-        self.assertNotIn("task=", footer_line)
+        self.assertFalse(any("task" in line for line in printed[start : start + 2]))
 
 
 if __name__ == "__main__":

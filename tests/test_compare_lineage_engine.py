@@ -409,7 +409,10 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "columns: (1) x86_64\n"
                 "/plans/a | F F P | PASSED\n"
                 "/plans/b | P | PASSED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -424,7 +427,10 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "    /t/x.py::t1 | F F P | PASSED\n"
                 "    /t/x.py::t2 | P | PASSED\n"
                 "    /t/y.py::t3 | P | PASSED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -438,7 +444,10 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "columns: (1) x86_64\n"
                 "/plans/a | F F P | PASSED\n"
                 "/plans/b | P | PASSED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -451,7 +460,10 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "/plans/a | F F F | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -464,7 +476,10 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "/plans/a | F F F [X] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -477,7 +492,10 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "/plans/a | F F F | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -490,7 +508,10 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "    /t/x.py::t1 | F F F [X] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -503,7 +524,10 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "/plans/a | F E E [?] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -516,7 +540,9 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "/plans/a | F C [-] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1"
             ),
         )
 
@@ -530,7 +556,9 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "columns: (1) x86_64\n"
                 "/plans/a | F F | FAILED\n"
                 "/plans/b | F . | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1"
             ),
         )
 
@@ -544,7 +572,10 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "columns: (1) x86_64\n"
                 "/plans/a | F P | PASSED\n"
                 "/plans/b | E P | PASSED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1a gen1=https://a/c1b composes: gen0=RHEL-8.10.0-Nightly gen1=RHEL-8.10.0-20261002.n.0 gen1=RHEL-8.10.0-20261002.n.0"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r  compose RHEL-8.10.0-Nightly\n"
+                "F     gen1  https://a/c1a  compose RHEL-8.10.0-20261002.n.0\n"
+                "F     gen1  https://a/c1b  compose RHEL-8.10.0-20261002.n.0"
             ),
         )
 
@@ -558,7 +589,10 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "columns: (1) x86_64\n"
                 "    /t/x.py::t1 | F P | PASSED\n"
                 "/plans/b | E P | PASSED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1a gen1=https://a/c1b composes: gen0=RHEL-8.10.0-Nightly gen1=RHEL-8.10.0-20261002.n.0 gen1=RHEL-8.10.0-20261002.n.0"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r  compose RHEL-8.10.0-Nightly\n"
+                "F     gen1  https://a/c1a  compose RHEL-8.10.0-20261002.n.0\n"
+                "F     gen1  https://a/c1b  compose RHEL-8.10.0-20261002.n.0"
             ),
         )
 
@@ -571,8 +605,11 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) aarch64, (2) x86_64\n"
                 "/plans/a | P | F P | PASSED\n"
-                "F (1) aarch64 8.10→9.6 gen0=https://a/ra\n"
-                "F (2) x86_64 8.10→9.6 gen0=https://a/rx gen1=https://a/cx"
+                "F (1) aarch64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/ra\n"
+                "F (2) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/rx\n"
+                "F     gen1  https://a/cx"
             ),
         )
 
@@ -586,7 +623,9 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "columns: (1) x86_64\n"
                 "    /tests/y.py::test_x | F F [X] | FAILED\n"
                 "    /x.py::test_x | F F [X] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1"
             ),
         )
 
@@ -599,7 +638,9 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "    /x.py::t1 | F P | PASSED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1"
             ),
         )
 
@@ -612,7 +653,10 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "/plans/a | F F C [X] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen1=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen1  https://a/c2"
             ),
         )
 
@@ -626,7 +670,10 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "columns: (1) x86_64\n"
                 "    /t/x.py::t1 | F F [X] | FAILED\n"
                 "    /t/x.py::t2 | F C [-] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen1=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen1  https://a/c2"
             ),
         )
 
@@ -639,7 +686,8 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "/plans/a | F [X] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/o"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/o"
             ),
         )
 
@@ -653,7 +701,9 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "columns: (1) x86_64\n"
                 "    /default-0/x.py::t1 | F P | PASSED\n"
                 "    /default-1/x.py::t1 | F . | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1"
             ),
         )
 
@@ -666,7 +716,11 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "/plans/a | F E F E [?] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen1=https://a/c3 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen1  https://a/c3\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -680,7 +734,11 @@ class TestLineageExpectedValues(unittest.TestCase):
                 "columns: (1) x86_64\n"
                 "    /t/x.py::t1 | F F [X] | FAILED\n"
                 "    /t/x.py::t2 | F E E [?] | FAILED\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r gen1=https://a/c1 gen1=https://a/c3 gen2=https://a/c2"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r\n"
+                "F     gen1  https://a/c1\n"
+                "F     gen1  https://a/c3\n"
+                "F     gen2  https://a/c2"
             ),
         )
 
@@ -693,7 +751,9 @@ class TestLineageExpectedValues(unittest.TestCase):
             (
                 "columns: (1) x86_64\n"
                 "/plans/a | F E | ERROR\n"
-                "F (1) x86_64 8.10→9.6 gen0=https://a/r9 gen1=https://a/c0"
+                "F (1) x86_64 rhel 8.10→9.6  set s\n"
+                "F     gen0  https://a/r9\n"
+                "F     gen1  https://a/c0"
             ),
         )
 
