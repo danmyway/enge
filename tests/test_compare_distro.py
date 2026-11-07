@@ -173,6 +173,39 @@ class TestDistroLabels(unittest.TestCase):
             ["alma 9.7→10.1 | tier: tier0", "rocky 9.7→10.1 | tier: tier0"],
         )
 
+    def test_splitpath_title_names_the_distro_without_releases(self):
+        """XR-cmp-1: unknown releases still split by distro under
+        --splitpath, so the title must say which distro each table is."""
+        from dataclasses import replace
+
+        from enge.compare.__main__ import _table_title
+        from enge.compare.engine import build_tables
+
+        columns = [
+            replace(_col("r", ROCKY, "PASSED"), source=None, target=None),
+            replace(_col("a", ALMA, "FAILED"), source=None, target=None),
+        ]
+        tables = build_tables(
+            columns, show_tests=False, splitarch=False, splitpath=True
+        )
+        self.assertEqual(
+            [_table_title(t) for t in tables],
+            ["alma —→— | tier: tier0", "rocky —→— | tier: tier0"],
+        )
+        self.assertEqual([t.rows[0].consolidated for t in tables], ["FAILED", "PASSED"])
+
+    def test_title_without_distro_or_releases_is_unchanged(self):
+        from dataclasses import replace
+
+        from enge.compare.__main__ import _table_title
+        from enge.compare.engine import build_tables
+
+        col = replace(_col("n", None, "PASSED"), source=None, target=None)
+        (table,) = build_tables(
+            [col], show_tests=False, splitarch=False, splitpath=True
+        )
+        self.assertEqual(_table_title(table), "tier: tier0")
+
     def test_lineage_splitpath_titles_name_the_distro(self):
         from enge.compare.__main__ import _table_title
         from enge.compare.engine import build_lineage_tables
