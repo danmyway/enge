@@ -71,6 +71,12 @@ CONFIG = {
                 "tiers": ["tier0"],
                 "architectures": ["x86_64"],
             },
+            # Skipped by expand_set_requests (no architectures): never scheduled.
+            "broken": {
+                "source": "8.10",
+                "tiers": ["tier0"],
+                "copr_api": {"build_references": ["lp:old"]},
+            },
             "child": {
                 "extends": "copr-pr7",
                 "source": "8.10",
@@ -324,7 +330,89 @@ class TestSubmitDispatchWarnsOnce(unittest.TestCase):
             patch.object(dispatch_main, "expand_set_requests", return_value=[]),
         ):
             dispatch_main.submit_dispatch(ctx)
+        warn.assert_called_once_with(ctx, set())
+
+    def test_non_set_submit_dispatch_calls_the_warning_pass_once(self):
+        from enge.dispatch import __main__ as dispatch_main
+
+        ctx = _ctx(
+            ["--copr", "lp:pr9", "-s", "8.10", "-T", "tier0", "--arch", "x86_64"],
+            _config(copr_run_refs=["lp:run"]),
+        )
+        # Premise: no set is selected, so this is non-set dispatch.
+        self.assertFalse(ctx.individual_test_sets)
+        with (
+            patch.object(dispatch_main, "warn_on_reference_inheritance") as warn,
+            patch.object(dispatch_main, "setup_submit_test"),
+            patch.object(dispatch_main, "validate_plan_filters"),
+            patch.object(dispatch_main, "build_tier_plan_specs", return_value=[]),
+        ):
+            dispatch_main.submit_dispatch(ctx)
         warn.assert_called_once_with(ctx)
+
+
+class TestWarningsFollowTheSchedule(unittest.TestCase):
+    """XR-l81-1: W1/W2 name only sets that are actually scheduled; a set
+    that expand_set_requests skips never counts, and skipping every set
+    does not turn the run into non-set dispatch."""
+
+    def _dispatch_warnings(self, argv, cfg):
+        from enge.dispatch import __main__ as dispatch_main
+
+        ctx = _ctx(argv, cfg)
+        with (
+            patch.object(dispatch_main, "ArtifactResolver", EchoResolver),
+            patch.object(dispatch_main, "_build_manifest_writer", return_value=None),
+            self.assertLogs(SET_FLOW_LOGGER, level="WARNING") as logs,
+        ):
+            logging.getLogger(SET_FLOW_LOGGER).warning("sentinel")
+            dispatch_main.submit_dispatch(ctx)
+        return [
+            r.getMessage()
+            for r in logs.records
+            if r.levelno == logging.WARNING and r.getMessage() != "sentinel"
+        ]
+
+    def test_a_skipped_set_is_never_named(self):
+        self.assertEqual(
+            self._dispatch_warnings(
+                ["--copr", "lp:pr9", "-S", "alma", "-S", "broken"], _config()
+            ),
+            [
+                TestReferenceWarnings.W1_COPR,
+                "--copr replaces COPR references defined in set(s): alma",
+            ],
+        )
+
+    def test_only_skipped_sets_define_references(self):
+        warnings = self._dispatch_warnings(
+            ["--copr", "lp:pr9", "-S", "plain", "-S", "broken"], _config()
+        )
+        # Premise: the skipped set does define COPR references.
+        self.assertEqual(
+            CONFIG["tests"]["set"]["broken"]["copr_api"]["build_references"],
+            ["lp:old"],
+        )
+        self.assertEqual(warnings, [])
+
+    def test_every_set_skipped_is_still_set_dispatch(self):
+        """The builder rejects a first set without architectures, so this
+        is driven directly: an empty schedule must not fall back to the
+        non-set W2."""
+        from enge.dispatch.set_flow import warn_on_reference_inheritance
+
+        ctx = _ctx(
+            ["--copr", "lp:pr9", "-S", "plain"], _config(copr_run_refs=["lp:run"])
+        )
+        with self.assertLogs(SET_FLOW_LOGGER, level="WARNING") as logs:
+            warn_on_reference_inheritance(ctx, set())
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            [
+                "[copr_api].build_references is ignored for set dispatch; "
+                "define references in the set or its preset, or pass --copr",
+            ],
+        )
 
 
 if __name__ == "__main__":
