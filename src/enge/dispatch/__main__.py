@@ -503,14 +503,13 @@ def submit_dispatch(ctx) -> Optional[DispatchSubmission]:
 
     tiers, plans = _compute_tiers_and_plans(ctx)
 
-    warn_on_reference_inheritance(ctx)
-
     manifest_writer = _build_manifest_writer(ctx)
 
     dispatch_results: List[Dict[str, Any]] = []
 
     if hasattr(ctx, "individual_test_sets") and ctx.individual_test_sets:
         all_set_requests = expand_set_requests(ctx=ctx)
+        warn_on_reference_inheritance(ctx, {spec.set_name for spec in all_set_requests})
         total_expected_requests = len(all_set_requests)
         LOGGER.info(f"Dispatching {total_expected_requests} request(s)")
         resolver = ArtifactResolver()
@@ -530,6 +529,7 @@ def submit_dispatch(ctx) -> Optional[DispatchSubmission]:
             total_requests += 1
 
     else:
+        warn_on_reference_inheritance(ctx)
         setup_submit_test(ctx)
 
         resolver = ArtifactResolver()
