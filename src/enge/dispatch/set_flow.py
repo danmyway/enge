@@ -121,8 +121,13 @@ def expand_set_requests(ctx) -> List[RequestSpec]:
 _FAMILY_LABEL = {"copr": "COPR", "brew": "Brew"}
 
 
-def warn_on_reference_inheritance(ctx) -> None:
+def warn_on_reference_inheritance(ctx, scheduled_sets=None) -> None:
     """Log the build-reference WARNINGs, once per invocation (Q-ART-4/6/7).
+
+    ``scheduled_sets`` names the sets ``expand_set_requests`` actually
+    scheduled; W1/W2 consider only those (XR-l81-1), so a set skipped for a
+    missing source, target, architecture or tier is never named. Whether the
+    run is set dispatch at all still follows ``ctx.individual_test_sets``.
 
     Set dispatch, per family:
     - run-level ``[<family>_api].build_references`` non-empty: it is ignored
@@ -134,7 +139,10 @@ def warn_on_reference_inheritance(ctx) -> None:
     Non-set dispatch: W2 only, when the CLI family replaces non-empty
     run-level references.  Never an error.
     """
-    sets = getattr(ctx, "individual_test_sets", None) or []
+    selected = getattr(ctx, "individual_test_sets", None) or []
+    sets = [
+        s for s in selected if scheduled_sets is None or s.get("name") in scheduled_sets
+    ]
 
     def set_refs(test_set, family):
         api = test_set["effective_values"].get(f"{family}_api") or {}
@@ -145,7 +153,7 @@ def warn_on_reference_inheritance(ctx) -> None:
         on_cli = bool(getattr(ctx.cli_args, family, None))
         run_api = getattr(ctx, f"{family}_api", None) or {}
         run_refs = _build_reference_list(run_api.get("build_references"))
-        if not sets:
+        if not selected:
             if on_cli and run_refs:
                 LOGGER.warning(
                     "--%s replaces [%s_api].build_references", family, family
