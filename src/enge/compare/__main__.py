@@ -81,7 +81,9 @@ def _table_title(table: _AnyTable) -> str:
     parts = []
     if table.arch is not None:
         parts.append(table.arch)
-    if table.source is not None or table.target is not None:
+    # A --splitpath table is keyed by (distro, source, target): name the
+    # path whenever any of the three is known (XR-cmp-1).
+    if table.distro is not None or table.source is not None or table.target is not None:
         parts.append(_path_label(table.distro, table.source, table.target))
     parts.append(f"tier: {table.tier}" if table.tier is not None else "tier: untiered")
     return " | ".join(parts)
