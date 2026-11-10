@@ -76,14 +76,18 @@ def expand_set_requests(ctx) -> List[RequestSpec]:
             LOGGER.error(f"Invalid architectures for set '{set_name}': {e}")
             continue
 
-        # Tiers and plans
+        # Tiers and plans. An empty tier list is an untiered set (tiers = []):
+        # one pass with tier None, so no tier plan filter or tier context.
         set_tiers = effective_values.get("tiers", [])
         if not set_tiers:
-            LOGGER.error(f"No tiers specified for test set '{set_name}'")
-            continue
+            LOGGER.log(
+                VERBOSE,
+                f"Test set '{set_name}' is untiered (tiers = []); "
+                "no tier plan filter is applied",
+            )
         all_specific_plans = effective_values.get("plans", [])
 
-        for tier in set_tiers:
+        for tier in set_tiers or [None]:
             for arch in architectures:
                 if all_specific_plans:
                     for plan in all_specific_plans:
@@ -126,7 +130,7 @@ def warn_on_reference_inheritance(ctx, scheduled_sets=None) -> None:
 
     ``scheduled_sets`` names the sets ``expand_set_requests`` actually
     scheduled; W1/W2 consider only those (XR-l81-1), so a set skipped for a
-    missing source, target, architecture or tier is never named. Whether the
+    missing source, target or architecture is never named. Whether the
     run is set dispatch at all still follows ``ctx.individual_test_sets``.
 
     Set dispatch, per family:

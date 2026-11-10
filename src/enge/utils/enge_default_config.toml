@@ -164,6 +164,9 @@ rhui-azure-tier0 = 'tag:rhui-azure-tier0'
 #   test_filter = 'tag:fast'                   # FMF test filter passed to Testing Farm
 #   Priority: CLI --plan-filter > set plan_filter > tier-generated
 #   Priority: CLI --test-filter > set test_filter
+# - Untiered set: tiers = [] sends no tier filter and no tier context; the set
+#   must then name plans or plan_filter. A set without a tiers key uses
+#   [tests].tiers instead.
 # - REQUIRED: The whole section is pre-defined batch of various lifecycle event sets
 # ---------------------------------------------------------------------------
 [tests.set]

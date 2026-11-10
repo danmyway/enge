@@ -431,7 +431,29 @@ test_filter = "tag:fast"                   # passed to Testing Farm as test filt
 Priority: `CLI --plan-filter` > set `plan_filter` > tier-generated filter.
 Priority: `CLI --test-filter` > set `test_filter`.
 
-When a test set defines multiple tiers and architectures, a separate payload is generated for every combination of tier and architecture. If the test set also includes specific plans, each (tier, architecture, plan) combination generates a separate request.
+Naming specific `plans` does **not** suppress the tier-generated filter: a
+set (or preset) with a non-empty `tiers` still sends the tier's tag filter
+alongside the named plan, so a plan that doesn't carry a matching
+`tier[0-9]` tag — e.g. a verification plan — resolves to zero tests even
+though it was named explicitly. To select plans by name without a tier
+filter, make the set untiered (`tiers = []`, below) or set `plan_filter`
+directly to override the tier-generated one.
+
+**Untiered Sets:**
+
+`tiers = []` makes a test set untiered. Its requests carry no tier: enge adds no tier tag to the plan filter and no `tier` to the TMT context, and `tier` is `null` in the manifest and in `results.json`, so `enge compare` puts these runs in their own `tier: untiered` table. Without a tier, plan selection rests on the set, so an untiered set must name plans (in the set, its preset, `[tests]`, or `--plan`) or a plan filter (in the set, its preset, or `--plan-filter`); otherwise `enge test` exits `99` before sending anything. With plans and no plan filter, the generated filter is the upgrade-path tag plus `enabled:true`. `-T/--tier` on the command line still wins over `tiers = []`.
+
+```toml
+[tests.set.verification]
+source = "9.7"
+tiers = []                               # untiered
+plans = ['/plans/verification($|/)']     # required unless plan_filter is set
+architectures = ["x86_64"]
+```
+
+Leaving `tiers` out is not the same: such a set falls back to `[tests].tiers`. A preset with `tiers = []` makes every set that extends it and leaves `tiers` out untiered.
+
+When a test set defines multiple tiers and architectures, a separate payload is generated for every combination of tier and architecture. If the test set also includes specific plans, each (tier, architecture, plan) combination generates a separate request. An untiered set counts as a single tier here.
 
 **Usage:**
 - Use `--set <set-name>` to run a predefined test set

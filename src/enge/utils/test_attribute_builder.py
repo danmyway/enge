@@ -130,6 +130,18 @@ def build_test_attributes(cli_args, config):  # noqa: C901
                         f"Missing effective git_ref (CLI/Set/Config) for set '{set_name}'"
                     )
 
+                if effective_values.get("tiers") == [] and not (
+                    effective_values.get("plans")
+                    or effective_values.get("plan_filter")
+                    or getattr(cli_args, "planfilter", None)
+                ):
+                    raise ConfigurationError(
+                        f"Test set '{set_name}' sets tiers = [] but names no plans "
+                        "and no plan_filter; an untiered set must narrow plan "
+                        "selection itself (set plans or plan_filter, or pass "
+                        "--plan or --plan-filter)"
+                    )
+
                 cli_arch = getattr(cli_args, "architectures", None)
                 set_arch = set_config.get("architectures")
                 if cli_arch and set_arch:

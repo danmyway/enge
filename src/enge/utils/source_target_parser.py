@@ -1040,6 +1040,8 @@ def resolve_effective_values(
 
     # Resolve tier SELECTION (CLI > set > [tests].tiers).
     # [tests].tier is the filter-definition mapping — never used as a selection source.
+    # An explicit empty list in the set (or its preset) means untiered, not
+    # "fall back to [tests].tiers"; an absent key still falls back.
     cli_tier = getattr(cli_args, "tier", None)
     set_tiers = set_config.get("tiers")
     config_tiers = config.get("tests", {}).get("tiers")
@@ -1048,6 +1050,8 @@ def resolve_effective_values(
         resolved["tiers"] = cli_tier
     elif set_tiers:
         resolved["tiers"] = set_tiers
+    elif set_tiers == []:
+        resolved["tiers"] = []
     elif config_tiers:
         LOGGER.info(
             "tiers not specified via CLI or set, using default from [tests]: %s",
