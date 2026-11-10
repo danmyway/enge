@@ -441,7 +441,7 @@ directly to override the tier-generated one.
 
 **Untiered Sets:**
 
-`tiers = []` makes a test set untiered. Its requests carry no tier: enge adds no tier tag to the plan filter and no `tier` to the TMT context, and `tier` is `null` in the manifest and in `results.json`, so `enge compare` puts these runs in their own `tier: untiered` table. Without a tier, plan selection rests on the set, so an untiered set must name plans (in the set, its preset, `[tests]`, or `--plan`) or a plan filter (in the set, its preset, or `--plan-filter`); otherwise `enge test` exits `99` before sending anything. With plans and no plan filter, the generated filter is the upgrade-path tag plus `enabled:true`. `-T/--tier` on the command line still wins over `tiers = []`.
+`tiers = []` makes a test set untiered. Its requests carry no tier: enge adds no tier tag to the plan filter and no `tier` to the TMT context, and `tier` is `null` in the manifest and in `results.json`, so `enge compare` puts these runs in their own `tier: untiered` table. Without a tier, plan selection rests on the set, so an untiered set must name plans (in the set, its preset, `[tests]`, or `--plan`) or a plan filter (in the set, its preset, or `--plan-filter`); otherwise `enge test` exits `99` before sending anything. No plan entry of an untiered set may be empty or blank either, because an empty entry sends no plan name and so selects every plan; that also exits `99`. With plans and no plan filter, the generated filter is the upgrade-path tag plus `enabled:true`. `-T/--tier` on the command line still wins over `tiers = []`.
 
 ```toml
 [tests.set.verification]
