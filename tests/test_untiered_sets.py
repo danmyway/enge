@@ -233,6 +233,46 @@ class TestUntieredSetMustNarrowPlans(unittest.TestCase):
         self.assertIn("'bare'", str(caught.exception))
 
 
+def _with_plans(set_name, plans, **extra):
+    cfg = copy.deepcopy(CONFIG)
+    cfg["tests"]["set"][set_name]["plans"] = plans
+    cfg["tests"]["set"][set_name].update(extra)
+    return cfg
+
+
+class TestUntieredSetRejectsEmptyPlans(unittest.TestCase):
+    """XR-1: an empty plan entry sends no plan name, so it selects every plan."""
+
+    def _assert_rejected(self, argv, cfg):
+        with self.assertRaises(ConfigurationError) as caught:
+            _set_tiers(argv, cfg)
+        message = str(caught.exception)
+        self.assertIn("'bare'", message)
+        self.assertIn("empty plan", message)
+
+    def test_an_empty_plan_is_a_config_error(self):
+        self._assert_rejected(["-S", "bare"], _with_plans("bare", [""]))
+
+    def test_an_empty_plan_next_to_a_real_one_is_a_config_error(self):
+        self._assert_rejected(["-S", "bare"], _with_plans("bare", [VERIFICATION, ""]))
+
+    def test_a_blank_plan_is_a_config_error(self):
+        self._assert_rejected(["-S", "bare"], _with_plans("bare", ["  "]))
+
+    def test_an_empty_cli_plan_is_a_config_error(self):
+        self._assert_rejected(["-S", "bare", "--plan", ""], copy.deepcopy(CONFIG))
+
+    def test_a_plan_filter_does_not_excuse_an_empty_plan(self):
+        cfg = _with_plans("bare", [""], plan_filter="tag:nondestructive")
+        self._assert_rejected(["-S", "bare"], cfg)
+
+    def test_a_tiered_set_keeps_its_empty_plan_entry(self):
+        # Out of scope (ruled 2026-11-10): tiered sets are unchanged.
+        cfg = _with_plans("tier0", [""])
+        specs = expand_set_requests(ctx=_ctx(["-S", "tier0"], cfg))
+        self.assertEqual([(s.tier, s.plan) for s in specs], [("tier0", "")])
+
+
 class TestUntieredExpansion(unittest.TestCase):
     """expand_set_requests: one tier=None iteration (2026-08-31, Q-T11)."""
 
