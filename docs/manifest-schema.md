@@ -144,7 +144,7 @@ Field-by-field, type / nullability / producing writer:
   dispatch's `set` was. Migrated: `context.get("set")` — `null` unless
   a tag matched as the set name.
 - `tier` (nullable str) — required key, nullable value. Native
-  dispatch: `spec.tier`, `null` for `--plan`-only dispatch. Native
+  dispatch: `spec.tier`, `null` for a test set with `tiers = []`. Native
   rerun: `parent_entry.get("tier")` — same lineage-resolution
   dependency as `set`. Migrated: the first entry of
   `context.get("tiers")`, `null` if absent.

@@ -210,8 +210,8 @@ key), `arch`, `set`/`tier`/`source_compose`/`target_compose` (required
 keys, nullable values — manifest parity; `set: null` = a no-set CLI
 invocation, e.g. test-development workflows where the set is fully
 defined on the command line; `tier: null` = an untiered dispatch, e.g.
-`enge dispatch --plan <plan>` with no `--tier`, or a rerun whose parent
-lineage did not resolve), `dispatched_at` (ISO 8601, from manifest
+a test set with `tiers = []`, or a rerun whose parent lineage did not
+resolve), `dispatched_at` (ISO 8601, from manifest
 request), `verdict` (task-level, non-null), `total_duration_seconds`
 (float; for CANCELED/no-xunit ERROR: elapsed time before terminal
 state), `plans` (list; see validity rules below). `source`, `target`
